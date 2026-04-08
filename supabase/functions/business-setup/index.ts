@@ -41,25 +41,36 @@ Deno.serve(async (req) => {
       return json({ error: 'Failed to create business' }, 500)
     }
 
-    // Create or update the admin cashier
+    // Create or update the admin cashier.
+    const { data: existingAdmin, error: existingAdminError } = await supabase
+      .from('cashiers')
+      .select('id')
+      .eq('business_id', business.id)
+      .eq('role', 'admin')
+      .maybeSingle()
+
+    if (existingAdminError) {
+      console.error('Admin lookup error:', existingAdminError)
+      return json({ error: 'Failed to look up admin cashier' }, 500)
+    }
+
+    const resolvedAdminId = existingAdmin?.id ?? adminId ?? crypto.randomUUID()
+
     const { error: cashierError } = await supabase
       .from('cashiers')
-      .upsert(
-        {
-          id: adminId,
-          business_id: business.id,
-          name: adminName ?? 'Admin',
-          pin: adminPin,
-          role: 'admin',
-          is_active: true,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'business_id,role', ignoreDuplicates: false }
-      )
+      .upsert({
+        id: resolvedAdminId,
+        business_id: business.id,
+        name: adminName ?? 'Admin',
+        pin: adminPin,
+        role: 'admin',
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      })
 
     if (cashierError) {
-      // Non-fatal — upsert may fail on conflict resolution edge cases
-      console.warn('Cashier upsert warning:', cashierError)
+      console.error('Cashier upsert error:', cashierError)
+      return json({ error: 'Failed to create admin cashier' }, 500)
     }
 
     return json({ success: true, businessId: business.id })

@@ -182,6 +182,14 @@ async function repairMissingCloudBusiness(accessToken: string) {
   )
 }
 
+async function pushCashiersToCloud(accessToken: string, users: any[]) {
+  await axios.post(
+    `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
+    { cashiers: users },
+    { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 15000 }
+  )
+}
+
 export function registerAuthHandlers() {
   // ─── Local PIN login ────────────────────────────────────────────────────────
   ipcMain.handle(IPC.AUTH.LOGIN, (_, name: string, pin: string) => {
@@ -274,6 +282,7 @@ export function registerAuthHandlers() {
       `).get()
 
       let adminId: string
+      let usersForCloud: any[]
       if (localAdmin) {
         // Only update pin and name, never change the user id to preserve foreign key integrity
         // Also ensure the admin is active
@@ -286,6 +295,7 @@ export function registerAuthHandlers() {
         localDb.prepare(`INSERT INTO users (id, name, pin, role, is_active, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)`)
           .run(adminId, data.adminName ?? 'Admin', data.adminPin, 'admin', 1)
       }
+      usersForCloud = localDb.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
 
       // 1. Create Supabase Auth account
       const signupRes = await axios.post(
@@ -315,6 +325,9 @@ export function registerAuthHandlers() {
         },
         { headers: { Authorization: `Bearer ${access_token}` }, timeout: 15000 }
       )
+
+      // 2b. Explicitly sync the current local cashier list so the account can be restored on other devices.
+      await pushCashiersToCloud(access_token, usersForCloud)
 
       // 3. Move the current device-local setup into this cloud account's storage
       migrateLocalDeviceDataToCloudUser(user.id)
@@ -381,6 +394,13 @@ export function registerAuthHandlers() {
       }
 
       const { cashiers, business } = syncRes.data
+
+      if (!Array.isArray(cashiers) || cashiers.length === 0) {
+        return {
+          success: false,
+          error: 'This account has no synced cashier profile yet. Sign in on the original device once more so it can sync the owner name and PIN, then try restoring on this device again.',
+        }
+      }
 
       // 3. Switch this device into the signed-in account's isolated storage
       setActiveCloudUserId(user.id)
