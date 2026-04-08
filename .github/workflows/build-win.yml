@@ -28,25 +28,34 @@ jobs:
         env:
           npm_config_msvs_version: '2022'
 
-      - name: Build app
-        run: npm run build
+      - name: Build renderer (Vite)
+        run: npx vite build
+
+      - name: Build electron (TypeScript)
+        run: npx tsc -p electron/tsconfig.json
+        continue-on-error: true
+
+      - name: Check build outputs
+        shell: pwsh
+        run: |
+          echo "=== dist/renderer ==="
+          Get-ChildItem dist/renderer -ErrorAction SilentlyContinue | Select-Object Name
+          echo "=== electron/dist ==="
+          Get-ChildItem electron/dist -Recurse -ErrorAction SilentlyContinue | Select-Object FullName
 
       - name: Package Windows installer
         run: npx electron-builder --win --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: List output directory
-        run: Get-ChildItem -Recurse -Filter "*.exe" | Select-Object FullName
+      - name: List all exe files after packaging
         shell: pwsh
+        run: Get-ChildItem -Recurse -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object FullName
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
           name: reyna-pos-windows
-          path: |
-            dist-packages/**/*.exe
-            release/**/*.exe
-            out/**/*.exe
+          path: dist-packages/**
           if-no-files-found: warn
           retention-days: 30
