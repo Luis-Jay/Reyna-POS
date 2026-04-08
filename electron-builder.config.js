@@ -18,8 +18,8 @@ module.exports = {
   // macOS
   mac: {
     target: [
-      { target: 'dmg', arch: ['x64', 'arm64'] },
-      { target: 'zip', arch: ['x64', 'arm64'] },
+      { target: 'dmg', arch: ['arm64'] },
+      { target: 'zip', arch: ['arm64'] },
     ],
     icon: 'assets/icons/icon.icns',
     category: 'public.app-category.business',
@@ -69,8 +69,8 @@ module.exports = {
   publish: [
     {
       provider: 'github',
-      owner: 'your-org',
-      repo: 'reyna-pos',
+      owner: 'Luis-Jay',
+      repo: 'Reyna-POS',
     },
   ],
 
