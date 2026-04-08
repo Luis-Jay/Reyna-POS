@@ -32,12 +32,12 @@ jobs:
         run: npm run build
 
       - name: Package Windows installer
-        run: npx electron-builder --win --publish never
+        run: npx electron-builder --win --config electron-builder.config.js --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: List output directory
-        run: Get-ChildItem -Recurse -Filter "*.exe" | Select-Object FullName
+        run: Get-ChildItem dist-packages -Recurse | Select-Object FullName
         shell: pwsh
 
       - name: Upload installer
@@ -46,7 +46,10 @@ jobs:
           name: reyna-pos-windows
           path: |
             dist-packages/**/*.exe
+            dist-packages/**/*.zip
             release/**/*.exe
+            release/**/*.zip
             out/**/*.exe
-          if-no-files-found: warn
+            out/**/*.zip
+          if-no-files-found: error
           retention-days: 30

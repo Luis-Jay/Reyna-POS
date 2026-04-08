@@ -43,6 +43,7 @@ module.exports = {
     target: [
       { target: 'nsis', arch: ['x64'] },
       { target: 'portable', arch: ['x64'] },
+      { target: 'zip', arch: ['x64'] },
     ],
     icon: 'assets/icons/icon.ico',
     requestedExecutionLevel: 'asInvoker',
