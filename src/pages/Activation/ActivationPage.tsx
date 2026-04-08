@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BarChart2, Package, Users, Tag, CreditCard, CheckCircle, Loader, Sparkles } from 'lucide-react'
 
@@ -17,14 +17,18 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
   const [installId, setInstallId] = useState('')
   const [step, setStep] = useState<Step>('idle')
   const [errorMsg, setErrorMsg] = useState('')
+  const [pendingNotice, setPendingNotice] = useState('')
   const [showId, setShowId] = useState(false)
+  const successTimeoutRef = useRef<number | null>(null)
 
   useEffect(() => {
     window.api.activation.getInstallId().then(setInstallId)
   }, [])
 
   useEffect(() => {
-    if (step !== 'opening') return
+    if (step !== 'opening' && step !== 'checking') return
+
+    let failedChecks = 0
 
     const interval = window.setInterval(async () => {
       const result = await window.api.activation.checkStatus()
@@ -33,54 +37,89 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
         window.clearInterval(interval)
         setStep('success')
         setErrorMsg('')
-        window.setTimeout(() => {
+        successTimeoutRef.current = window.setTimeout(() => {
           onActivated()
           navigate('/settings')
         }, 1500)
+        return
+      }
+
+      failedChecks += 1
+      if (step === 'opening' && failedChecks >= 2) {
+        setStep('checking')
+      }
+
+      if (!result.error && failedChecks >= 3) {
+        setPendingNotice('Payment may already be completed, but the activation server has not confirmed it yet. You can close the browser tab and click "I\'ve Completed Payment" below.')
+      }
+
+      if (result.error) {
+        window.clearInterval(interval)
+        setStep('error')
+        setErrorMsg(result.error)
       }
     }, 4000)
 
-    return () => window.clearInterval(interval)
+    return () => {
+      window.clearInterval(interval)
+      if (successTimeoutRef.current !== null) {
+        window.clearTimeout(successTimeoutRef.current)
+        successTimeoutRef.current = null
+      }
+    }
   }, [step, navigate, onActivated])
 
   const handlePay = async () => {
     setStep('opening')
     setErrorMsg('')
-    const result = await window.api.activation.createInvoice()
-    if (!result.success) {
-      setStep('error')
-      setErrorMsg(result.error || 'Failed to open payment page. Check your internet connection.')
-    } else if (result.alreadyActivated) {
-      const status = await window.api.activation.getStatus()
-      if (status.activated && status.expiresAt) {
-        setStep('success')
-        window.setTimeout(() => {
-          onActivated()
-          navigate('/settings')
-        }, 1500)
+    setPendingNotice('')
+    try {
+      const result = await window.api.activation.createInvoice()
+      if (!result.success) {
+        setStep('error')
+        setErrorMsg(result.error || 'Failed to open payment page. Check your internet connection.')
+      } else if (result.alreadyActivated) {
+        const status = await window.api.activation.getStatus()
+        if (status.activated && status.expiresAt) {
+          setStep('success')
+          window.setTimeout(() => {
+            onActivated()
+            navigate('/settings')
+          }, 1500)
+        } else {
+          setStep('checking')
+          await handleCheck()
+        }
       } else {
         setStep('checking')
-        await handleCheck()
+        setErrorMsg('')
       }
-    } else {
-      setErrorMsg('')
+    } catch (err: any) {
+      setStep('error')
+      setErrorMsg(err?.message || 'Failed to open payment page. Check your internet connection.')
     }
   }
 
   const handleCheck = async () => {
     setStep('checking')
     setErrorMsg('')
-    const result = await window.api.activation.checkStatus()
-    if (result.activated && result.expiresAt) {
-      await window.api.activation.markActivated(result.expiresAt)
-      setStep('success')
-      setTimeout(() => {
-        onActivated()
-        navigate('/settings')
-      }, 1500)
-    } else {
+    setPendingNotice('')
+    try {
+      const result = await window.api.activation.checkStatus()
+      if (result.activated && result.expiresAt) {
+        await window.api.activation.markActivated(result.expiresAt)
+        setStep('success')
+        setTimeout(() => {
+          onActivated()
+          navigate('/settings')
+        }, 1500)
+      } else {
+        setStep('error')
+        setErrorMsg(result.error || 'Payment not found yet. Complete the payment and try again.')
+      }
+    } catch (error) {
       setStep('error')
-      setErrorMsg(result.error || 'Payment not found yet. Complete the payment and try again.')
+      setErrorMsg(error instanceof Error ? error.message : 'Network error, please try again')
     }
   }
 
@@ -135,12 +174,19 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
           <div className="px-6 pb-5">
             <p className="text-xs text-gray-400 text-center mb-3">Accepts GCash, Maya, Credit/Debit Card, and more</p>
 
-            {step === 'opening' && (
+            {(step === 'opening' || step === 'checking') && (
               <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
                 <p className="font-semibold">Waiting for payment confirmation...</p>
                 <p className="mt-1">
                   Finish the payment in your browser. After payment succeeds, you can close that browser tab. Reyna POS will automatically detect the subscription and activate here.
                 </p>
+              </div>
+            )}
+
+            {pendingNotice && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <p className="font-semibold">Activation is taking longer than expected.</p>
+                <p className="mt-1">{pendingNotice}</p>
               </div>
             )}
 
@@ -152,6 +198,8 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
             >
               {step === 'opening' ? (
                 <><Loader size={18} className="animate-spin" /> Opening payment page...</>
+              ) : step === 'checking' ? (
+                <><Loader size={18} className="animate-spin" /> Waiting for payment confirmation...</>
               ) : (
                 <><CreditCard size={18} /> Subscribe to Reyna Pro</>
 

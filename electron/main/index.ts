@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, protocol, shell } from 'electron'
 import path from 'path'
 import fs from 'fs'
-import { getDb, closeDb } from './db'
+import { getDb, closeDb, getCurrentProductImagesDir } from './db'
 import { registerProductHandlers } from './ipc/products.ipc'
 import { registerCategoryHandlers } from './ipc/categories.ipc'
 import { registerVariationHandlers } from './ipc/variations.ipc'
@@ -41,26 +41,47 @@ function registerLocalImageProtocol() {
       return new Response('Missing image path', { status: 400 })
     }
 
-    if (!fs.existsSync(imagePath)) {
+    try {
+      const allowedDir = getCurrentProductImagesDir()
+      const allowedDirReal = fs.realpathSync(allowedDir)
+      // image_path in DB is stored as an absolute path; resolve relative paths against allowedDir
+      const candidate = path.isAbsolute(imagePath) ? imagePath : path.resolve(allowedDir, imagePath)
+      const candidateReal = fs.realpathSync(candidate)
+      if (!candidateReal.startsWith(allowedDirReal + path.sep) && candidateReal !== allowedDirReal) {
+        return new Response('Forbidden', { status: 403 })
+      }
+
+      const ext = path.extname(candidateReal).toLowerCase()
+      const contentType =
+        ext === '.png' ? 'image/png' :
+        ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+        ext === '.webp' ? 'image/webp' :
+        ext === '.gif' ? 'image/gif' :
+        'application/octet-stream'
+
+      if (fs.constants.O_NOFOLLOW === undefined && fs.lstatSync(candidateReal).isSymbolicLink()) {
+        return new Response('Forbidden', { status: 403 })
+      }
+
+      // Use file descriptor with O_NOFOLLOW to prevent symlink swap (with Windows fallback)
+      const openFlags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+      const fd = fs.openSync(candidateReal, openFlags)
+
+      try {
+        const file = fs.readFileSync(fd)
+        return new Response(file, {
+          status: 200,
+          headers: {
+            'Content-Type': contentType,
+            'Cache-Control': 'no-cache',
+          },
+        })
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch {
       return new Response('Image not found', { status: 404 })
     }
-
-    const ext = path.extname(imagePath).toLowerCase()
-    const contentType =
-      ext === '.png' ? 'image/png' :
-      ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
-      ext === '.webp' ? 'image/webp' :
-      ext === '.gif' ? 'image/gif' :
-      'application/octet-stream'
-
-    const file = fs.readFileSync(imagePath)
-    return new Response(file, {
-      status: 200,
-      headers: {
-        'Content-Type': contentType,
-        'Cache-Control': 'no-cache',
-      },
-    })
   })
 }
 
@@ -77,7 +98,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
-      devTools: false,
+      devTools: isDev,
     },
     show: false,
     icon: appIconPath,

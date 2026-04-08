@@ -44,90 +44,16 @@ Deno.serve(async (req) => {
       const orders = Array.isArray(payload.orders) ? payload.orders : []
       const orderItems = Array.isArray(payload.orderItems) ? payload.orderItems : []
 
-      if (debtors.length > 0) {
-        const { error } = await supabase.from('sales_debtors').upsert(
-          debtors.map(debtor => ({
-            id: debtor.id,
-            business_id: businessId,
-            name: debtor.name,
-            phone: debtor.phone ?? null,
-            balance: debtor.balance ?? 0,
-            total_credit: debtor.total_credit ?? 0,
-            total_paid: debtor.total_paid ?? 0,
-            due_date: debtor.due_date ?? null,
-            follow_up_date: debtor.follow_up_date ?? null,
-            last_reminder_at: debtor.last_reminder_at ?? null,
-            created_at: debtor.created_at ?? new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            deleted_at: debtor.deleted_at ?? null,
-          }))
-        )
-        if (error) return json({ error: `Failed to sync debtors: ${error.message}` }, 500)
-      }
+      const { error } = await supabase.rpc('sync_sales_upserts', {
+        business_id: businessId,
+        debtors,
+        orders,
+        order_items: orderItems,
+        debtor_transactions: debtorTransactions,
+      })
 
-      if (orders.length > 0) {
-        const { error } = await supabase.from('sales_orders').upsert(
-          orders.map(order => ({
-            id: order.id,
-            business_id: businessId,
-            order_number: order.order_number,
-            customer_name: order.customer_name ?? null,
-            status: order.status ?? 'completed',
-            subtotal: order.subtotal ?? 0,
-            discount: order.discount ?? 0,
-            total: order.total ?? 0,
-            payment_amount: order.payment_amount ?? null,
-            change_amount: order.change_amount ?? null,
-            payment_breakdown: order.payment_breakdown ?? [],
-            is_credit: Boolean(order.is_credit),
-            debtor_id: order.debtor_id ?? null,
-            user_id: order.user_id ?? null,
-            note: order.note ?? null,
-            exclude_sales: Boolean(order.exclude_sales),
-            created_at: order.created_at ?? new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            deleted_at: order.deleted_at ?? null,
-          }))
-        )
-        if (error) return json({ error: `Failed to sync orders: ${error.message}` }, 500)
-      }
-
-      if (orderItems.length > 0) {
-        const { error } = await supabase.from('sales_order_items').upsert(
-          orderItems.map(item => ({
-            id: item.id,
-            business_id: businessId,
-            order_id: item.order_id,
-            product_id: item.product_id ?? null,
-            name: item.name,
-            price: item.price ?? 0,
-            cost: item.cost ?? 0,
-            quantity: item.quantity ?? 0,
-            subtotal: item.subtotal ?? 0,
-            is_custom: Boolean(item.is_custom),
-            updated_at: new Date().toISOString(),
-          }))
-        )
-        if (error) return json({ error: `Failed to sync order items: ${error.message}` }, 500)
-      }
-
-      if (debtorTransactions.length > 0) {
-        const { error } = await supabase.from('sales_debtor_transactions').upsert(
-          debtorTransactions.map(tx => ({
-            id: tx.id,
-            business_id: businessId,
-            debtor_id: tx.debtor_id,
-            type: tx.type,
-            amount: tx.amount ?? 0,
-            profit: tx.profit ?? 0,
-            note: tx.note ?? null,
-            order_id: tx.order_id ?? null,
-            user_id: tx.user_id ?? null,
-            created_at: tx.created_at ?? new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }))
-        )
-        if (error) return json({ error: `Failed to sync debtor transactions: ${error.message}` }, 500)
+      if (error) {
+        return json({ error: `Failed to sync sales data: ${error.message}` }, 500)
       }
 
       return json({ success: true })

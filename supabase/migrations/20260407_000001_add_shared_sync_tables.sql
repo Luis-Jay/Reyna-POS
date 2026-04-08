@@ -41,12 +41,12 @@ CREATE TABLE IF NOT EXISTS catalog_products (
   description         TEXT,
   image_data          TEXT,
   barcode             TEXT,
-  category_id         TEXT REFERENCES catalog_categories(id),
+  category_id         TEXT REFERENCES catalog_categories(id) ON DELETE SET NULL,
   base_price          NUMERIC NOT NULL DEFAULT 0,
   base_cost           NUMERIC NOT NULL DEFAULT 0,
   markup_pct          NUMERIC,
   has_variations      BOOLEAN NOT NULL DEFAULT false,
-  variation_group_id  TEXT REFERENCES catalog_variation_groups(id),
+  variation_group_id  TEXT REFERENCES catalog_variation_groups(id) ON DELETE SET NULL,
   allow_fractions     BOOLEAN NOT NULL DEFAULT false,
   track_inventory     BOOLEAN NOT NULL DEFAULT true,
   is_active           BOOLEAN NOT NULL DEFAULT true,
@@ -57,7 +57,6 @@ CREATE TABLE IF NOT EXISTS catalog_products (
   deleted_at          TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_catalog_products_business ON catalog_products(business_id);
-ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS image_data TEXT;
 
 CREATE TABLE IF NOT EXISTS catalog_inventory (
   id            TEXT PRIMARY KEY,
@@ -114,7 +113,7 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   business_id       UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   order_number      TEXT NOT NULL,
   customer_name     TEXT,
-  status            TEXT NOT NULL DEFAULT 'completed',
+  status            TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('pending','completed','cancelled','void')),
   subtotal          NUMERIC NOT NULL DEFAULT 0,
   discount          NUMERIC NOT NULL DEFAULT 0,
   total             NUMERIC NOT NULL DEFAULT 0,

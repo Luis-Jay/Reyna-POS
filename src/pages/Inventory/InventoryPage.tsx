@@ -94,7 +94,7 @@ export default function InventoryPage() {
           return (
             <div key={item.id} className="bg-white rounded-xl p-4 flex items-center gap-4 shadow-sm">
               <div className="w-12 h-12 bg-gray-100 rounded-lg overflow-hidden shrink-0">
-                {item.product_image && <img src={getProductImageSrc(item.product_image)} className="w-full h-full object-cover" />}
+                {item.product_image && <img src={getProductImageSrc(item.product_image)} alt={item.product_name || ''} className="w-full h-full object-cover" />}
               </div>
               <div className="flex-1">
                 <div className="flex items-center justify-between">

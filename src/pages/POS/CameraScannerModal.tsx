@@ -65,8 +65,13 @@ export default function CameraScannerModal({ onClose, onDetected }: Props) {
           const last = lastDetectedRef.current
           if (!last || last.code !== code || now - last.time > 2000) {
             lastDetectedRef.current = { code, time: now }
-            await onDetected(code)
-            onClose()
+            try {
+              await onDetected(code)
+            } catch (error) {
+              console.error('Error handling detected code:', error)
+            } finally {
+              onClose()
+            }
             return
           }
         }
@@ -129,10 +134,11 @@ export default function CameraScannerModal({ onClose, onDetected }: Props) {
         <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-emerald-200/70">Camera Scan</p>
-            <h2 className="text-xl font-semibold">Use Mac Camera as Scanner</h2>
+            <h2 className="text-xl font-semibold">Use Camera as Scanner</h2>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close"
             className="rounded-full border border-white/10 bg-white/5 p-2 text-white transition hover:bg-white/10"
           >
             <X size={18} />

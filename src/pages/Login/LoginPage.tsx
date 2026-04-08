@@ -55,8 +55,9 @@ export default function LoginPage() {
         setError('Wrong PIN. Try again.')
         setPin('')
       }
-    } catch {
-      setError('Login failed')
+    } catch (err) {
+      console.error('Login error:', err)
+      setError(`Login failed: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setLoading(false)
     }

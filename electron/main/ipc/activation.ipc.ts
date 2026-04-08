@@ -82,8 +82,6 @@ export function registerActivationHandlers() {
   // Ask Supabase Edge Function to create a Xendit invoice, then open it in the browser
   ipcMain.handle(IPC.ACTIVATION.CREATE_INVOICE, async () => {
     const installId = getOrCreateInstallId()
-    const db = getDb()
-    const userId = (db.prepare(`SELECT value FROM settings WHERE key = 'cloud_user_id'`).get() as any)?.value ?? null
     let token = await getValidCloudToken()
     if (!token) {
       return { success: false, error: 'No cloud session found. Please sign in again.' }
@@ -127,8 +125,6 @@ export function registerActivationHandlers() {
   // Check with Supabase if this installation has an active subscription
   ipcMain.handle(IPC.ACTIVATION.CHECK_STATUS, async () => {
     const installId = getOrCreateInstallId()
-    const db = getDb()
-    const userId = (db.prepare(`SELECT value FROM settings WHERE key = 'cloud_user_id'`).get() as any)?.value ?? null
     let token = await getValidCloudToken()
     if (!token) {
       return { activated: false, expiresAt: null, error: 'No cloud session found. Please sign in again.' }

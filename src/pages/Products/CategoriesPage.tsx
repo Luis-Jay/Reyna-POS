@@ -85,7 +85,7 @@ export default function CategoriesPage() {
                 <button key={p.id} onClick={() => navigate(`/products/${p.id}/edit`)}
                   className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded-lg text-left">
                   <div className="w-10 h-10 bg-gray-100 rounded-lg overflow-hidden shrink-0">
-                    {p.image_path && <img src={getProductImageSrc(p.image_path)} className="w-full h-full object-cover" />}
+                    {p.image_path && <img src={getProductImageSrc(p.image_path)} alt={p.name} className="w-full h-full object-cover" />}
                   </div>
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>
@@ -127,7 +127,7 @@ function Section({ title, products, onNavigate }: { title: string; products: Pro
           <button key={p.id} onClick={() => onNavigate(`/products/${p.id}/edit`)}
             className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded-lg text-left">
             <div className="w-10 h-10 bg-gray-100 rounded-lg overflow-hidden shrink-0">
-              {p.image_path && <img src={getProductImageSrc(p.image_path)} className="w-full h-full object-cover" />}
+              {p.image_path && <img src={getProductImageSrc(p.image_path)} alt={p.name} className="w-full h-full object-cover" />}
             </div>
             <div className="min-w-0">
               <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>

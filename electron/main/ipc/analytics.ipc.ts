@@ -194,11 +194,12 @@ export function registerAnalyticsHandlers() {
 
     const debtors: any = db.prepare(`
       SELECT
-        COALESCE(SUM(balance), 0) as receivables,
-        COALESCE(SUM(total_paid), 0) as total_paid
-      FROM debtors
-      WHERE deleted_at IS NULL
-    `).get()
+        COALESCE(SUM(CASE WHEN type = 'debt' THEN amount ELSE 0 END), 0) -
+        COALESCE(SUM(CASE WHEN type = 'payment' THEN amount ELSE 0 END), 0) as receivables,
+        COALESCE(SUM(CASE WHEN type = 'payment' THEN amount ELSE 0 END), 0) as total_paid
+      FROM debtor_transactions
+      WHERE DATE(created_at) <= ?
+    `).get(to)
 
     const debtorPayments: any = db.prepare(`
       SELECT COALESCE(SUM(amount), 0) as paid
@@ -238,11 +239,21 @@ export function registerAnalyticsHandlers() {
     const creditTotal = trialBalanceLines
       .filter(line => line.type === 'credit')
       .reduce((sum, line) => sum + line.amount, 0)
-    const balancingAmount = Math.max(0, debitTotal - creditTotal)
-    const balancedLines = balancingAmount > 0
-      ? [...trialBalanceLines, { label: 'Balancing Equity (Estimated)', amount: balancingAmount, type: 'credit' as const }]
-      : trialBalanceLines
-    const balancedCredits = creditTotal + balancingAmount
+    
+    const imbalance = debitTotal - creditTotal
+    let balancedLines = trialBalanceLines
+    let balancedCredits = creditTotal
+    let balancedDebits = debitTotal
+    
+    if (imbalance > 0) {
+      // Debits exceed credits, add balancing credit
+      balancedLines = [...trialBalanceLines, { label: 'Balancing Equity (Estimated)', amount: imbalance, type: 'credit' as const }]
+      balancedCredits = creditTotal + imbalance
+    } else if (imbalance < 0) {
+      // Credits exceed debits, add balancing debit
+      balancedLines = [...trialBalanceLines, { label: 'Balancing Equity (Estimated)', amount: -imbalance, type: 'debit' as const }]
+      balancedDebits = debitTotal - imbalance
+    }
 
     return {
       period: { from, to },
@@ -262,9 +273,9 @@ export function registerAnalyticsHandlers() {
       },
       trial_balance: {
         lines: balancedLines,
-        total_debits: debitTotal,
+        total_debits: balancedDebits,
         total_credits: balancedCredits,
-        note: 'This is an operational estimate based on recorded sales, debtor balances, payments, and inventory cost. It is not a full accounting ledger.',
+        note: 'This is an operational estimate based on recorded sales, debtor balances, payments, and current inventory cost. Inventory valuation reflects present-day stock levels and costs, not historical values at period end. It is not a full accounting ledger.',
       },
     }
   })

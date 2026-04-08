@@ -57,7 +57,7 @@ function NewAccountForm({ onComplete, onSwitchMode }: { onComplete: () => void; 
         return
       }
 
-      await window.api.sync.triggerAuto('online')
+      try { await window.api.sync.triggerAuto('online') } catch { /* non-fatal */ }
       onComplete()
     } catch {
       setError('Unexpected error. Check your internet and try again.')
@@ -206,7 +206,7 @@ function RestoreForm({ onComplete, onSwitchMode }: { onComplete: () => void; onS
         setError(result.error || 'Login failed. Check your credentials.')
         return
       }
-      await window.api.sync.triggerAuto('online')
+      try { await window.api.sync.triggerAuto('online') } catch { /* non-fatal */ }
       onComplete()
     } catch {
       setError('Unexpected error. Check your internet and try again.')

@@ -62,18 +62,34 @@ function applyCloudCashiers(cashiers: any[]) {
 }
 
 async function restoreCloudAccount(accessToken: string) {
-  const syncRes = await axios.get(
-    `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
-    { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 15000 }
-  )
+  try {
+    const syncRes = await axios.get(
+      `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 15000 }
+    )
 
-  const { cashiers, business } = syncRes.data
-  restoreSettings({
-    store_name: business?.store_name ?? 'Reyna Store',
-    store_phone: business?.store_phone ?? '',
-    setup_completed: 'true',
-  })
-  applyCloudCashiers(Array.isArray(cashiers) ? cashiers : [])
+    // Validate response data shape
+    if (!syncRes || !syncRes.data || typeof syncRes.data !== 'object') {
+      throw new Error('Invalid response format from sync service')
+    }
+
+    const data = syncRes.data
+    const business = data.business && typeof data.business === 'object' ? data.business : {}
+
+    restoreSettings({
+      store_name: business?.store_name ?? 'Reyna Store',
+      store_phone: business?.store_phone ?? '',
+      setup_completed: 'true',
+    })
+
+    // Keep this a no-op when cashiers are missing; an empty array should not deactivate local users.
+    if (Array.isArray(data.cashiers) && data.cashiers.length > 0) {
+      applyCloudCashiers(data.cashiers)
+    }
+  } catch (error: any) {
+    console.error('Failed to restore cloud account:', error.message)
+    throw new Error(`Cloud restore failed: ${error.message}`)
+  }
 }
 
 export function registerBackupHandlers() {

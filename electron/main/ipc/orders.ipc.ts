@@ -25,48 +25,49 @@ function generateOrderNumber(db: ReturnType<typeof getDb>): string {
     + String(today.getDate()).padStart(2, '0')
   const prefix = `${datePart}-`
   const row: any = db.prepare(
-    `SELECT order_number FROM orders WHERE order_number LIKE ? ORDER BY created_at DESC LIMIT 1`
+    `SELECT order_number FROM orders WHERE order_number LIKE ? ORDER BY order_number DESC LIMIT 1`
   ).get(`${prefix}%`)
-  const last = row ? parseInt(row.order_number.split('-')[1], 10) : 0
+  const seq = row?.order_number && /^\d{6}-(\d+)$/.test(row.order_number)
+    ? parseInt(row.order_number.split('-')[1], 10)
+    : 0
+  const last = Number.isFinite(seq) ? seq : 0
   return `${prefix}${String(last + 1).padStart(4, '0')}`
+}
+
+function isOrderNumberConflictError(err: unknown) {
+  return err instanceof Error && err.message.includes('UNIQUE constraint failed: orders.order_number')
 }
 
 export function registerOrderHandlers() {
   // CREATE ORDER (main checkout flow)
   ipcMain.handle(IPC.ORDERS.CREATE, (_, orderData: any) => {
     const db = getDb()
-    const orderId = uuid()
-    const orderNumber = generateOrderNumber(db)
-
-    const tx = db.transaction(() => {
-      // Insert order
+    const createOrderTx = db.transaction((orderId: string, orderNumber: string) => {
       db.prepare(`
         INSERT INTO orders (id, order_number, customer_name, status, subtotal, discount,
           total, payment_amount, change_amount, payment_breakdown, is_credit, debtor_id, user_id, note)
         VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(orderId, orderNumber,
-             orderData.customer_name || null,
-             orderData.subtotal || 0,
-             orderData.discount || 0,
-             orderData.total,
-             orderData.payment_amount || null,
-             orderData.change_amount || null,
-             JSON.stringify(orderData.payment_breakdown || []),
-             orderData.is_credit ? 1 : 0,
-             orderData.debtor_id || null,
-             orderData.user_id || null,
-             orderData.note || null)
+        orderData.customer_name || null,
+        orderData.subtotal || 0,
+        orderData.discount || 0,
+        orderData.total,
+        orderData.payment_amount || null,
+        orderData.change_amount || null,
+        JSON.stringify(orderData.payment_breakdown || []),
+        orderData.is_credit ? 1 : 0,
+        orderData.debtor_id || null,
+        orderData.user_id || null,
+        orderData.note || null)
 
-      // Insert items + deduct inventory
       for (const item of orderData.items || []) {
         const itemId = uuid()
         db.prepare(`
           INSERT INTO order_items (id, order_id, product_id, name, price, cost, quantity, subtotal, is_custom)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(itemId, orderId, item.product_id || null, item.name,
-               item.price, item.cost || 0, item.quantity, item.subtotal, item.is_custom ? 1 : 0)
+          item.price, item.cost || 0, item.quantity, item.subtotal, item.is_custom ? 1 : 0)
 
-        // Deduct inventory if tracked
         if (item.product_id && !item.is_custom) {
           const inv: any = db.prepare(`SELECT * FROM inventory WHERE product_id = ?`).get(item.product_id)
           if (inv) {
@@ -78,13 +79,11 @@ export function registerOrderHandlers() {
               VALUES (?, ?, 'sale', ?, ?)
             `).run(uuid(), item.product_id, -item.quantity, orderId)
           }
-          // Update monthly_sold
           db.prepare(`UPDATE products SET monthly_sold = monthly_sold + ? WHERE id = ?`)
             .run(item.quantity, item.product_id)
         }
       }
 
-      // If credit sale, update debtor balance
       if (orderData.is_credit && orderData.debtor_id) {
         const profit = (orderData.items || []).reduce((s: number, i: any) =>
           s + ((i.price - (i.cost || 0)) * i.quantity), 0)
@@ -99,7 +98,25 @@ export function registerOrderHandlers() {
       return orderId
     })
 
-    const id = tx()
+    let id: string | null = null
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const orderId = uuid()
+      const orderNumber = generateOrderNumber(db)
+      try {
+        id = createOrderTx.immediate(orderId, orderNumber)
+        break
+      } catch (err) {
+        if (!isOrderNumberConflictError(err) || attempt === 5) {
+          throw err
+        }
+        console.warn(`[orders] order_number conflict for ${orderNumber}, retrying (${attempt}/5)`)
+      }
+    }
+
+    if (!id) {
+      throw new Error('Failed to allocate a unique order number after multiple attempts')
+    }
+
     const order = mapOrder(db.prepare(`SELECT * FROM orders WHERE id = ?`).get(id) as any)
     order.items = db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).all(id)
     scheduleAutoSync()

@@ -209,7 +209,7 @@ export default function AnalyticsPage() {
               <div key={p.product_id || i} className="flex items-center gap-3 mb-3">
                 <span className="text-gray-400 font-bold w-4 text-sm">{i + 1}</span>
                 <div className="w-8 h-8 bg-gray-100 rounded-lg overflow-hidden shrink-0">
-                  {p.image_path && <img src={getProductImageSrc(p.image_path)} className="w-full h-full object-cover" />}
+                  {p.image_path && <img src={getProductImageSrc(p.image_path)} alt={p.name ?? ""} className="w-full h-full object-cover" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>

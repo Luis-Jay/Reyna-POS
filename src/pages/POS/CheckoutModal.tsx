@@ -33,10 +33,10 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
   const [error, setError] = useState('')
 
   const total = cart.total()
-  const singlePayment = parseFloat(paymentInput) || 0
-  const cashSplit = parseFloat(splitPayments.cash) || 0
-  const gcashSplit = parseFloat(splitPayments.gcash) || 0
-  const cardSplit = parseFloat(splitPayments.card) || 0
+  const singlePayment = Math.max(0, parseFloat(paymentInput) || 0)
+  const cashSplit = Math.max(0, parseFloat(splitPayments.cash) || 0)
+  const gcashSplit = Math.max(0, parseFloat(splitPayments.gcash) || 0)
+  const cardSplit = Math.max(0, parseFloat(splitPayments.card) || 0)
   const totalPaid = paymentMode === 'split' ? cashSplit + gcashSplit + cardSplit : singlePayment
   const change = paymentMode === 'cash' || paymentMode === 'split' ? Math.max(0, totalPaid - total) : 0
 

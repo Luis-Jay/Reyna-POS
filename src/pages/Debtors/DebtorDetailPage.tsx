@@ -55,20 +55,31 @@ export default function DebtorDetailPage() {
 
   const handleSaveProfile = async () => {
     setSavingProfile(true)
-    await window.api.debtors.update(id!, {
-      phone,
-      due_date: dueDate || null,
-      follow_up_date: followUpDate || null,
-    })
-    setSavingProfile(false)
-    load()
+    try {
+      await window.api.debtors.update(id!, {
+        phone,
+        due_date: dueDate || null,
+        follow_up_date: followUpDate || null,
+      })
+      load()
+    } catch (error) {
+      console.error('Failed to update debtor profile:', error)
+      alert(`Failed to update debtor profile: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSavingProfile(false)
+    }
   }
 
   const handleMarkReminder = async () => {
     setSendingReminder(true)
-    await window.api.debtors.markReminder(id!, 'Reminder marked as sent from debtor follow-up panel.')
-    setSendingReminder(false)
-    load()
+    try {
+      await window.api.debtors.markReminder(id!, 'Reminder marked as sent from debtor follow-up panel.')
+      load()
+    } catch (error) {
+      alert(`Failed to mark reminder: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSendingReminder(false)
+    }
   }
 
   if (!debtor) return null

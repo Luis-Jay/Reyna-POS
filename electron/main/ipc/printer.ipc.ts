@@ -53,7 +53,7 @@ export function registerPrinterHandlers() {
 
     if (thermalEnabled) {
       try {
-        await printThermal(order, storeName?.value || 'Reyna Store')
+        await printThermal(order, storeName)
         printerStatus.connected = true
         printerStatus.type = 'escpos-usb'
         printerStatus.device = 'USB'
@@ -69,16 +69,39 @@ export function registerPrinterHandlers() {
 
     // Fallback: use system print dialog via HTML
     const win = BrowserWindow.getFocusedWindow()
-    if (win) {
-      await win.webContents.print({
-        silent: false,
-        printBackground: true,
-        deviceName: printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : undefined,
+    const systemDevice = printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : 'system-dialog'
+    if (!win) {
+      printerStatus.connected = false
+      printerStatus.error = 'No focused window'
+      printerStatus.type = 'system'
+      printerStatus.device = systemDevice
+      return { success: false, error: printerStatus.error }
+    }
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        win.webContents.print({
+          silent: false,
+          printBackground: true,
+          deviceName: printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : undefined,
+        }, (success, error) => {
+          if (success) {
+            resolve()
+          } else {
+            reject(new Error(error || 'Print failed'))
+          }
+        })
       })
       printerStatus.connected = true
       printerStatus.type = 'system'
-      printerStatus.device = printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : 'system-dialog'
+      printerStatus.device = systemDevice
       printerStatus.error = ''
+    } catch (err: any) {
+      printerStatus.connected = false
+      printerStatus.error = err.message
+      printerStatus.type = 'system'
+      printerStatus.device = systemDevice
+      throw err
     }
     return { success: true }
   })
@@ -94,10 +117,18 @@ export function registerPrinterHandlers() {
       } else {
         const win = BrowserWindow.getFocusedWindow()
         if (!win) throw new Error('No active window available for printer test')
-        await win.webContents.print({
-          silent: false,
-          printBackground: true,
-          deviceName: printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : undefined,
+        await new Promise<void>((resolve, reject) => {
+          win.webContents.print({
+            silent: false,
+            printBackground: true,
+            deviceName: printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : undefined,
+          }, (success, error) => {
+            if (success) {
+              resolve()
+            } else {
+              reject(new Error(error || 'Print failed'))
+            }
+          })
         })
         printerStatus.connected = true
         printerStatus.type = 'system'
@@ -126,11 +157,13 @@ function rowLine(left: string, right: string, width: number): string {
 }
 
 async function printThermal(order: any, storeName: string) {
+  let device: any = null
+  let printer: any = null
   try {
     const USB = require('@node-escpos/usb-adapter').default
     const { Printer } = require('@node-escpos/core')
 
-    const device = new USB()
+    device = new USB()
     await new Promise<void>((resolve, reject) => {
       device.open((err: Error | null) => {
         if (err) reject(err)
@@ -142,7 +175,7 @@ async function printThermal(order: any, storeName: string) {
     const colWidth = paperSize === '80mm' ? 48 : 32
     const divider = '-'.repeat(colWidth)
 
-    const printer = new Printer(device)
+    printer = new Printer(device)
 
     printer.align('CT').style(true, false, false).text(storeName)
     printer.style(false, false, false)
@@ -177,9 +210,23 @@ async function printThermal(order: any, storeName: string) {
     }
 
     printer.align('CT').text('Thank you!').cut()
-    await printer.flush()
-    await printer.close()
   } catch (err: any) {
     throw new Error(err?.message || 'Thermal printer not available')
+  } finally {
+    try {
+      if (printer) {
+        await printer.flush()
+        await printer.close()
+      }
+    } catch (closeErr) {
+      console.warn('Failed to close printer:', closeErr)
+    }
+    try {
+      if (device) {
+        device.close()
+      }
+    } catch (closeErr) {
+      console.warn('Failed to close device:', closeErr)
+    }
   }
 }

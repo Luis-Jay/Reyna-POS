@@ -23,6 +23,8 @@ export default function ReportsPage() {
   const [period, setPeriod] = useState('this_month')
   const [activeTab, setActiveTab] = useState<ReportTab>('profit_and_loss')
   const [financials, setFinancials] = useState<FinancialStatements | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [isPro, setIsPro] = useState(false)
 
   useEffect(() => {
@@ -31,7 +33,18 @@ export default function ReportsPage() {
 
   useEffect(() => {
     if (!isPro) return
-    window.api.analytics.getFinancials(period).then(setFinancials)
+    setLoading(true)
+    setError(null)
+    window.api.analytics.getFinancials(period)
+      .then((data) => {
+        setFinancials(data)
+        setLoading(false)
+        setError(null)
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Failed to load financial reports')
+        setLoading(false)
+      })
   }, [isPro, period])
 
   return (
@@ -110,7 +123,7 @@ export default function ReportsPage() {
             </div>
 
             <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.2fr_360px]">
-              <StatementPanel activeTab={activeTab} financials={financials} />
+              <StatementPanel activeTab={activeTab} financials={financials} loading={loading} error={error} />
               <ReportSidebar financials={financials} />
             </div>
           </>
@@ -120,9 +133,17 @@ export default function ReportsPage() {
   )
 }
 
-function StatementPanel({ activeTab, financials }: { activeTab: ReportTab; financials: FinancialStatements | null }) {
-  if (!financials) {
+function StatementPanel({ activeTab, financials, loading, error }: { activeTab: ReportTab; financials: FinancialStatements | null; loading: boolean; error: string | null }) {
+  if (loading) {
     return <div className="rounded-[28px] bg-white p-6 text-sm text-slate-400 shadow-sm">Loading report...</div>
+  }
+
+  if (error) {
+    return <div className="rounded-[28px] bg-white p-6 text-sm text-red-600 shadow-sm">Error: {error}</div>
+  }
+
+  if (!financials) {
+    return <div className="rounded-[28px] bg-white p-6 text-sm text-slate-400 shadow-sm">No data available</div>
   }
 
   if (activeTab === 'profit_and_loss') {

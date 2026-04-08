@@ -160,11 +160,11 @@ export default function BulkEditPricesPage() {
           return (
             <div key={p.id}
               onClick={() => priceMode === 'percentage' && toggleSelect(p.id)}
-              className={`rounded-[26px] border p-4 transition duration-200 ${isSelected && priceMode === 'percentage' ? 'border-[var(--brand-500)] bg-[var(--brand-50)] shadow-[0_18px_35px_rgba(36,152,90,0.12)]' : 'border-emerald-900/8 bg-white/82 shadow-[0_12px_30px_rgba(22,49,39,0.06)] hover:-translate-y-0.5 hover:shadow-[0_18px_35px_rgba(22,49,39,0.10)]'}`}
+              className={`rounded-[26px] border p-4 transition duration-200 ${isSelected && priceMode === 'percentage' ? 'border-[var(--brand-500)] bg-[var(--brand-50)] shadow-[0_18px_35px_rgba(36,152,90,0.12)]' : 'border-emerald-900/10 bg-white/82 shadow-[0_12px_30px_rgba(22,49,39,0.06)] hover:-translate-y-0.5 hover:shadow-[0_18px_35px_rgba(22,49,39,0.10)]'}`}
             >
               <div className="flex items-center gap-4">
                 <div className="h-16 w-16 overflow-hidden rounded-2xl bg-[linear-gradient(180deg,#f4faf6_0%,#e7f4eb_100%)] shrink-0">
-                  {p.image_path && <img src={getProductImageSrc(p.image_path)} className="w-full h-full object-cover" />}
+                  {p.image_path && <img src={getProductImageSrc(p.image_path)} alt={p.name || ''} className="w-full h-full object-cover" />}
                 </div>
                 <div className="flex-1">
                   <div className="mb-2 flex flex-wrap items-center gap-2">

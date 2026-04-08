@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import axios from 'axios'
-import { getDb, migrateLocalDeviceDataToCloudUser, setActiveCloudUserId } from '../db'
+import { getActiveCloudUserId, getDb, migrateLocalDeviceDataToCloudUser, setActiveCloudUserId, withScopedDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 
 const SUPABASE_URL = 'https://rzhjfsgjkbvcspfncyku.supabase.co'
@@ -143,16 +143,19 @@ function persistCloudSession(data: {
   refreshToken?: string
   storeName?: string
   storePhone?: string
+  targetCloudUserId?: string | null
 }) {
-  const db = getDb()
-  db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('cloud_user_id', ?)`).run(data.userId)
-  db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('cloud_access_token', ?)`).run(data.accessToken)
-  if (data.refreshToken) {
-    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('cloud_refresh_token', ?)`).run(data.refreshToken)
-  }
-  db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('store_name', ?)`).run(data.storeName ?? getLocalSetupFallback().storeName)
-  db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('store_phone', ?)`).run(data.storePhone ?? getLocalSetupFallback().storePhone)
-  db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('setup_completed', 'true')`).run()
+  withScopedDb(data.targetCloudUserId ?? getActiveCloudUserId(), (db) => {
+    const fallback = getLocalSetupFallback()
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('cloud_user_id', ?)`).run(data.userId)
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('cloud_access_token', ?)`).run(data.accessToken)
+    if (data.refreshToken) {
+      db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('cloud_refresh_token', ?)`).run(data.refreshToken)
+    }
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('store_name', ?)`).run(data.storeName ?? fallback.storeName)
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('store_phone', ?)`).run(data.storePhone ?? fallback.storePhone)
+    db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('setup_completed', 'true')`).run()
+  })
 }
 
 function clearCloudSession() {
@@ -180,6 +183,35 @@ async function repairMissingCloudBusiness(accessToken: string) {
     },
     { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 15000 }
   )
+}
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function ensureAdminIdIsUUID(): string {
+  const db = getDb()
+  const admin: any = db.prepare(`
+    SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1
+  `).get()
+
+  if (!admin) return uuid()
+  if (UUID_REGEX.test(admin.id)) return admin.id
+
+  // Seed ID like 'admin-001' — migrate to a proper UUID so cloud tables accept it
+  const newId = uuid()
+  const migrateAdminId = db.transaction((nextId: string, oldId: string) => {
+    db.pragma('foreign_keys = OFF')
+    try {
+      db.prepare(`UPDATE users SET id = ? WHERE id = ?`).run(nextId, oldId)
+      db.prepare(`UPDATE orders SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
+      db.prepare(`UPDATE stock_movements SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
+      db.prepare(`UPDATE debtor_transactions SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
+      db.prepare(`UPDATE audit_log SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
+    } finally {
+      db.pragma('foreign_keys = ON')
+    }
+  })
+  migrateAdminId(newId, admin.id)
+  return newId
 }
 
 async function pushCashiersToCloud(accessToken: string, users: any[]) {
@@ -221,7 +253,7 @@ export function registerAuthHandlers() {
       .run(id, data.name, data.pin, data.role || 'cashier')
 
     // Push to cloud if logged in
-    const token = getCloudToken()
+    const token = await getValidCloudToken()
     if (token) {
       try {
         const users = db.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
@@ -247,7 +279,7 @@ export function registerAuthHandlers() {
     }
 
     // Push to cloud if logged in
-    const token = getCloudToken()
+    const token = await getValidCloudToken()
     if (token) {
       try {
         const users = db.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
@@ -272,6 +304,7 @@ export function registerAuthHandlers() {
     adminName?: string
   }) => {
     try {
+      const previousActiveCloudUserId = getActiveCloudUserId()
       const localDb = getDb()
       const localAdmin: any = localDb.prepare(`
         SELECT id
@@ -284,11 +317,10 @@ export function registerAuthHandlers() {
       let adminId: string
       let usersForCloud: any[]
       if (localAdmin) {
-        // Only update pin and name, never change the user id to preserve foreign key integrity
-        // Also ensure the admin is active
-        adminId = localAdmin.id
+        // Migrate seed IDs (e.g. 'admin-001') to a UUID so the cloud cashiers table accepts them
+        adminId = ensureAdminIdIsUUID()
         localDb.prepare(`UPDATE users SET pin = ?, name = ?, is_active = ? WHERE id = ?`)
-          .run(data.adminPin, data.adminName ?? 'Admin', 1, localAdmin.id)
+          .run(data.adminPin, data.adminName ?? 'Admin', 1, adminId)
       } else {
         // No existing admin, create new one with a new ID
         adminId = uuid()
@@ -327,11 +359,25 @@ export function registerAuthHandlers() {
       )
 
       // 2b. Explicitly sync the current local cashier list so the account can be restored on other devices.
-      await pushCashiersToCloud(access_token, usersForCloud)
-
       // 3. Move the current device-local setup into this cloud account's storage
-      migrateLocalDeviceDataToCloudUser(user.id)
-      setActiveCloudUserId(user.id)
+      try {
+        await pushCashiersToCloud(access_token, usersForCloud)
+        migrateLocalDeviceDataToCloudUser(user.id)
+        setActiveCloudUserId(user.id)
+      } catch (syncError) {
+        setActiveCloudUserId(previousActiveCloudUserId)
+
+        // Attempt cleanup - delete the created account if possible
+        try {
+          await axios.delete(`${SUPABASE_FUNCTIONS_URL}/business-setup`, {
+            headers: { Authorization: `Bearer ${access_token}` },
+            timeout: 5000
+          })
+        } catch (cleanupError) {
+          console.warn('Business setup cleanup endpoint unavailable or rollback failed:', cleanupError)
+        }
+        throw new Error(`Account setup failed during data migration: ${syncError instanceof Error ? syncError.message : String(syncError)}. The cloud account was created but local data sync failed. Please try signing in again to restore your account, or contact support if the issue persists.`)
+      }
 
       // 4. Persist session + settings locally
       persistCloudSession({
@@ -402,17 +448,18 @@ export function registerAuthHandlers() {
         }
       }
 
-      // 3. Switch this device into the signed-in account's isolated storage
-      setActiveCloudUserId(user.id)
-
-      // 4. Persist session + settings locally
+      // 3. Persist session + settings in the target account storage before switching scopes
       persistCloudSession({
         userId: user.id,
         accessToken: access_token,
         refreshToken: login_refresh_token,
         storeName: business.store_name,
         storePhone: business.store_phone ?? '',
+        targetCloudUserId: user.id,
       })
+
+      // 4. Switch this device into the signed-in account's isolated storage
+      setActiveCloudUserId(user.id)
 
       // 5. Upsert all cashiers into local users table
       applyCloudCashiers(cashiers)

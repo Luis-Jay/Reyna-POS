@@ -9,6 +9,31 @@ const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 const PAYMENT_SUCCESS_URL = Deno.env.get('PAYMENT_SUCCESS_URL') ?? ''
 const ACTIVATION_FEE = 399
 
+// Validate required environment variables
+if (!XENDIT_SECRET_KEY) {
+  console.error('XENDIT_SECRET_KEY environment variable is required')
+  throw new Error('Server configuration error: XENDIT_SECRET_KEY not set')
+}
+if (!SUPABASE_SERVICE_KEY) {
+  console.error('SUPABASE_SERVICE_ROLE_KEY environment variable is required')
+  throw new Error('Server configuration error: SUPABASE_SERVICE_ROLE_KEY not set')
+}
+
+async function fetchInvoiceDetails(invoiceId: string) {
+  const response = await fetch(`https://api.xendit.co/v2/invoices/${invoiceId}`, {
+    headers: {
+      'Authorization': `Basic ${btoa(XENDIT_SECRET_KEY + ':')}`,
+    },
+  })
+
+  if (!response.ok) {
+    const rawError = await response.text()
+    throw new Error(rawError || 'Failed to fetch existing payment link')
+  }
+
+  return response.json()
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: cors() })
@@ -27,10 +52,18 @@ Deno.serve(async (req) => {
       return json({ error: 'Invalid token' }, 401)
     }
 
-    const { installationId } = await req.json()
+    let installationId: string
+    try {
+      const body = await req.json()
+      installationId = body?.installationId
+    } catch {
+      return json({ error: 'Invalid request body' }, 400)
+    }
     if (!installationId) {
       return json({ error: 'installationId required' }, 400)
     }
+
+    const externalId = `reyna-pos-${user.id}`
 
     // Check if subscription is still active for this user.
     const { data: existing } = await supabase
@@ -43,8 +76,12 @@ Deno.serve(async (req) => {
       return json({ alreadyActivated: true })
     }
 
-    // Use user ID for the external_id
-    const externalId = `reyna-pos-${user.id}`
+    if (existing?.xendit_invoice_id && existing.xendit_external_id === externalId) {
+      const existingInvoice = await fetchInvoiceDetails(existing.xendit_invoice_id)
+      if (existingInvoice?.status !== 'PAID' && existingInvoice?.invoice_url) {
+        return json({ invoiceUrl: existingInvoice.invoice_url })
+      }
+    }
 
     // Create Xendit invoice
     const payload: Record<string, unknown> = {
@@ -60,6 +97,8 @@ Deno.serve(async (req) => {
       payload.success_redirect_url = PAYMENT_SUCCESS_URL
     }
 
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 15000)
     const xenditRes = await fetch('https://api.xendit.co/v2/invoices', {
       method: 'POST',
       headers: {
@@ -67,7 +106,9 @@ Deno.serve(async (req) => {
         'Authorization': `Basic ${btoa(XENDIT_SECRET_KEY + ':')}`,
       },
       body: JSON.stringify(payload),
+      signal: controller.signal,
     })
+    clearTimeout(timeoutId)
 
     if (!xenditRes.ok) {
       const rawError = await xenditRes.text()
@@ -92,16 +133,51 @@ Deno.serve(async (req) => {
     const invoice = await xenditRes.json()
 
     // Save or refresh the activation record for this account.
-    await supabase.from('activations').upsert({
+    const activationPayload = {
       user_id: user.id,
       installation_id: installationId,
       xendit_invoice_id: invoice.id,
       xendit_external_id: externalId,
       expires_at: null,
       activated_at: null,
-    }, {
-      onConflict: 'user_id',
-    })
+    }
+
+    if (existing) {
+      const { error: updateError } = await supabase
+        .from('activations')
+        .update(activationPayload)
+        .eq('user_id', user.id)
+
+      if (updateError) {
+        console.error('Failed to update activation record:', updateError)
+        return json({ error: 'Failed to save activation record' }, 500)
+      }
+    } else {
+      const { error: insertError } = await supabase
+        .from('activations')
+        .insert(activationPayload)
+
+      if (insertError) {
+        const isConflict = insertError.code === '23505' || insertError.message.toLowerCase().includes('duplicate key')
+        if (isConflict) {
+          const { data: conflictedActivation, error: fetchError } = await supabase
+            .from('activations')
+            .select('xendit_invoice_id, xendit_external_id')
+            .eq('user_id', user.id)
+            .single()
+
+          if (!fetchError && conflictedActivation?.xendit_invoice_id && conflictedActivation.xendit_external_id === externalId) {
+            const existingInvoice = await fetchInvoiceDetails(conflictedActivation.xendit_invoice_id)
+            if (existingInvoice?.invoice_url) {
+              return json({ invoiceUrl: existingInvoice.invoice_url })
+            }
+          }
+        }
+
+        console.error('Failed to insert activation record:', insertError)
+        return json({ error: 'Failed to save activation record' }, 500)
+      }
+    }
 
     return json({ invoiceUrl: invoice.invoice_url })
   } catch (err) {

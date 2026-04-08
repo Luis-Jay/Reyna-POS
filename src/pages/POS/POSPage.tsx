@@ -340,7 +340,10 @@ export default function POSPage() {
       {showCameraScanner && (
         <CameraScannerModal
           onClose={() => setShowCameraScanner(false)}
-          onDetected={handleScannedBarcode}
+          onDetected={async (code) => {
+            await handleScannedBarcode(code)
+            setShowCameraScanner(false)
+          }}
         />
       )}
       {showSaveOrder && (

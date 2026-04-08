@@ -47,8 +47,9 @@ Deno.serve(async (req) => {
       const inventory = Array.isArray(payload.inventory) ? payload.inventory : []
 
       if (categories.length > 0) {
+        const validCategories = categories.filter(c => typeof c.id === 'string' && c.id.trim())
         const { error } = await supabase.from('catalog_categories').upsert(
-          categories.map(category => ({
+          validCategories.map(category => ({
             id: category.id,
             business_id: businessId,
             name: category.name,
@@ -61,8 +62,9 @@ Deno.serve(async (req) => {
       }
 
       if (variationGroups.length > 0) {
+        const validVariationGroups = variationGroups.filter(g => typeof g.id === 'string' && g.id.trim())
         const { error } = await supabase.from('catalog_variation_groups').upsert(
-          variationGroups.map(group => ({
+          validVariationGroups.map(group => ({
             id: group.id,
             business_id: businessId,
             name: group.name,
@@ -74,8 +76,9 @@ Deno.serve(async (req) => {
       }
 
       if (variationOptions.length > 0) {
+        const validVariationOptions = variationOptions.filter(o => typeof o.id === 'string' && o.id.trim())
         const { error } = await supabase.from('catalog_variation_options').upsert(
-          variationOptions.map(option => ({
+          validVariationOptions.map(option => ({
             id: option.id,
             business_id: businessId,
             group_id: option.group_id,
@@ -91,8 +94,9 @@ Deno.serve(async (req) => {
       }
 
       if (products.length > 0) {
+        const validProducts = products.filter(p => typeof p.id === 'string' && p.id.trim())
         const { error } = await supabase.from('catalog_products').upsert(
-          products.map(product => ({
+          validProducts.map(product => ({
             id: product.id,
             business_id: businessId,
             name: product.name,
@@ -106,7 +110,7 @@ Deno.serve(async (req) => {
             has_variations: Boolean(product.has_variations),
             variation_group_id: product.variation_group_id ?? null,
             allow_fractions: Boolean(product.allow_fractions),
-            track_inventory: product.track_inventory !== 0,
+            track_inventory: Boolean(product.track_inventory),
             is_active: product.is_active !== 0,
             sort_order: product.sort_order ?? 0,
             monthly_sold: product.monthly_sold ?? 0,
@@ -119,16 +123,16 @@ Deno.serve(async (req) => {
       }
 
       if (inventory.length > 0) {
+        const validInventory = inventory.filter(i => typeof i.id === 'string' && i.id.trim())
         const { error } = await supabase.from('catalog_inventory').upsert(
-          inventory.map(item => ({
+          validInventory.map(item => ({
             id: item.id,
             business_id: businessId,
             product_id: item.product_id,
             quantity: item.quantity ?? 0,
             low_threshold: item.low_threshold ?? 5,
             updated_at: item.updated_at ?? new Date().toISOString(),
-          })),
-          { onConflict: 'business_id,product_id' }
+          }))
         )
         if (error) return json({ error: `Failed to sync inventory: ${error.message}` }, 500)
       }

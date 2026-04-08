@@ -58,6 +58,10 @@ function getScopeKey(cloudUserId: string | null) {
   return cloudUserId ? `cloud-${normalizeScopeKey(cloudUserId)}` : LOCAL_SCOPE
 }
 
+export function getDbPathForCloudUser(cloudUserId: string | null) {
+  return path.join(getStorageDirForCloudUser(cloudUserId), 'reyna-pos.db')
+}
+
 export function getActiveCloudUserId(): string | null {
   return readAccountState().activeCloudUserId
 }
@@ -73,7 +77,7 @@ export function getCurrentStorageDir() {
 }
 
 export function getCurrentDbPath() {
-  return path.join(getCurrentStorageDir(), 'reyna-pos.db')
+  return getDbPathForCloudUser(getActiveCloudUserId())
 }
 
 export function getCurrentProductImagesDir() {
@@ -176,8 +180,14 @@ function moveDirectoryContents(sourceDir: string, destinationDir: string) {
     }
   }
 
-  if (fs.readdirSync(sourceDir).length === 0) {
-    fs.rmdirSync(sourceDir)
+  if (fs.existsSync(sourceDir)) {
+    try {
+      if (fs.readdirSync(sourceDir).length === 0) {
+        fs.rmdirSync(sourceDir)
+      }
+    } catch (err) {
+      console.warn(`Failed to clean up ${sourceDir}: ${err}`)
+    }
   }
 }
 
@@ -205,11 +215,23 @@ export function getDb(): Database.Database {
 
   db = new Database(dbPath)
   currentDbPath = dbPath
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
-
-  runMigrations(db)
+  initializeDatabase(db)
   return db
+}
+
+export function withScopedDb<T>(cloudUserId: string | null, callback: (database: Database.Database) => T): T {
+  const dbPath = getDbPathForCloudUser(cloudUserId)
+  if (db && currentDbPath === dbPath) {
+    return callback(db)
+  }
+
+  const scopedDb = new Database(dbPath)
+  try {
+    initializeDatabase(scopedDb)
+    return callback(scopedDb)
+  } finally {
+    scopedDb.close()
+  }
 }
 
 const MIGRATIONS: { name: string; sql: string }[] = [
@@ -267,12 +289,16 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('setup_completed','false');
     `,
   },
   {
-    name: '005_debtor_follow_up.sql',
-    sql: `
-ALTER TABLE debtors ADD COLUMN due_date TEXT;
-ALTER TABLE debtors ADD COLUMN follow_up_date TEXT;
-ALTER TABLE debtors ADD COLUMN last_reminder_at TEXT;
-    `,
+    name: '005a_debtor_due_date.sql',
+    sql: `ALTER TABLE debtors ADD COLUMN due_date TEXT;`,
+  },
+  {
+    name: '005b_debtor_follow_up_date.sql',
+    sql: `ALTER TABLE debtors ADD COLUMN follow_up_date TEXT;`,
+  },
+  {
+    name: '005c_debtor_last_reminder_at.sql',
+    sql: `ALTER TABLE debtors ADD COLUMN last_reminder_at TEXT;`,
   },
   {
     name: '006_order_payment_breakdown.sql',
@@ -335,8 +361,34 @@ function runMigrations(database: Database.Database) {
     database.prepare('SELECT name FROM _migrations').all().map((r: any) => r.name)
   )
 
+  const hasColumn = (tableName: string, columnName: string) => {
+    const columns = database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>
+    return columns.some(column => column.name === columnName)
+  }
+
+  const isMigrationAlreadySatisfied = (migrationName: string) => {
+    if (migrationName === '005a_debtor_due_date.sql') {
+      return hasColumn('debtors', 'due_date')
+    }
+    if (migrationName === '005b_debtor_follow_up_date.sql') {
+      return hasColumn('debtors', 'follow_up_date')
+    }
+    if (migrationName === '005c_debtor_last_reminder_at.sql') {
+      return hasColumn('debtors', 'last_reminder_at')
+    }
+    if (migrationName === '006_order_payment_breakdown.sql') {
+      return hasColumn('orders', 'payment_breakdown')
+    }
+    return false
+  }
+
   for (const migration of MIGRATIONS) {
     if (ran.has(migration.name)) continue
+    if (isMigrationAlreadySatisfied(migration.name)) {
+      database.prepare('INSERT INTO _migrations (name) VALUES (?)').run(migration.name)
+      console.log(`[DB] Migration already satisfied: ${migration.name}`)
+      continue
+    }
     try {
       database.exec(migration.sql)
       database.prepare('INSERT INTO _migrations (name) VALUES (?)').run(migration.name)
@@ -346,6 +398,12 @@ function runMigrations(database: Database.Database) {
       throw err
     }
   }
+}
+
+function initializeDatabase(database: Database.Database) {
+  database.pragma('journal_mode = WAL')
+  database.pragma('foreign_keys = ON')
+  runMigrations(database)
 }
 
 export function closeDb() {

@@ -102,11 +102,13 @@ function getSalesSnapshot() {
         id, name, phone, balance, total_credit, total_paid,
         due_date, follow_up_date, last_reminder_at, created_at, deleted_at
       FROM debtors
+      WHERE synced = 0
     `).all(),
     debtorTransactions: db.prepare(`
       SELECT
         id, debtor_id, type, amount, profit, note, order_id, user_id, created_at
       FROM debtor_transactions
+      WHERE synced = 0
     `).all(),
     orders: db.prepare(`
       SELECT
@@ -114,6 +116,7 @@ function getSalesSnapshot() {
         payment_amount, change_amount, payment_breakdown, is_credit, debtor_id,
         user_id, note, exclude_sales, created_at, deleted_at
       FROM orders
+      WHERE synced = 0
     `).all().map((order: any) => ({
       ...order,
       payment_breakdown: order.payment_breakdown ? JSON.parse(order.payment_breakdown) : [],
@@ -122,6 +125,12 @@ function getSalesSnapshot() {
       SELECT
         id, order_id, product_id, name, price, cost, quantity, subtotal, is_custom
       FROM order_items
+    `).all(),
+    stockMovements: db.prepare(`
+      SELECT
+        id, product_id, type, quantity, note, reference_id, user_id, created_at
+      FROM stock_movements
+      WHERE synced = 0
     `).all(),
   }
 }
@@ -400,9 +409,6 @@ function applySalesSnapshot(snapshot: any) {
       )
     }
 
-    db.prepare(`UPDATE orders SET synced = 1`).run()
-    db.prepare(`UPDATE debtor_transactions SET synced = 1`).run()
-    db.prepare(`UPDATE stock_movements SET synced = 1`).run()
   })
 
   tx()
@@ -525,7 +531,15 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
 
     applyCatalogSnapshot(remoteCatalog.data)
 
+    const syncStart = new Date().toISOString()
     const localSales = getSalesSnapshot()
+
+    // Capture IDs of records being synced
+    const syncedOrderIds = localSales.orders.map((o: any) => o.id)
+    const syncedDebtorTransactionIds = localSales.debtorTransactions.map((dt: any) => dt.id)
+    const syncedDebtorIds = localSales.debtors.map((d: any) => d.id)
+    const syncedStockMovementIds = localSales.stockMovements.map((sm: any) => sm.id)
+
     await axios.post(
       `${SUPABASE_FUNCTIONS_URL}/sync-sales`,
       localSales,
@@ -538,6 +552,20 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
     )
 
     applySalesSnapshot(remoteSales.data)
+
+    // Mark the records that were sent as synced
+    if (syncedOrderIds.length > 0) {
+      db.prepare(`UPDATE orders SET synced = 1 WHERE id IN (${syncedOrderIds.map(() => '?').join(',')})`).run(...syncedOrderIds)
+    }
+    if (syncedDebtorTransactionIds.length > 0) {
+      db.prepare(`UPDATE debtor_transactions SET synced = 1 WHERE id IN (${syncedDebtorTransactionIds.map(() => '?').join(',')})`).run(...syncedDebtorTransactionIds)
+    }
+    if (syncedDebtorIds.length > 0) {
+      db.prepare(`UPDATE debtors SET synced = 1 WHERE id IN (${syncedDebtorIds.map(() => '?').join(',')})`).run(...syncedDebtorIds)
+    }
+    if (syncedStockMovementIds.length > 0) {
+      db.prepare(`UPDATE stock_movements SET synced = 1 WHERE id IN (${syncedStockMovementIds.map(() => '?').join(',')})`).run(...syncedStockMovementIds)
+    }
 
     lastSyncedAt = new Date().toISOString()
     lastSyncError = null

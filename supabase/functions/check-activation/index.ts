@@ -46,11 +46,26 @@ Deno.serve(async (req) => {
     const activated = expiresAt !== null && expiresAt > now
 
     if (!activated && data.xendit_invoice_id && XENDIT_SECRET_KEY) {
-      const invoiceRes = await fetch(`https://api.xendit.co/v2/invoices/${data.xendit_invoice_id}`, {
-        headers: {
-          'Authorization': `Basic ${btoa(XENDIT_SECRET_KEY + ':')}`,
-        },
-      })
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+
+      let invoiceRes
+      try {
+        invoiceRes = await fetch(`https://api.xendit.co/v2/invoices/${data.xendit_invoice_id}`, {
+          headers: {
+            'Authorization': `Basic ${btoa(XENDIT_SECRET_KEY + ':')}`,
+          },
+          signal: controller.signal,
+        })
+      } catch (err: any) {
+        clearTimeout(timeoutId)
+        if (err.name === 'AbortError') {
+          console.error('Xendit API request timed out')
+          return json({ activated: false, error: 'Payment verification timeout' }, 408)
+        }
+        throw err
+      }
+      clearTimeout(timeoutId)
 
       if (invoiceRes.ok) {
         const invoice = await invoiceRes.json()
@@ -69,16 +84,24 @@ Deno.serve(async (req) => {
 
           if (!updateError) {
             return json({ activated: true, expiresAt: newExpiresAt.toISOString() })
+          } else {
+            console.error('Failed to update activation record:', updateError)
+            return json({ error: 'activation update failed', details: updateError }, 500)
           }
         }
       }
     }
 
     if (activated && data.installation_id !== installationId) {
-      await supabase
+      const { error: updateError } = await supabase
         .from('activations')
         .update({ installation_id: installationId })
         .eq('user_id', user.id)
+
+      if (updateError) {
+        console.error('Failed to update installation_id:', updateError)
+        return json({ activated: false, error: 'Failed to update activation record' }, 500)
+      }
     }
 
     return json({ activated, expiresAt: data.expires_at ?? null })

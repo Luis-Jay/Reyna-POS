@@ -150,12 +150,12 @@ const api = {
     barcodeScanned: (cb: (code: string) => void) => {
       const handler = (_: any, code: string) => cb(code)
       ipcRenderer.on(IPC.PUSH.BARCODE_SCANNED, handler)
-      return () => ipcRenderer.off(IPC.PUSH.BARCODE_SCANNED, handler)
+      return () => { ipcRenderer.off(IPC.PUSH.BARCODE_SCANNED, handler) }
     },
     syncStatus: (cb: (status: any) => void) => {
       const handler = (_: any, status: any) => cb(status)
       ipcRenderer.on(IPC.PUSH.SYNC_STATUS, handler)
-      return () => ipcRenderer.off(IPC.PUSH.SYNC_STATUS, handler)
+      return () => { ipcRenderer.off(IPC.PUSH.SYNC_STATUS, handler) }
     },
   },
 }

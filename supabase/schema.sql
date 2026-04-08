@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS cashiers (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   name        TEXT NOT NULL,
-  pin         TEXT NOT NULL,
+  pin         TEXT NOT NULL, -- PBKDF2 hashed PIN with salt and pepper (see business-setup/sync-cashiers functions for hashing logic)
   role        TEXT NOT NULL DEFAULT 'cashier' CHECK(role IN ('admin','cashier')),
   is_active   BOOLEAN NOT NULL DEFAULT true,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -66,12 +66,12 @@ CREATE TABLE IF NOT EXISTS catalog_products (
   description         TEXT,
   image_data          TEXT,
   barcode             TEXT,
-  category_id         TEXT REFERENCES catalog_categories(id),
+  category_id         TEXT REFERENCES catalog_categories(id) ON DELETE SET NULL,
   base_price          NUMERIC NOT NULL DEFAULT 0,
   base_cost           NUMERIC NOT NULL DEFAULT 0,
   markup_pct          NUMERIC,
   has_variations      BOOLEAN NOT NULL DEFAULT false,
-  variation_group_id  TEXT REFERENCES catalog_variation_groups(id),
+  variation_group_id  TEXT REFERENCES catalog_variation_groups(id) ON DELETE SET NULL,
   allow_fractions     BOOLEAN NOT NULL DEFAULT false,
   track_inventory     BOOLEAN NOT NULL DEFAULT true,
   is_active           BOOLEAN NOT NULL DEFAULT true,
@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS catalog_inventory (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_inventory_product ON catalog_inventory(business_id, product_id);
 
+-- Enable RLS — access is granted only via service-role Edge Functions (bypasses RLS)
 ALTER TABLE catalog_categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_variation_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_variation_options ENABLE ROW LEVEL SECURITY;
@@ -138,7 +139,7 @@ CREATE TABLE IF NOT EXISTS sales_orders (
   business_id      UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
   order_number     TEXT NOT NULL,
   customer_name    TEXT,
-  status           TEXT NOT NULL DEFAULT 'completed',
+  status           TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('pending','completed','cancelled','void')),
   subtotal         NUMERIC NOT NULL DEFAULT 0,
   discount         NUMERIC NOT NULL DEFAULT 0,
   total            NUMERIC NOT NULL DEFAULT 0,
@@ -173,6 +174,7 @@ CREATE TABLE IF NOT EXISTS sales_order_items (
 CREATE INDEX IF NOT EXISTS idx_sales_order_items_business ON sales_order_items(business_id);
 CREATE INDEX IF NOT EXISTS idx_sales_order_items_order ON sales_order_items(order_id);
 
+-- Enable RLS — access is granted only via service-role Edge Functions (bypasses RLS)
 ALTER TABLE sales_debtors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales_debtor_transactions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales_orders ENABLE ROW LEVEL SECURITY;
@@ -181,7 +183,7 @@ ALTER TABLE sales_order_items ENABLE ROW LEVEL SECURITY;
 -- ─── ACTIVATIONS ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS activations (
   id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id          UUID REFERENCES auth.users(id),
+  user_id          UUID REFERENCES auth.users(id) ON DELETE CASCADE,
   installation_id  TEXT,
   activated_at     TIMESTAMPTZ,
   expires_at       TIMESTAMPTZ,
