@@ -23,6 +23,9 @@ export default function DebtorsPage() {
 
   const withBalance = debtors.filter(d => d.balance > 0)
   const totalOutstanding = debtors.reduce((s, d) => s + d.balance, 0)
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date())
+  const overdueCount = debtors.filter(d => d.balance > 0 && d.due_date && d.due_date < today).length
+  const followUpCount = debtors.filter(d => d.follow_up_date && d.follow_up_date <= today).length
 
   const handleAdd = async () => {
     if (!newName.trim()) return
@@ -44,7 +47,7 @@ export default function DebtorsPage() {
 
       <div className="flex-1 overflow-y-auto">
         {/* Summary */}
-        <div className="grid grid-cols-2 gap-4 p-4">
+        <div className="grid grid-cols-2 gap-4 p-4 xl:grid-cols-4">
           <div className="bg-white rounded-xl p-4 border-l-4 border-red-400">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Total Outstanding</p>
             <p className="text-2xl font-bold text-red-500">₱{totalOutstanding.toFixed(2)}</p>
@@ -52,6 +55,14 @@ export default function DebtorsPage() {
           <div className="bg-white rounded-xl p-4 border-l-4 border-orange-400">
             <p className="text-xs text-gray-500 uppercase tracking-wide">With Balance</p>
             <p className="text-2xl font-bold text-gray-800">{withBalance.length} <span className="text-sm font-normal text-gray-400">people</span></p>
+          </div>
+          <div className="bg-white rounded-xl p-4 border-l-4 border-amber-400">
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Overdue</p>
+            <p className="text-2xl font-bold text-amber-600">{overdueCount}</p>
+          </div>
+          <div className="bg-white rounded-xl p-4 border-l-4 border-blue-400">
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Follow Up Today</p>
+            <p className="text-2xl font-bold text-blue-600">{followUpCount}</p>
           </div>
         </div>
 
@@ -80,6 +91,8 @@ export default function DebtorsPage() {
               <p className={`text-xl font-bold ${d.balance > 0 ? 'text-red-500' : 'text-green-500'}`}>
                 ₱{d.balance.toFixed(2)}
               </p>
+              {d.due_date && <p className="text-xs text-gray-500 mt-1">Due: {formatShortDate(d.due_date)}</p>}
+              {d.follow_up_date && <p className="text-xs text-blue-500 mt-1">Follow up: {formatShortDate(d.follow_up_date)}</p>}
               {d.last_activity && (
                 <p className="text-xs text-gray-400 mt-1">Last activity: {formatShortDate(d.last_activity)}</p>
               )}

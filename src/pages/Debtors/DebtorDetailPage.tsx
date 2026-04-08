@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
 import { Debtor, DebtorTransaction } from '../../types'
 import { formatDate } from '../../utils/format'
-import { CreditCard, Plus, FileText, ArrowDown, ArrowUp, Minus } from 'lucide-react'
+import { CreditCard, Plus, FileText, ArrowDown, ArrowUp, BellRing, LockKeyhole, Save } from 'lucide-react'
 
 const TX_FILTERS = ['All', 'This Month', 'Last Month']
 
 export default function DebtorDetailPage() {
+  const navigate = useNavigate()
   const { id } = useParams<{ id: string }>()
   const [debtor, setDebtor] = useState<Debtor | null>(null)
   const [transactions, setTransactions] = useState<DebtorTransaction[]>([])
@@ -15,6 +16,12 @@ export default function DebtorDetailPage() {
   const [modal, setModal] = useState<'payment' | 'debt' | 'note' | null>(null)
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
+  const [phone, setPhone] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [followUpDate, setFollowUpDate] = useState('')
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [sendingReminder, setSendingReminder] = useState(false)
+  const [isPro, setIsPro] = useState(false)
 
   const load = async () => {
     const [d, txs] = await Promise.all([
@@ -23,9 +30,15 @@ export default function DebtorDetailPage() {
     ])
     setDebtor(d)
     setTransactions(txs)
+    setPhone(d?.phone || '')
+    setDueDate(d?.due_date || '')
+    setFollowUpDate(d?.follow_up_date || '')
   }
 
   useEffect(() => { load() }, [id, filter])
+  useEffect(() => {
+    window.api.activation.getStatus().then(status => setIsPro(status.activated === true))
+  }, [])
 
   const handleTx = async (type: 'payment' | 'debt' | 'note') => {
     await window.api.debtors.addTransaction({
@@ -37,6 +50,24 @@ export default function DebtorDetailPage() {
     setModal(null)
     setAmount('')
     setNote('')
+    load()
+  }
+
+  const handleSaveProfile = async () => {
+    setSavingProfile(true)
+    await window.api.debtors.update(id!, {
+      phone,
+      due_date: dueDate || null,
+      follow_up_date: followUpDate || null,
+    })
+    setSavingProfile(false)
+    load()
+  }
+
+  const handleMarkReminder = async () => {
+    setSendingReminder(true)
+    await window.api.debtors.markReminder(id!, 'Reminder marked as sent from debtor follow-up panel.')
+    setSendingReminder(false)
     load()
   }
 
@@ -64,6 +95,88 @@ export default function DebtorDetailPage() {
             <div className="text-center">
               <p className="text-xs text-gray-400 uppercase">Total Paid</p>
               <p className="font-bold text-green-600">₱{debtor.total_paid.toFixed(2)}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4">
+          <div className="rounded-2xl bg-white p-4 shadow-sm">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-gray-800">Follow-up details</p>
+                <p className="text-xs text-gray-400">Keep debtor reminders, due dates, and contact details organized in one place.</p>
+              </div>
+              {isPro ? (
+                <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Pro Active</span>
+              ) : (
+                <button
+                  onClick={() => navigate('/pro')}
+                  className="rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-[#1a8eff] hover:bg-blue-100"
+                >
+                  Unlock Pro Reminders
+                </button>
+              )}
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Phone</span>
+                <input
+                  value={phone}
+                  onChange={e => setPhone(e.target.value)}
+                  placeholder="+639123456789"
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Due Date</span>
+                <input
+                  value={dueDate}
+                  onChange={e => setDueDate(e.target.value)}
+                  type="date"
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Next Follow Up</span>
+                <input
+                  value={followUpDate}
+                  onChange={e => setFollowUpDate(e.target.value)}
+                  type="date"
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+              </label>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleSaveProfile}
+                disabled={savingProfile}
+                className="rounded-xl bg-[#1a8eff] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#0077e6] disabled:opacity-60"
+              >
+                <span className="inline-flex items-center gap-2"><Save size={16} /> {savingProfile ? 'Saving...' : 'Save Follow-up Details'}</span>
+              </button>
+
+              {isPro ? (
+                <button
+                  onClick={handleMarkReminder}
+                  disabled={sendingReminder}
+                  className="rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-60"
+                >
+                  <span className="inline-flex items-center gap-2"><BellRing size={16} /> {sendingReminder ? 'Saving...' : 'Mark Reminder Sent'}</span>
+                </button>
+              ) : (
+                <button
+                  onClick={() => navigate('/pro')}
+                  className="rounded-xl border border-blue-200 px-4 py-2.5 text-sm font-semibold text-[#1a8eff] hover:bg-blue-50"
+                >
+                  <span className="inline-flex items-center gap-2"><LockKeyhole size={16} /> Pro Reminder Tools</span>
+                </button>
+              )}
+
+              {debtor.last_reminder_at && (
+                <p className="text-xs text-gray-400">Last reminder: {formatDate(debtor.last_reminder_at)}</p>
+              )}
             </div>
           </div>
         </div>

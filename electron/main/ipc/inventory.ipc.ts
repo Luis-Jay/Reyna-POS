@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { scheduleAutoSync } from './sync.ipc'
 
 function getStatus(qty: number, threshold: number): string {
   if (qty <= 0) return 'out'
@@ -15,7 +16,7 @@ export function registerInventoryHandlers() {
     const db = getDb()
     let query = `
       SELECT i.*, p.name as product_name, p.image_path, p.monthly_sold,
-             p.track_inventory, p.is_active
+             p.track_inventory, p.is_active, p.base_price, p.base_cost
       FROM inventory i
       JOIN products p ON i.product_id = p.id
       WHERE p.deleted_at IS NULL AND p.is_active = 1 AND p.track_inventory = 1
@@ -58,6 +59,7 @@ export function registerInventoryHandlers() {
       `).run(uuid(), productId, qty, note || null)
     })
     tx()
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -73,6 +75,7 @@ export function registerInventoryHandlers() {
 
   ipcMain.handle(IPC.INVENTORY.SET_THRESHOLD, (_, productId: string, threshold: number) => {
     getDb().prepare(`UPDATE inventory SET low_threshold = ? WHERE product_id = ?`).run(threshold, productId)
+    scheduleAutoSync()
     return { success: true }
   })
 }

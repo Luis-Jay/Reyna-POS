@@ -170,4 +170,102 @@ export function registerAnalyticsHandlers() {
     const grandTotal = rows.reduce((s, r) => s + r.total, 0) || 1
     return rows.map(r => ({ ...r, pct: Math.round((r.total / grandTotal) * 100) }))
   })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_FINANCIALS, (_, period: string) => {
+    const db = getDb()
+    const { from, to } = dateFilter(period)
+
+    const sales: any = db.prepare(`
+      SELECT
+        COALESCE(SUM(o.total), 0) as total_sales,
+        COALESCE(SUM(CASE WHEN o.is_credit = 0 THEN o.total ELSE 0 END), 0) as cash_sales,
+        COALESCE(SUM(CASE WHEN o.is_credit = 1 THEN o.total ELSE 0 END), 0) as credit_sales,
+        COALESCE(SUM(
+          (SELECT COALESCE(SUM(oi.cost * oi.quantity),0)
+           FROM order_items oi WHERE oi.order_id = o.id)
+        ), 0) as total_cost
+      FROM orders o
+      WHERE o.deleted_at IS NULL
+        AND o.status = 'completed'
+        AND o.exclude_sales = 0
+        AND DATE(o.created_at) >= ?
+        AND DATE(o.created_at) <= ?
+    `).get(from, to)
+
+    const debtors: any = db.prepare(`
+      SELECT
+        COALESCE(SUM(balance), 0) as receivables,
+        COALESCE(SUM(total_paid), 0) as total_paid
+      FROM debtors
+      WHERE deleted_at IS NULL
+    `).get()
+
+    const debtorPayments: any = db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) as paid
+      FROM debtor_transactions
+      WHERE type = 'payment'
+        AND DATE(created_at) >= ?
+        AND DATE(created_at) <= ?
+    `).get(from, to)
+
+    const inventory: any = db.prepare(`
+      SELECT
+        COALESCE(SUM(i.quantity * p.base_cost), 0) as inventory_cost
+      FROM inventory i
+      JOIN products p ON p.id = i.product_id
+      WHERE p.deleted_at IS NULL
+        AND p.is_active = 1
+    `).get()
+
+    const revenue = sales?.total_sales || 0
+    const costOfGoodsSold = sales?.total_cost || 0
+    const grossProfit = revenue - costOfGoodsSold
+    const cashOnHandEstimate = (sales?.cash_sales || 0) + (debtorPayments?.paid || 0)
+    const accountsReceivable = debtors?.receivables || 0
+    const inventoryCost = inventory?.inventory_cost || 0
+
+    const trialBalanceLines = [
+      { label: 'Cash Receipts (Estimated)', amount: cashOnHandEstimate, type: 'debit' as const },
+      { label: 'Accounts Receivable', amount: accountsReceivable, type: 'debit' as const },
+      { label: 'Inventory on Hand', amount: inventoryCost, type: 'debit' as const },
+      { label: 'Cost of Goods Sold', amount: costOfGoodsSold, type: 'debit' as const },
+      { label: 'Sales Revenue', amount: revenue, type: 'credit' as const },
+    ]
+
+    const debitTotal = trialBalanceLines
+      .filter(line => line.type === 'debit')
+      .reduce((sum, line) => sum + line.amount, 0)
+    const creditTotal = trialBalanceLines
+      .filter(line => line.type === 'credit')
+      .reduce((sum, line) => sum + line.amount, 0)
+    const balancingAmount = Math.max(0, debitTotal - creditTotal)
+    const balancedLines = balancingAmount > 0
+      ? [...trialBalanceLines, { label: 'Balancing Equity (Estimated)', amount: balancingAmount, type: 'credit' as const }]
+      : trialBalanceLines
+    const balancedCredits = creditTotal + balancingAmount
+
+    return {
+      period: { from, to },
+      profit_and_loss: {
+        revenue,
+        cost_of_goods_sold: costOfGoodsSold,
+        gross_profit: grossProfit,
+        net_profit: grossProfit,
+      },
+      income_statement: {
+        net_sales: revenue,
+        cost_of_sales: costOfGoodsSold,
+        gross_income: grossProfit,
+        operating_expenses: 0,
+        net_income: grossProfit,
+        note: 'Operating expenses are not yet tracked separately, so net income currently reflects gross profit from POS data.',
+      },
+      trial_balance: {
+        lines: balancedLines,
+        total_debits: debitTotal,
+        total_credits: balancedCredits,
+        note: 'This is an operational estimate based on recorded sales, debtor balances, payments, and inventory cost. It is not a full accounting ledger.',
+      },
+    }
+  })
 }

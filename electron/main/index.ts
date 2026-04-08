@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, protocol, shell } from 'electron'
 import path from 'path'
+import fs from 'fs'
 import { getDb, closeDb } from './db'
 import { registerProductHandlers } from './ipc/products.ipc'
 import { registerCategoryHandlers } from './ipc/categories.ipc'
@@ -11,13 +12,57 @@ import { registerAnalyticsHandlers } from './ipc/analytics.ipc'
 import { registerSettingsHandlers } from './ipc/settings.ipc'
 import { registerAuthHandlers } from './ipc/auth.ipc'
 import { registerPrinterHandlers } from './ipc/printer.ipc'
-import { registerSyncHandlers } from './ipc/sync.ipc'
+import { registerSyncHandlers, startAutoSync } from './ipc/sync.ipc'
 import { registerBackupHandlers } from './ipc/backup.ipc'
+import { registerActivationHandlers } from './ipc/activation.ipc'
 import { BarcodeService } from './services/barcode.service'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+const appIconPath = path.join(__dirname, '..', '..', '..', '..', 'assets', 'icons', 'icon.png')
 
 let mainWindow: BrowserWindow | null = null
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'product-image',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+])
+
+function registerLocalImageProtocol() {
+  protocol.handle('product-image', (request) => {
+    const imagePath = decodeURIComponent(new URL(request.url).searchParams.get('path') || '')
+    if (!imagePath) {
+      return new Response('Missing image path', { status: 400 })
+    }
+
+    if (!fs.existsSync(imagePath)) {
+      return new Response('Image not found', { status: 404 })
+    }
+
+    const ext = path.extname(imagePath).toLowerCase()
+    const contentType =
+      ext === '.png' ? 'image/png' :
+      ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+      ext === '.webp' ? 'image/webp' :
+      ext === '.gif' ? 'image/gif' :
+      'application/octet-stream'
+
+    const file = fs.readFileSync(imagePath)
+    return new Response(file, {
+      status: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Cache-Control': 'no-cache',
+      },
+    })
+  })
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -32,14 +77,14 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      devTools: false,
     },
     show: false,
-    icon: path.join(__dirname, '..', '..', '..', '..', 'assets', 'icons', 'icon.png'),
+    icon: appIconPath,
   })
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
   } else {
     // electron/dist/electron/main → ../../../.. → project root → dist/renderer
     mainWindow.loadFile(path.join(__dirname, '..', '..', '..', '..', 'dist', 'renderer', 'index.html'))
@@ -59,8 +104,13 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(appIconPath)
+  }
+
   // Init DB on startup
   getDb()
+  registerLocalImageProtocol()
 
   // Register all IPC handlers
   registerProductHandlers()
@@ -75,6 +125,8 @@ app.whenReady().then(() => {
   registerPrinterHandlers()
   registerSyncHandlers()
   registerBackupHandlers()
+  registerActivationHandlers()
+  startAutoSync()
 
   createWindow()
 

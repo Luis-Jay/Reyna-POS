@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../../shared/ipc-channels'
 
 const api = {
+  assets: {
+    getProductImageUrl: (filePath: string) => `product-image://local?path=${encodeURIComponent(filePath)}`,
+  },
+
   // ─── Products ──────────────────────────────────────────────────────────────
   products: {
     getAll:       (filters?: any)        => ipcRenderer.invoke(IPC.PRODUCTS.GET_ALL, filters),
@@ -70,6 +74,8 @@ const api = {
     update:           (id: string, data: any) => ipcRenderer.invoke(IPC.DEBTORS.UPDATE, id, data),
     delete:           (id: string)        => ipcRenderer.invoke(IPC.DEBTORS.DELETE, id),
     addTransaction:   (tx: any)           => ipcRenderer.invoke(IPC.DEBTORS.ADD_TRANSACTION, tx),
+    markReminder:     (debtorId: string, note?: string) =>
+                        ipcRenderer.invoke(IPC.DEBTORS.MARK_REMINDER, debtorId, note),
     getTransactions:  (debtorId: string, filter?: string) =>
                         ipcRenderer.invoke(IPC.DEBTORS.GET_TRANSACTIONS, debtorId, filter),
   },
@@ -82,6 +88,7 @@ const api = {
     getHourly:      (date?: string)       => ipcRenderer.invoke(IPC.ANALYTICS.GET_HOURLY, date),
     getTopProducts: (period: string)      => ipcRenderer.invoke(IPC.ANALYTICS.GET_TOP_PRODUCTS, period),
     getCategories:  (period: string)      => ipcRenderer.invoke(IPC.ANALYTICS.GET_CATEGORIES, period),
+    getFinancials:  (period: string)      => ipcRenderer.invoke(IPC.ANALYTICS.GET_FINANCIALS, period),
   },
 
   // ─── Settings ──────────────────────────────────────────────────────────────
@@ -96,9 +103,13 @@ const api = {
   auth: {
     login:        (name: string, pin: string) => ipcRenderer.invoke(IPC.AUTH.LOGIN, name, pin),
     logout:       ()                      => ipcRenderer.invoke(IPC.AUTH.LOGOUT),
+    cloudLogout:  ()                      => ipcRenderer.invoke(IPC.AUTH.CLOUD_LOGOUT),
     getUsers:     ()                      => ipcRenderer.invoke(IPC.AUTH.GET_USERS),
     createUser:   (data: any)             => ipcRenderer.invoke(IPC.AUTH.CREATE_USER, data),
     updateUser:   (id: string, data: any) => ipcRenderer.invoke(IPC.AUTH.UPDATE_USER, id, data),
+    signup:       (data: any)             => ipcRenderer.invoke(IPC.AUTH.SIGNUP, data),
+    cloudLogin:   (data: any)             => ipcRenderer.invoke(IPC.AUTH.CLOUD_LOGIN, data),
+    syncCashiers: ()                      => ipcRenderer.invoke(IPC.AUTH.SYNC_CASHIERS),
   },
 
   // ─── Printer ───────────────────────────────────────────────────────────────
@@ -115,6 +126,16 @@ const api = {
   sync: {
     getStatus: ()                         => ipcRenderer.invoke(IPC.SYNC.GET_STATUS),
     force:     ()                         => ipcRenderer.invoke(IPC.SYNC.FORCE),
+    triggerAuto: (reason?: string)        => ipcRenderer.invoke(IPC.SYNC.TRIGGER_AUTO, reason),
+  },
+
+  // ─── Activation ────────────────────────────────────────────────────────────
+  activation: {
+    getInstallId:   ()  => ipcRenderer.invoke(IPC.ACTIVATION.GET_INSTALL_ID),
+    getStatus:      ()  => ipcRenderer.invoke(IPC.ACTIVATION.GET_STATUS),
+    createInvoice:  ()  => ipcRenderer.invoke(IPC.ACTIVATION.CREATE_INVOICE),
+    checkStatus:    ()  => ipcRenderer.invoke(IPC.ACTIVATION.CHECK_STATUS),
+    markActivated:  (expiresAt: string) => ipcRenderer.invoke(IPC.ACTIVATION.MARK_ACTIVATED, expiresAt),
   },
 
   // ─── Backup ────────────────────────────────────────────────────────────────

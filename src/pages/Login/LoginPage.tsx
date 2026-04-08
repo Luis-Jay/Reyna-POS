@@ -1,132 +1,160 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../stores/auth.store'
+import { ChevronLeft, Delete } from 'lucide-react'
 
 const PIN_KEYS = ['1','2','3','4','5','6','7','8','9','','0','⌫']
+
+type User = { id: string; name: string; role: string; is_active: number }
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const login = useAuthStore(s => s.login)
-  const [name, setName] = useState('Admin')
+
+  const [users, setUsers] = useState<User[]>([])
+  const [selected, setSelected] = useState<User | null>(null)
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleKey = (k: string) => {
-    if (k === '⌫') { setPin(p => p.slice(0, -1)); setError('') }
-    else if (pin.length < 6) { setPin(p => p + k); setError('') }
+  useEffect(() => {
+    window.api.auth.getUsers().then((list: User[]) => {
+      setUsers(list.filter(u => u.is_active))
+    })
+  }, [])
+
+  const handleSelect = (user: User) => {
+    setSelected(user)
+    setPin('')
+    setError('')
   }
 
-  const handleLogin = async () => {
-    if (!pin) { setError('Enter your PIN'); return }
+  const handleKey = (k: string) => {
+    if (k === '⌫') {
+      setPin(p => p.slice(0, -1))
+      setError('')
+      return
+    }
+    if (pin.length >= 4) return
+    const next = pin + k
+    setPin(next)
+    setError('')
+    if (next.length === 4) {
+      setTimeout(() => attemptLogin(selected!, next), 80)
+    }
+  }
+
+  const attemptLogin = async (user: User, enteredPin: string) => {
     setLoading(true)
     try {
-      const result = await window.api.auth.login(name, pin)
+      const result = await window.api.auth.login(user.name, enteredPin)
       if (result.success) {
         login(result.user)
         navigate(result.user.role === 'admin' ? '/' : '/pos')
       } else {
-        setError(result.error || 'Invalid credentials')
+        setError('Wrong PIN. Try again.')
         setPin('')
       }
-    } catch (e) {
+    } catch {
       setError('Login failed')
     } finally {
       setLoading(false)
     }
   }
 
-  // Auto-submit on 4-digit PIN
-  const handlePinInput = (k: string) => {
-    if (k === '⌫') { setPin(p => p.slice(0, -1)); setError(''); return }
-    if (pin.length >= 6) return
-    const newPin = pin + k
-    setPin(newPin)
-    setError('')
-    if (newPin.length === 4) {
-      setTimeout(() => {
-        (async () => {
-          setLoading(true)
-          try {
-            const result = await window.api.auth.login(name, newPin)
-            if (result.success) {
-              login(result.user)
-              navigate(result.user.role === 'admin' ? '/' : '/pos')
-            } else {
-              setError(result.error || 'Invalid credentials')
-              setPin('')
-            }
-          } catch { setError('Login failed') }
-          finally { setLoading(false) }
-        })()
-      }, 100)
-    }
+  // ── User selection screen ───────────────────────────────────────────────────
+  if (!selected) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-sm">
+          {/* Logo */}
+          <div className="mb-8 text-center">
+            <div className="brand-gradient w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <span className="text-white text-2xl font-black">R</span>
+            </div>
+            <h1 className="text-2xl font-bold text-[var(--text)]">Reyna Advanced POS</h1>
+            <p className="text-[var(--muted)] text-sm mt-1">Who's signing in?</p>
+          </div>
+
+          {/* User cards */}
+          <div className="grid gap-3">
+            {users.length === 0 && (
+              <p className="text-[var(--muted)] text-center text-sm py-4">No accounts found.</p>
+            )}
+            {users.map(user => (
+              <button
+                key={user.id}
+                onClick={() => handleSelect(user)}
+                className="glass-panel w-full active:scale-[0.98] rounded-2xl px-5 py-4 flex items-center gap-4 transition-all hover:shadow-md text-left"
+              >
+                <div className="brand-gradient w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-sm">
+                  <span className="text-white text-lg font-bold">{user.name.charAt(0).toUpperCase()}</span>
+                </div>
+                <div>
+                  <p className="text-[var(--text)] font-semibold text-base">{user.name}</p>
+                  <p className="text-[var(--muted)] text-xs capitalize">{user.role}</p>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <p className="text-center text-xs text-[var(--muted)] mt-8">Powered by Reyna Advanced POS</p>
+        </div>
+      </div>
+    )
   }
 
+  // ── PIN entry screen ────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-[#1a8eff] flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8">
-        {/* Logo / Title */}
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-[#1a8eff] rounded-2xl flex items-center justify-center mx-auto mb-3">
-            <span className="text-white text-2xl font-bold">R</span>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-800">Reyna POS</h1>
-          <p className="text-gray-500 text-sm mt-1">Sign in to continue</p>
-        </div>
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <div className="glass-strong rounded-3xl shadow-2xl w-full max-w-sm p-8">
 
-        {/* Name selector */}
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-600 mb-1">Account</label>
-          <select
-            value={name}
-            onChange={e => { setName(e.target.value); setPin(''); setError('') }}
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
-          >
-            <option value="admin">Admin</option>
-            <option value="cashier">Cashier</option>
-          </select>
+        <button
+          onClick={() => { setSelected(null); setPin(''); setError('') }}
+          className="flex items-center gap-1 text-[var(--muted)] hover:text-[var(--text)] text-sm mb-6 transition-colors"
+        >
+          <ChevronLeft size={16} /> Back
+        </button>
+
+        <div className="text-center mb-6">
+          <div className="brand-gradient w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-md">
+            <span className="text-white text-2xl font-bold">{selected.name.charAt(0).toUpperCase()}</span>
+          </div>
+          <h2 className="text-xl font-bold text-[var(--text)]">{selected.name}</h2>
+          <p className="text-[var(--muted)] text-sm capitalize">{selected.role}</p>
         </div>
 
         {/* PIN dots */}
         <div className="flex justify-center gap-3 mb-4">
           {[0,1,2,3].map(i => (
-            <div key={i} className={`w-4 h-4 rounded-full border-2 transition-colors ${
-              pin.length > i ? 'bg-[#1a8eff] border-[#1a8eff]' : 'border-gray-300'
+            <div key={i} className={`w-4 h-4 rounded-full border-2 transition-all duration-150 ${
+              pin.length > i
+                ? 'bg-[var(--brand-500)] border-[var(--brand-500)] scale-110'
+                : 'border-gray-300'
             }`} />
           ))}
         </div>
 
-        {error && (
-          <p className="text-red-500 text-sm text-center mb-3">{error}</p>
-        )}
+        {error && <p className="text-red-500 text-sm text-center mb-3">{error}</p>}
 
         {/* PIN pad */}
         <div className="grid grid-cols-3 gap-2">
           {PIN_KEYS.map((k, i) => (
             <button
               key={i}
-              onClick={() => k && handlePinInput(k)}
+              onClick={() => k && handleKey(k)}
               disabled={loading || !k}
-              className={`h-14 rounded-xl text-xl font-semibold transition-all ${
+              className={`h-14 rounded-xl text-xl font-semibold transition-all active:scale-95 ${
                 !k ? 'invisible' :
                 k === '⌫'
-                  ? 'bg-gray-100 text-gray-600 hover:bg-gray-200 active:scale-95'
-                  : 'bg-gray-50 text-gray-800 hover:bg-[#e6f2ff] hover:text-[#1a8eff] active:scale-95 border border-gray-200'
+                  ? 'bg-[var(--bg-accent)] text-[var(--muted)] hover:bg-[var(--brand-100)]'
+                  : 'bg-[var(--bg)] text-[var(--text)] hover:bg-[var(--brand-100)] hover:text-[var(--brand-600)] border border-[var(--border)]'
               }`}
             >
-              {k}
+              {k === '⌫' ? <Delete size={18} className="mx-auto" /> : k}
             </button>
           ))}
         </div>
-
-        <button
-          onClick={handleLogin}
-          disabled={loading || pin.length === 0}
-          className="mt-4 w-full bg-[#1a8eff] text-white py-3 rounded-xl font-semibold text-base hover:bg-[#0077e6] active:scale-95 transition-all disabled:opacity-50"
-        >
-          {loading ? 'Signing in...' : 'Sign In'}
-        </button>
       </div>
     </div>
   )

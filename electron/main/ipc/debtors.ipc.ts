@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { scheduleAutoSync } from './sync.ipc'
 
 export function registerDebtorHandlers() {
   ipcMain.handle(IPC.DEBTORS.GET_ALL, (_, filters?: any) => {
@@ -31,17 +32,35 @@ export function registerDebtorHandlers() {
     const id = uuid()
     db.prepare(`INSERT INTO debtors (id, name, phone) VALUES (?, ?, ?)`)
       .run(id, data.name, data.phone || null)
+    scheduleAutoSync()
     return { success: true, id }
   })
 
   ipcMain.handle(IPC.DEBTORS.UPDATE, (_, id: string, data: any) => {
-    getDb().prepare(`UPDATE debtors SET name = COALESCE(?, name), phone = ? WHERE id = ?`)
-      .run(data.name, data.phone || null, id)
+    getDb().prepare(`
+      UPDATE debtors
+      SET
+        name = COALESCE(?, name),
+        phone = ?,
+        due_date = ?,
+        follow_up_date = ?,
+        last_reminder_at = COALESCE(?, last_reminder_at)
+      WHERE id = ?
+    `).run(
+      data.name,
+      data.phone || null,
+      data.due_date || null,
+      data.follow_up_date || null,
+      data.last_reminder_at || null,
+      id,
+    )
+    scheduleAutoSync()
     return { success: true }
   })
 
   ipcMain.handle(IPC.DEBTORS.DELETE, (_, id: string) => {
     getDb().prepare(`UPDATE debtors SET deleted_at = datetime('now') WHERE id = ?`).run(id)
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -64,6 +83,7 @@ export function registerDebtorHandlers() {
       }
     })
     txn()
+    scheduleAutoSync()
     return { success: true, id }
   })
 
@@ -78,5 +98,21 @@ export function registerDebtorHandlers() {
     }
     query += ` ORDER BY created_at DESC`
     return db.prepare(query).all(...params)
+  })
+
+  ipcMain.handle(IPC.DEBTORS.MARK_REMINDER, (_, debtorId: string, note?: string) => {
+    const db = getDb()
+    const id = uuid()
+    const sentAt = new Date().toISOString()
+    const txn = db.transaction(() => {
+      db.prepare(`UPDATE debtors SET last_reminder_at = ? WHERE id = ?`).run(sentAt, debtorId)
+      db.prepare(`
+        INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, note)
+        VALUES (?, ?, 'note', 0, 0, ?)
+      `).run(id, debtorId, note || 'Reminder marked as sent.')
+    })
+    txn()
+    scheduleAutoSync()
+    return { success: true, sentAt }
   })
 }

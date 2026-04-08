@@ -54,6 +54,7 @@ export const IPC = {
     DELETE:         'debtors:delete',
     ADD_TRANSACTION:'debtors:addTransaction',
     GET_TRANSACTIONS:'debtors:getTransactions',
+    MARK_REMINDER:  'debtors:markReminder',
   },
   ANALYTICS: {
     GET_DASHBOARD:  'analytics:getDashboard',
@@ -62,6 +63,7 @@ export const IPC = {
     GET_HOURLY:     'analytics:getHourly',
     GET_TOP_PRODUCTS:'analytics:getTopProducts',
     GET_CATEGORIES: 'analytics:getCategories',
+    GET_FINANCIALS: 'analytics:getFinancials',
   },
   SETTINGS: {
     GET_ALL:        'settings:getAll',
@@ -72,9 +74,13 @@ export const IPC = {
   AUTH: {
     LOGIN:          'auth:login',
     LOGOUT:         'auth:logout',
+    CLOUD_LOGOUT:   'auth:cloudLogout',
     GET_USERS:      'auth:getUsers',
     CREATE_USER:    'auth:createUser',
     UPDATE_USER:    'auth:updateUser',
+    SIGNUP:         'auth:signup',
+    CLOUD_LOGIN:    'auth:cloudLogin',
+    SYNC_CASHIERS:  'auth:syncCashiers',
   },
   PRINTER: {
     PRINT_RECEIPT:  'printer:printReceipt',
@@ -87,11 +93,19 @@ export const IPC = {
   SYNC: {
     GET_STATUS:     'sync:getStatus',
     FORCE:          'sync:force',
+    TRIGGER_AUTO:   'sync:triggerAuto',
   },
   BACKUP: {
     EXPORT:         'backup:export',
     IMPORT:         'backup:import',
     RESET:          'backup:reset',
+  },
+  ACTIVATION: {
+    GET_INSTALL_ID:  'activation:getInstallId',
+    GET_STATUS:      'activation:getStatus',
+    CREATE_INVOICE:  'activation:createInvoice',
+    CHECK_STATUS:    'activation:checkStatus',
+    MARK_ACTIVATED:  'activation:markActivated',
   },
   // Push events: main → renderer
   PUSH: {

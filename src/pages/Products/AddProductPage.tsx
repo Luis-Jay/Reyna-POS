@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
 import { Category, VariationGroup } from '../../types'
+import { getProductImageSrc } from '../../utils/images'
 
 export default function AddProductPage() {
   const navigate = useNavigate()
@@ -37,7 +38,7 @@ export default function AddProductPage() {
             allow_fractions: !!p.allow_fractions, track_inventory: !!p.track_inventory,
             initial_stock: '',
           })
-          if (p.image_path) setImagePreview(`file://${p.image_path}`)
+          if (p.image_path) setImagePreview(getProductImageSrc(p.image_path))
         }
       })
     }

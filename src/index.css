@@ -3,20 +3,84 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --bg: #f5fbf7;
+    --bg-accent: #e6f6eb;
+    --surface: rgba(255, 255, 255, 0.82);
+    --surface-strong: rgba(255, 255, 255, 0.94);
+    --border: rgba(21, 128, 61, 0.12);
+    --text: #163127;
+    --muted: #688476;
+    --brand-50: #effcf3;
+    --brand-100: #dcf8e5;
+    --brand-200: #b7efca;
+    --brand-400: #38b36b;
+    --brand-500: #24985a;
+    --brand-600: #1b7d4b;
+    --brand-700: #145f39;
+    --shadow-soft: 0 18px 50px rgba(21, 128, 61, 0.10);
+  }
+
   * { box-sizing: border-box; }
   html, body, #root {
     height: 100%;
     margin: 0;
     padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: 'Avenir Next', 'Segoe UI', Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
     user-select: none;
-    background: #f1f5f9;
+    color: var(--text);
+    background:
+      radial-gradient(circle at top left, rgba(56, 179, 107, 0.18), transparent 28%),
+      radial-gradient(circle at top right, rgba(183, 239, 202, 0.75), transparent 26%),
+      linear-gradient(180deg, #f7fcf8 0%, #eef8f1 48%, #f8fcf9 100%);
   }
   input, textarea { user-select: text; }
+  body {
+    color: var(--text);
+  }
+  input, textarea, select, button {
+    font: inherit;
+  }
 }
 
 @layer utilities {
   .scrollbar-hide::-webkit-scrollbar { display: none; }
   .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+  .glass-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(16px);
+  }
+  .glass-strong {
+    background: var(--surface-strong);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(18px);
+  }
+  .brand-gradient {
+    background: linear-gradient(135deg, var(--brand-500) 0%, var(--brand-600) 62%, var(--brand-700) 100%);
+  }
+  .brand-ring {
+    @apply focus:outline-none focus:ring-2 focus:ring-offset-0;
+    --tw-ring-color: rgba(36, 152, 90, 0.28);
+  }
+  .brand-input {
+    @apply brand-ring w-full rounded-2xl border px-4 py-3.5 text-base transition;
+    border-color: rgba(255, 255, 255, 0.22);
+    background: rgba(255, 255, 255, 0.98);
+    color: #20352c;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  }
+  .brand-input::placeholder {
+    color: #94a3b8;
+  }
+  .brand-input:hover {
+    border-color: rgba(255, 255, 255, 0.34);
+  }
+  .brand-input:focus {
+    border-color: rgba(36, 152, 90, 0.42);
+    background: #ffffff;
+  }
 }

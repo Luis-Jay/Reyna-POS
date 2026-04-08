@@ -87,6 +87,12 @@ export interface CartItem {
 
 // ─── Orders ──────────────────────────────────────────────────────────────────
 export type OrderStatus = 'pending' | 'completed' | 'cancelled' | 'void'
+export type PaymentMethod = 'cash' | 'gcash' | 'card'
+
+export interface PaymentEntry {
+  method: PaymentMethod
+  amount: number
+}
 
 export interface Order {
   id: string
@@ -98,6 +104,7 @@ export interface Order {
   total: number
   payment_amount?: number
   change_amount?: number
+  payment_breakdown?: PaymentEntry[]
   is_credit: number
   debtor_id?: string
   user_id?: string
@@ -162,6 +169,9 @@ export interface Debtor {
   balance: number
   total_credit: number
   total_paid: number
+  due_date?: string
+  follow_up_date?: string
+  last_reminder_at?: string
   created_at: string
   deleted_at?: string
   // Runtime
@@ -238,9 +248,44 @@ export interface InventoryValuation {
   total_cost: number
 }
 
+export interface FinancialStatementLine {
+  label: string
+  amount: number
+  type: 'debit' | 'credit' | 'value'
+}
+
+export interface FinancialStatements {
+  period: {
+    from: string
+    to: string
+  }
+  profit_and_loss: {
+    revenue: number
+    cost_of_goods_sold: number
+    gross_profit: number
+    net_profit: number
+  }
+  income_statement: {
+    net_sales: number
+    cost_of_sales: number
+    gross_income: number
+    operating_expenses: number
+    net_income: number
+    note: string
+  }
+  trial_balance: {
+    lines: FinancialStatementLine[]
+    total_debits: number
+    total_credits: number
+    note: string
+  }
+}
+
 // ─── Settings ────────────────────────────────────────────────────────────────
 export interface AppSettings {
   store_name: string
+  store_phone: string
+  setup_completed: string
   thermal_enabled: string
   paper_size: string
   printer_interface: string

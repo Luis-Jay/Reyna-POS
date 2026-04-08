@@ -1,9 +1,10 @@
-import { ipcMain, app } from 'electron'
+import { ipcMain } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { v4 as uuid } from 'uuid'
-import { getDb } from '../db'
+import { getCurrentProductImagesDir, getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { scheduleAutoSync } from './sync.ipc'
 
 export function registerProductHandlers() {
   // GET ALL with optional filters
@@ -87,6 +88,7 @@ export function registerProductHandlers() {
         .run(uuid(), id, data.initial_stock || 0)
     })
     tx()
+    scheduleAutoSync()
     return { success: true, id }
   })
 
@@ -119,12 +121,14 @@ export function registerProductHandlers() {
            data.allow_fractions != null ? (data.allow_fractions ? 1 : 0) : null,
            data.track_inventory != null ? (data.track_inventory ? 1 : 0) : null,
            id)
+    scheduleAutoSync()
     return { success: true }
   })
 
   // DELETE (soft)
   ipcMain.handle(IPC.PRODUCTS.DELETE, (_, id: string) => {
     getDb().prepare(`UPDATE products SET deleted_at = datetime('now') WHERE id = ?`).run(id)
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -138,6 +142,7 @@ export function registerProductHandlers() {
       }
     })
     tx()
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -150,6 +155,7 @@ export function registerProductHandlers() {
       }
     })
     tx()
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -162,6 +168,7 @@ export function registerProductHandlers() {
       }
     })
     tx()
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -174,14 +181,14 @@ export function registerProductHandlers() {
       }
     })
     tx()
+    scheduleAutoSync()
     return { success: true }
   })
 
   // SAVE IMAGE
   ipcMain.handle(IPC.PRODUCTS.SAVE_IMAGE, (_, productId: string, dataUrl: string) => {
     try {
-      const imagesDir = path.join(app.getPath('userData'), 'product-images')
-      if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true })
+      const imagesDir = getCurrentProductImagesDir()
 
       const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
       const ext = dataUrl.match(/^data:image\/(\w+)/)?.[1] || 'jpg'
@@ -190,6 +197,7 @@ export function registerProductHandlers() {
       fs.writeFileSync(filePath, Buffer.from(base64, 'base64'))
 
       getDb().prepare(`UPDATE products SET image_path = ? WHERE id = ?`).run(filePath, productId)
+      scheduleAutoSync()
       return { success: true, path: filePath }
     } catch (err: any) {
       return { success: false, error: err.message }

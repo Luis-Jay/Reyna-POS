@@ -2,9 +2,33 @@ import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { scheduleAutoSync } from './sync.ipc'
 
-function generateOrderNumber(): string {
-  return Math.random().toString(36).substring(2, 10)
+function mapOrder(order: any) {
+  if (!order) return order
+  if (order.payment_breakdown) {
+    try {
+      order.payment_breakdown = JSON.parse(order.payment_breakdown)
+    } catch {
+      order.payment_breakdown = []
+    }
+  } else {
+    order.payment_breakdown = []
+  }
+  return order
+}
+
+function generateOrderNumber(db: ReturnType<typeof getDb>): string {
+  const today = new Date()
+  const datePart = today.getFullYear().toString().slice(2)
+    + String(today.getMonth() + 1).padStart(2, '0')
+    + String(today.getDate()).padStart(2, '0')
+  const prefix = `${datePart}-`
+  const row: any = db.prepare(
+    `SELECT order_number FROM orders WHERE order_number LIKE ? ORDER BY created_at DESC LIMIT 1`
+  ).get(`${prefix}%`)
+  const last = row ? parseInt(row.order_number.split('-')[1], 10) : 0
+  return `${prefix}${String(last + 1).padStart(4, '0')}`
 }
 
 export function registerOrderHandlers() {
@@ -12,14 +36,14 @@ export function registerOrderHandlers() {
   ipcMain.handle(IPC.ORDERS.CREATE, (_, orderData: any) => {
     const db = getDb()
     const orderId = uuid()
-    const orderNumber = generateOrderNumber()
+    const orderNumber = generateOrderNumber(db)
 
     const tx = db.transaction(() => {
       // Insert order
       db.prepare(`
         INSERT INTO orders (id, order_number, customer_name, status, subtotal, discount,
-          total, payment_amount, change_amount, is_credit, debtor_id, user_id, note)
-        VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          total, payment_amount, change_amount, payment_breakdown, is_credit, debtor_id, user_id, note)
+        VALUES (?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(orderId, orderNumber,
              orderData.customer_name || null,
              orderData.subtotal || 0,
@@ -27,6 +51,7 @@ export function registerOrderHandlers() {
              orderData.total,
              orderData.payment_amount || null,
              orderData.change_amount || null,
+             JSON.stringify(orderData.payment_breakdown || []),
              orderData.is_credit ? 1 : 0,
              orderData.debtor_id || null,
              orderData.user_id || null,
@@ -75,8 +100,9 @@ export function registerOrderHandlers() {
     })
 
     const id = tx()
-    const order = db.prepare(`SELECT * FROM orders WHERE id = ?`).get(id) as any
+    const order = mapOrder(db.prepare(`SELECT * FROM orders WHERE id = ?`).get(id) as any)
     order.items = db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).all(id)
+    scheduleAutoSync()
     return { success: true, order }
   })
 
@@ -101,13 +127,13 @@ export function registerOrderHandlers() {
     }
     query += ` GROUP BY o.id ORDER BY o.created_at DESC`
     if (filters?.limit) { query += ` LIMIT ?`; params.push(filters.limit) }
-    return db.prepare(query).all(...params)
+    return db.prepare(query).all(...params).map(mapOrder)
   })
 
   // GET BY ID with items
   ipcMain.handle(IPC.ORDERS.GET_BY_ID, (_, id: string) => {
     const db = getDb()
-    const order: any = db.prepare(`SELECT * FROM orders WHERE id = ?`).get(id)
+    const order: any = mapOrder(db.prepare(`SELECT * FROM orders WHERE id = ?`).get(id))
     if (!order) return null
     order.items = db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).all(id)
     return order
@@ -115,11 +141,13 @@ export function registerOrderHandlers() {
 
   ipcMain.handle(IPC.ORDERS.UPDATE_STATUS, (_, id: string, status: string) => {
     getDb().prepare(`UPDATE orders SET status = ? WHERE id = ?`).run(status, id)
+    scheduleAutoSync()
     return { success: true }
   })
 
   ipcMain.handle(IPC.ORDERS.EXCLUDE_SALES, (_, id: string, exclude: boolean) => {
     getDb().prepare(`UPDATE orders SET exclude_sales = ? WHERE id = ?`).run(exclude ? 1 : 0, id)
+    scheduleAutoSync()
     return { success: true }
   })
 

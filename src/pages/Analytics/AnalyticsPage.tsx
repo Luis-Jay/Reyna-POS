@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import TopBar from '../../components/layout/TopBar'
 import { AnalyticsReport, DailyStat, HourlyStat, TopProduct, CategoryStat } from '../../types'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { getProductImageSrc } from '../../utils/images'
 
 const PERIODS = [
   { label: 'This Month', value: 'this_month' },
@@ -37,8 +38,10 @@ export default function AnalyticsPage() {
 
     // Inventory valuation from inventory endpoint
     const inv: any[] = await window.api.inventory.getAll()
-    // This is approximate — ideally the backend returns this
-    setValuation({ potential_revenue: 0, total_cost: 0 })
+    setValuation({
+      potential_revenue: inv.reduce((s, i) => s + (i.quantity * (i.base_price ?? 0)), 0),
+      total_cost: inv.reduce((s, i) => s + (i.quantity * (i.base_cost ?? 0)), 0),
+    })
   }
 
   useEffect(() => { load() }, [period, selectedDay])
@@ -193,7 +196,7 @@ export default function AnalyticsPage() {
             </div>
             {maxHour.count > 0 && (
               <div className="mt-3 pt-3 border-t text-center">
-                <p className="text-xs text-gray-400">{maxHour.hour}:00 AM - {maxHour.hour}:59 AM</p>
+                <p className="text-xs text-gray-400">{maxHour.hour === 0 ? '12' : maxHour.hour > 12 ? maxHour.hour - 12 : maxHour.hour}:00 {maxHour.hour < 12 ? 'AM' : 'PM'} – {maxHour.hour === 0 ? '12' : maxHour.hour > 12 ? maxHour.hour - 12 : maxHour.hour}:59 {maxHour.hour < 12 ? 'AM' : 'PM'}</p>
                 <p className="font-bold text-gray-800">{maxHour.count} sales</p>
               </div>
             )}
@@ -206,7 +209,7 @@ export default function AnalyticsPage() {
               <div key={p.product_id || i} className="flex items-center gap-3 mb-3">
                 <span className="text-gray-400 font-bold w-4 text-sm">{i + 1}</span>
                 <div className="w-8 h-8 bg-gray-100 rounded-lg overflow-hidden shrink-0">
-                  {p.image_path && <img src={`file://${p.image_path}`} className="w-full h-full object-cover" />}
+                  {p.image_path && <img src={getProductImageSrc(p.image_path)} className="w-full h-full object-cover" />}
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>

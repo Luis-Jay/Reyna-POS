@@ -1,0 +1,22 @@
+project_id = "rzhjfsgjkbvcspfncyku"
+
+[functions.sync-cashiers]
+verify_jwt = false
+
+[functions.sync-catalog]
+verify_jwt = false
+
+[functions.sync-sales]
+verify_jwt = false
+
+[functions.business-setup]
+verify_jwt = false
+
+[functions.create-invoice]
+verify_jwt = false
+
+[functions.check-activation]
+verify_jwt = false
+
+[functions.xendit-webhook]
+verify_jwt = false
