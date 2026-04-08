@@ -35,7 +35,6 @@ Deno.serve(async (req) => {
       .from('activations')
       .select('installation_id, activated_at, expires_at, xendit_invoice_id')
       .eq('user_id', user.id)
-      .eq('installation_id', installationId)
       .single()
 
     if (error || !data) {
@@ -62,16 +61,24 @@ Deno.serve(async (req) => {
           const { error: updateError } = await supabase
             .from('activations')
             .update({
+              installation_id: installationId,
               activated_at: freshNow.toISOString(),
               expires_at: newExpiresAt.toISOString(),
             })
-            .eq('installation_id', installationId)
+            .eq('user_id', user.id)
 
           if (!updateError) {
             return json({ activated: true, expiresAt: newExpiresAt.toISOString() })
           }
         }
       }
+    }
+
+    if (activated && data.installation_id !== installationId) {
+      await supabase
+        .from('activations')
+        .update({ installation_id: installationId })
+        .eq('user_id', user.id)
     }
 
     return json({ activated, expiresAt: data.expires_at ?? null })

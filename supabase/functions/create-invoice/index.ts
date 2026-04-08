@@ -32,10 +32,10 @@ Deno.serve(async (req) => {
       return json({ error: 'installationId required' }, 400)
     }
 
-    // Check if subscription is still active for this user
+    // Check if subscription is still active for this user.
     const { data: existing } = await supabase
       .from('activations')
-      .select('expires_at')
+      .select('expires_at, xendit_invoice_id, xendit_external_id')
       .eq('user_id', user.id)
       .single()
 
@@ -91,7 +91,7 @@ Deno.serve(async (req) => {
 
     const invoice = await xenditRes.json()
 
-    // Save pending activation record
+    // Save or refresh the activation record for this account.
     await supabase.from('activations').upsert({
       user_id: user.id,
       installation_id: installationId,
@@ -99,6 +99,8 @@ Deno.serve(async (req) => {
       xendit_external_id: externalId,
       expires_at: null,
       activated_at: null,
+    }, {
+      onConflict: 'user_id',
     })
 
     return json({ invoiceUrl: invoice.invoice_url })
