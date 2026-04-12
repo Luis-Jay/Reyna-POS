@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ShoppingCart, BarChart2, Package, Clock, Settings, List, Tag, UserX, FileText } from 'lucide-react'
+import { ShoppingCart, BarChart2, Package, Clock, Settings, List, Tag, UserX, FileText, Receipt, Users, Star } from 'lucide-react'
 import { DashboardSnapshot } from '../../types'
 import { formatDate } from '../../utils/format'
 import { useAuthStore } from '../../stores/auth.store'
@@ -25,6 +25,9 @@ export default function DashboardPage() {
     { label: 'Inventory',     icon: Package,      tone: 'from-teal-400 to-green-700', path: '/inventory', badge: undefined },
     { label: 'Pending Orders',icon: Clock,        tone: 'from-amber-400 to-emerald-700', path: '/orders', badge: pendingCount > 0 ? pendingCount : undefined },
     { label: 'Debtors',       icon: UserX,        tone: 'from-stone-500 to-emerald-900', path: '/debtors' },
+    { label: 'Expenses',          icon: Receipt,  tone: 'from-rose-400 to-red-700',     path: '/expenses' },
+    { label: 'Cashier Monitoring',icon: Users,    tone: 'from-violet-500 to-purple-700', path: '/cashier-monitoring' },
+    { label: 'Loyalty / Sukipoints', icon: Star, tone: 'from-amber-400 to-orange-600', path: '/loyalty' },
     { label: 'Settings',      icon: Settings,     tone: 'from-zinc-500 to-green-800', path: '/settings' },
   ]
 

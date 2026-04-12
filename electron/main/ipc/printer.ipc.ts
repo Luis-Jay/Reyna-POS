@@ -6,16 +6,21 @@ let printerStatus = { connected: false, type: '', device: '', error: '' }
 
 function getPrinterSettings() {
   const db = getDb()
-  const thermalEnabled = db.prepare(`SELECT value FROM settings WHERE key = 'thermal_enabled'`).get() as any
-  const storeName = db.prepare(`SELECT value FROM settings WHERE key = 'store_name'`).get() as any
-  const paperSizeRow = db.prepare(`SELECT value FROM settings WHERE key = 'paper_size'`).get() as any
-  const printerInterfaceRow = db.prepare(`SELECT value FROM settings WHERE key = 'printer_interface'`).get() as any
+  const rows: any[] = db.prepare(`SELECT key, value FROM settings WHERE key IN (
+    'thermal_enabled','store_name','paper_size','printer_interface',
+    'store_address','store_phone','store_tin','receipt_footer'
+  )`).all()
+  const s = Object.fromEntries(rows.map(r => [r.key, r.value]))
 
   return {
-    thermalEnabled: thermalEnabled?.value === 'true',
-    storeName: storeName?.value || 'Reyna Store',
-    paperSize: paperSizeRow?.value || '58mm',
-    printerInterface: printerInterfaceRow?.value || '',
+    thermalEnabled: s['thermal_enabled'] === 'true',
+    storeName: s['store_name'] || 'Reyna Store',
+    storeAddress: s['store_address'] || '',
+    storePhone: s['store_phone'] || '',
+    storeTin: s['store_tin'] || '',
+    receiptFooter: s['receipt_footer'] || 'Thank you for shopping with us!',
+    paperSize: s['paper_size'] || '58mm',
+    printerInterface: s['printer_interface'] || '',
   }
 }
 
@@ -49,11 +54,11 @@ export function registerPrinterHandlers() {
   })
 
   ipcMain.handle(IPC.PRINTER.PRINT_RECEIPT, async (_, order: any) => {
-    const { thermalEnabled, storeName, printerInterface } = getPrinterSettings()
+    const { thermalEnabled, storeName, storeAddress, storePhone, storeTin, receiptFooter, printerInterface } = getPrinterSettings()
 
     if (thermalEnabled) {
       try {
-        await printThermal(order, storeName)
+        await printThermal(order, { storeName, storeAddress, storePhone, storeTin, receiptFooter })
         printerStatus.connected = true
         printerStatus.type = 'escpos-usb'
         printerStatus.device = 'USB'
@@ -110,7 +115,8 @@ export function registerPrinterHandlers() {
     try {
       const { thermalEnabled, printerInterface } = getPrinterSettings()
       if (thermalEnabled) {
-        await printThermal({ test: true }, 'Reyna POS Test')
+        const testSettings = getPrinterSettings()
+        await printThermal({ test: true }, { storeName: testSettings.storeName, storeAddress: testSettings.storeAddress, storePhone: testSettings.storePhone, storeTin: testSettings.storeTin, receiptFooter: testSettings.receiptFooter })
         printerStatus.connected = true
         printerStatus.type = 'escpos-usb'
         printerStatus.device = 'USB'
@@ -156,7 +162,8 @@ function rowLine(left: string, right: string, width: number): string {
   return truncated.padEnd(width - right.length) + right
 }
 
-async function printThermal(order: any, storeName: string) {
+async function printThermal(order: any, store: { storeName: string; storeAddress: string; storePhone: string; storeTin: string; receiptFooter: string }) {
+  const { storeName, storeAddress, storePhone, storeTin, receiptFooter } = store
   let device: any = null
   let printer: any = null
   try {
@@ -177,14 +184,19 @@ async function printThermal(order: any, storeName: string) {
 
     printer = new Printer(device)
 
+    // ── Header ────────────────────────────────────────────────────────────────
     printer.align('CT').style(true, false, false).text(storeName)
     printer.style(false, false, false)
+    if (storeAddress) printer.text(storeAddress)
+    if (storePhone) printer.text(storePhone)
+    if (storeTin) printer.text(`TIN: ${storeTin}`)
     printer.text(new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' }))
     printer.text(divider)
 
     if (order.test) {
       printer.text('Test Page - Printer OK')
     } else {
+      // ── Items ──────────────────────────────────────────────────────────────
       printer.align('LT')
       for (const item of order.items || []) {
         printer.text(rowLine(`${item.quantity}x ${item.name}`, `P${Number(item.subtotal).toFixed(2)}`, colWidth))
@@ -195,6 +207,7 @@ async function printThermal(order: any, storeName: string) {
       printer.style(true, false, false).text(rowLine('TOTAL', totalRight, colWidth))
       printer.style(false, false, false)
 
+      // ── Payments ──────────────────────────────────────────────────────────
       const payments = Array.isArray(order.payment_breakdown) ? order.payment_breakdown : []
       if (payments.length > 0) {
         for (const entry of payments) {
@@ -209,7 +222,9 @@ async function printThermal(order: any, storeName: string) {
       }
     }
 
-    printer.align('CT').text('Thank you!').cut()
+    // ── Footer ────────────────────────────────────────────────────────────────
+    printer.text(divider)
+    printer.align('CT').text(receiptFooter).cut()
   } catch (err: any) {
     throw new Error(err?.message || 'Thermal printer not available')
   } finally {

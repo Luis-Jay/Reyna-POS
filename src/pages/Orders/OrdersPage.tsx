@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import TopBar from '../../components/layout/TopBar'
 import { Order } from '../../types'
 import { formatDate } from '../../utils/format'
-import { FileText } from 'lucide-react'
+import { FileText, RotateCcw } from 'lucide-react'
 
 const DATE_FILTERS = ['Today (Manila Time)', 'Yesterday', 'This Week', 'This Month', 'All Time']
 
@@ -44,14 +44,14 @@ export default function OrdersPage() {
         {orders.length === 0 ? (
           <p className="text-gray-400 text-center py-12">No orders found</p>
         ) : orders.map(o => (
-          <OrderCard key={o.id} order={o} onToggleExclude={toggleExclude} />
+          <OrderCard key={o.id} order={o} onToggleExclude={toggleExclude} onRefund={load} />
         ))}
       </div>
     </div>
   )
 }
 
-function OrderCard({ order, onToggleExclude }: { order: any; onToggleExclude: (id: string, cur: number) => void }) {
+function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleExclude: (id: string, cur: number) => void; onRefund: () => void }) {
   const [items, setItems] = useState<any[]>([])
   const [expanded, setExpanded] = useState(false)
 
@@ -60,6 +60,13 @@ function OrderCard({ order, onToggleExclude }: { order: any; onToggleExclude: (i
     const full = await window.api.orders.getById(order.id)
     setItems(full?.items || [])
     setExpanded(true)
+  }
+
+  const handleRefund = async () => {
+    if (!confirm(`Refund/void Order #${order.order_number}? This will restore inventory and cannot be undone.`)) return
+    const res = await window.api.orders.refund(order.id)
+    if (!res.success) { alert(res.error || 'Refund failed.'); return }
+    onRefund()
   }
 
   return (
@@ -92,11 +99,17 @@ function OrderCard({ order, onToggleExclude }: { order: any; onToggleExclude: (i
         </div>
       ))}
 
-      <div className="flex items-center justify-between px-4 py-2 border-t border-gray-50">
+      <div className="flex items-center justify-between px-4 py-2 border-t border-gray-50 gap-3">
         <button onClick={loadItems} className="flex items-center gap-1 text-[#1a8eff] text-xs hover:underline">
           <FileText size={12} /> {expanded ? 'Hide' : 'Receipt'}
         </button>
-        <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer">
+        {order.status === 'completed' && (
+          <button onClick={handleRefund}
+            className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 hover:underline">
+            <RotateCcw size={12} /> Refund / Void
+          </button>
+        )}
+        <label className="flex items-center gap-2 text-xs text-gray-500 cursor-pointer ml-auto">
           <span>Exclude from Sales</span>
           <input type="checkbox" checked={!!order.exclude_sales}
             onChange={() => onToggleExclude(order.id, order.exclude_sales)} />

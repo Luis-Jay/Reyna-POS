@@ -17,6 +17,9 @@ import DebtorDetailPage from './pages/Debtors/DebtorDetailPage'
 import AnalyticsPage from './pages/Analytics/AnalyticsPage'
 import ReportsPage from './pages/Reports/ReportsPage'
 import SettingsPage from './pages/Settings/SettingsPage'
+import ExpensesPage from './pages/Expenses/ExpensesPage'
+import CashierMonitoringPage from './pages/CashierMonitoring/CashierMonitoringPage'
+import LoyaltyPage from './pages/Loyalty/LoyaltyPage'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   const user = useAuthStore(s => s.user)
@@ -74,6 +77,9 @@ export default function App() {
         <Route path="/reports" element={<RequireAdmin><ReportsPage /></RequireAdmin>} />
         <Route path="/pro" element={<RequireAdmin><ActivationPage onActivated={() => {}} /></RequireAdmin>} />
         <Route path="/settings" element={<RequireAdmin><SettingsPage /></RequireAdmin>} />
+        <Route path="/expenses" element={<RequireAdmin><ExpensesPage /></RequireAdmin>} />
+        <Route path="/cashier-monitoring" element={<RequireAdmin><CashierMonitoringPage /></RequireAdmin>} />
+        <Route path="/loyalty" element={<RequireAuth><LoyaltyPage /></RequireAuth>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </HashRouter>

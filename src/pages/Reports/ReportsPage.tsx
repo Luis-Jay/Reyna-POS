@@ -2,7 +2,8 @@ import { ReactNode, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
 import { FinancialStatements } from '../../types'
-import { BarChart2, CreditCard, FileText, LockKeyhole, Sparkles } from 'lucide-react'
+import { BarChart2, CreditCard, FileText, LockKeyhole, Sparkles, FileDown, FileSpreadsheet } from 'lucide-react'
+import { exportToExcel, exportToPdf } from '../../utils/export'
 
 const PERIODS = [
   { label: 'This Month', value: 'this_month' },
@@ -46,6 +47,56 @@ export default function ReportsPage() {
         setLoading(false)
       })
   }, [isPro, period])
+
+  const handleExcelExport = () => {
+    if (!financials) return
+    const { profit_and_loss: pl, income_statement: is_, trial_balance: tb } = financials
+    exportToExcel([
+      { name: 'Profit & Loss', rows: [
+        { Item: 'Revenue', Amount: pl.revenue },
+        { Item: 'Cost of Goods Sold', Amount: pl.cost_of_goods_sold },
+        { Item: 'Gross Profit', Amount: pl.gross_profit },
+        { Item: 'Net Profit', Amount: pl.net_profit },
+      ]},
+      { name: 'Income Statement', rows: [
+        { Item: 'Net Sales', Amount: is_.net_sales },
+        { Item: 'Cost of Sales', Amount: is_.cost_of_sales },
+        { Item: 'Gross Income', Amount: is_.gross_income },
+        { Item: 'Operating Expenses', Amount: is_.operating_expenses },
+        { Item: 'Net Income', Amount: is_.net_income },
+      ]},
+      { name: 'Trial Balance', rows: tb.lines.map(l => ({ Account: l.label, Debit: l.type === 'debit' ? l.amount : '', Credit: l.type === 'credit' ? l.amount : '' })) },
+    ], `financial-report-${period}-${new Date().toISOString().slice(0,10)}`)
+  }
+
+  const handlePdfExport = () => {
+    if (!financials) return
+    const { profit_and_loss: pl, income_statement: is_, trial_balance: tb } = financials
+    const row = (label: string, value: string) => `<tr><td>${label}</td><td style="text-align:right">${value}</td></tr>`
+    const html = `
+      <div class="section-title">Profit & Loss — ${financials.period.from} to ${financials.period.to}</div>
+      <table><tbody>
+        ${row('Revenue', `₱${pl.revenue.toLocaleString()}`)}
+        ${row('Cost of Goods Sold', `₱${pl.cost_of_goods_sold.toLocaleString()}`)}
+        ${row('Gross Profit', `₱${pl.gross_profit.toLocaleString()}`)}
+        ${row('Net Profit', `₱${pl.net_profit.toLocaleString()}`)}
+      </tbody></table>
+      <div class="section-title">Income Statement</div>
+      <table><tbody>
+        ${row('Net Sales', `₱${is_.net_sales.toLocaleString()}`)}
+        ${row('Cost of Sales', `₱${is_.cost_of_sales.toLocaleString()}`)}
+        ${row('Gross Income', `₱${is_.gross_income.toLocaleString()}`)}
+        ${row('Operating Expenses', `₱${is_.operating_expenses.toLocaleString()}`)}
+        ${row('Net Income', `₱${is_.net_income.toLocaleString()}`)}
+      </tbody></table>
+      <div class="section-title">Trial Balance</div>
+      <table><thead><tr><th>Account</th><th style="text-align:right">Debit</th><th style="text-align:right">Credit</th></tr></thead><tbody>
+        ${tb.lines.map(l => `<tr><td>${l.label}</td><td style="text-align:right">${l.type==='debit'?`₱${l.amount.toLocaleString()}`:'-'}</td><td style="text-align:right">${l.type==='credit'?`₱${l.amount.toLocaleString()}`:'-'}</td></tr>`).join('')}
+        <tr style="font-weight:bold"><td>Totals</td><td style="text-align:right">₱${tb.total_debits.toLocaleString()}</td><td style="text-align:right">₱${tb.total_credits.toLocaleString()}</td></tr>
+      </tbody></table>
+    `
+    exportToPdf(`Financial Report — ${period}`, html)
+  }
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -107,7 +158,7 @@ export default function ReportsPage() {
                 ))}
               </div>
 
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
                 {PERIODS.map(item => (
                   <button
                     key={item.value}
@@ -119,6 +170,18 @@ export default function ReportsPage() {
                     {item.label}
                   </button>
                 ))}
+                {financials && (
+                  <>
+                    <button onClick={handleExcelExport}
+                      className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium bg-green-600 text-white hover:bg-green-700">
+                      <FileSpreadsheet size={14} /> Excel
+                    </button>
+                    <button onClick={handlePdfExport}
+                      className="flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium bg-red-500 text-white hover:bg-red-600">
+                      <FileDown size={14} /> PDF
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 

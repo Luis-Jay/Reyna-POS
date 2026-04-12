@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { X, Tag, User } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { X, Tag, User, Star } from 'lucide-react'
 import { useCartStore } from '../../stores/cart.store'
 import { useAuthStore } from '../../stores/auth.store'
 import { formatCurrency } from '../../utils/format'
@@ -32,6 +32,29 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
   const [showDiscount, setShowDiscount] = useState(false)
   const [error, setError] = useState('')
 
+  // Loyalty
+  const [loyaltyEnabled, setLoyaltyEnabled] = useState(false)
+  const [loyaltyRate, setLoyaltyRate] = useState(1)
+  const [loyaltyPhone, setLoyaltyPhone] = useState('')
+  const [loyaltyAccount, setLoyaltyAccount] = useState<any>(null)
+  const [loyaltySearch, setLoyaltySearch] = useState(false)
+  const [loyaltySearching, setLoyaltySearching] = useState(false)
+
+  useEffect(() => {
+    window.api.settings.getAll().then((s: any) => {
+      setLoyaltyEnabled(s['loyalty_enabled'] === 'true')
+      setLoyaltyRate(parseFloat(s['loyalty_rate'] || '1'))
+    })
+  }, [])
+
+  const handleLoyaltySearch = async () => {
+    if (!loyaltyPhone.trim()) return
+    setLoyaltySearching(true)
+    const acc = await window.api.loyalty.getByPhone(loyaltyPhone.trim())
+    setLoyaltyAccount(acc || null)
+    setLoyaltySearching(false)
+  }
+
   const total = cart.total()
   const singlePayment = Math.max(0, parseFloat(paymentInput) || 0)
   const cashSplit = Math.max(0, parseFloat(splitPayments.cash) || 0)
@@ -62,6 +85,7 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
   const handleConfirm = async () => {
     if (totalPaid < total) { setError('Payment is less than total'); return }
     if (paymentBreakdown.length === 0) { setError('Enter at least one payment amount.'); return }
+    setError('')
     setLoading(true)
     try {
       const result = await window.api.orders.create({
@@ -85,8 +109,18 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
         })),
       })
       if (result.success) {
-        // Print receipt
-        await window.api.printer.printReceipt(result.order)
+        // Award loyalty points
+        if (loyaltyEnabled && loyaltyAccount) {
+          const pts = Math.floor(total * loyaltyRate)
+          if (pts > 0) {
+            await window.api.loyalty.earn(loyaltyAccount.id, pts, result.order?.id, 'Sale')
+          }
+        }
+        try {
+          await window.api.printer.printReceipt(result.order)
+        } catch (printError: any) {
+          window.alert(`Sale saved, but receipt was not printed.\n\n${printError?.message || 'Printer unavailable.'}`)
+        }
         onComplete()
       }
     } catch (e: any) {
@@ -139,6 +173,49 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
             <button onClick={() => setShowDiscount(true)} className="flex items-center gap-2 text-[#1a8eff] text-sm hover:underline">
               <Tag size={14} /> + Add Discount {cart.discount > 0 && `(₱${cart.discount})`}
             </button>
+          )}
+
+          {/* Loyalty */}
+          {loyaltyEnabled && (
+            loyaltyAccount ? (
+              <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <Star size={14} className="text-amber-500" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-800">{loyaltyAccount.name}</p>
+                    <p className="text-xs text-amber-600">{loyaltyAccount.points} pts · +{Math.floor(total * loyaltyRate)} pts this sale</p>
+                  </div>
+                </div>
+                <button onClick={() => { setLoyaltyAccount(null); setLoyaltyPhone(''); setLoyaltySearch(false) }} className="text-amber-400 hover:text-amber-600">
+                  <X size={14} />
+                </button>
+              </div>
+            ) : loyaltySearch ? (
+              <div className="flex gap-2">
+                <input
+                  value={loyaltyPhone}
+                  onChange={e => setLoyaltyPhone(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleLoyaltySearch()}
+                  placeholder="Phone number..."
+                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  autoFocus
+                />
+                <button
+                  onClick={handleLoyaltySearch}
+                  disabled={loyaltySearching}
+                  className="bg-amber-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
+                >
+                  {loyaltySearching ? '...' : 'Find'}
+                </button>
+                <button onClick={() => setLoyaltySearch(false)} className="text-gray-400 hover:text-gray-600 px-1">
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setLoyaltySearch(true)} className="flex items-center gap-2 text-amber-600 text-sm hover:underline">
+                <Star size={14} /> + Link Loyalty Account
+              </button>
+            )
           )}
 
           {/* Total */}

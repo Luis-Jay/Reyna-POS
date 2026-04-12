@@ -218,9 +218,17 @@ export function registerAnalyticsHandlers() {
         AND p.is_active = 1
     `).get()
 
+    const expensesResult: any = db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) as total_expenses
+      FROM expenses
+      WHERE DATE(date) >= ? AND DATE(date) <= ?
+    `).get(from, to)
+
     const revenue = sales?.total_sales || 0
     const costOfGoodsSold = sales?.total_cost || 0
     const grossProfit = revenue - costOfGoodsSold
+    const operatingExpenses = expensesResult?.total_expenses || 0
+    const netIncome = grossProfit - operatingExpenses
     const cashOnHandEstimate = (sales?.cash_sales || 0) + (debtorPayments?.paid || 0)
     const accountsReceivable = debtors?.receivables || 0
     const inventoryCost = inventory?.inventory_cost || 0
@@ -230,6 +238,7 @@ export function registerAnalyticsHandlers() {
       { label: 'Accounts Receivable', amount: accountsReceivable, type: 'debit' as const },
       { label: 'Inventory on Hand', amount: inventoryCost, type: 'debit' as const },
       { label: 'Cost of Goods Sold', amount: costOfGoodsSold, type: 'debit' as const },
+      ...(operatingExpenses > 0 ? [{ label: 'Operating Expenses', amount: operatingExpenses, type: 'debit' as const }] : []),
       { label: 'Sales Revenue', amount: revenue, type: 'credit' as const },
     ]
 
@@ -239,12 +248,12 @@ export function registerAnalyticsHandlers() {
     const creditTotal = trialBalanceLines
       .filter(line => line.type === 'credit')
       .reduce((sum, line) => sum + line.amount, 0)
-    
+
     const imbalance = debitTotal - creditTotal
     let balancedLines = trialBalanceLines
     let balancedCredits = creditTotal
     let balancedDebits = debitTotal
-    
+
     if (imbalance > 0) {
       // Debits exceed credits, add balancing credit
       balancedLines = [...trialBalanceLines, { label: 'Balancing Equity (Estimated)', amount: imbalance, type: 'credit' as const }]
@@ -261,15 +270,17 @@ export function registerAnalyticsHandlers() {
         revenue,
         cost_of_goods_sold: costOfGoodsSold,
         gross_profit: grossProfit,
-        net_profit: grossProfit,
+        net_profit: netIncome,
       },
       income_statement: {
         net_sales: revenue,
         cost_of_sales: costOfGoodsSold,
         gross_income: grossProfit,
-        operating_expenses: 0,
-        net_income: grossProfit,
-        note: 'Operating expenses are not yet tracked separately, so net income currently reflects gross profit from POS data.',
+        operating_expenses: operatingExpenses,
+        net_income: netIncome,
+        note: operatingExpenses > 0
+          ? 'Operating expenses are sourced from recorded expense entries for this period.'
+          : 'No operating expenses recorded for this period.',
       },
       trial_balance: {
         lines: balancedLines,
@@ -278,5 +289,62 @@ export function registerAnalyticsHandlers() {
         note: 'This is an operational estimate based on recorded sales, debtor balances, payments, and current inventory cost. Inventory valuation reflects present-day stock levels and costs, not historical values at period end. It is not a full accounting ledger.',
       },
     }
+  })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_TOP_DEBTORS, () => {
+    return getDb().prepare(`
+      SELECT id, name, phone, balance
+      FROM debtors
+      WHERE deleted_at IS NULL AND balance > 0
+      ORDER BY balance DESC LIMIT 10
+    `).all()
+  })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_SLOW_MOVING, (_, period: string) => {
+    const db = getDb()
+    const { from, to } = dateFilter(period)
+    return db.prepare(`
+      SELECT p.id, p.name, p.monthly_sold,
+             COALESCE(SUM(oi.quantity), 0) as period_sold
+      FROM products p
+      LEFT JOIN order_items oi ON oi.product_id = p.id
+        AND oi.order_id IN (
+          SELECT id FROM orders
+          WHERE deleted_at IS NULL AND status = 'completed' AND exclude_sales = 0
+            AND DATE(created_at) >= ? AND DATE(created_at) <= ?
+        )
+      WHERE p.deleted_at IS NULL AND p.is_active = 1
+      GROUP BY p.id
+      ORDER BY period_sold ASC, p.monthly_sold ASC
+      LIMIT 10
+    `).all(from, to)
+  })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_PAYMENT_BREAKDOWN, (_, days: number) => {
+    const db = getDb()
+    const rows: any[] = db.prepare(`
+      SELECT DATE(o.created_at) as date, o.payment_breakdown
+      FROM orders o
+      WHERE o.deleted_at IS NULL AND o.status = 'completed' AND o.exclude_sales = 0
+        AND DATE(o.created_at) >= DATE('now', ? || ' days')
+      ORDER BY date
+    `).all(`-${days}`)
+
+    const byDate: Record<string, { cash: number; gcash: number; card: number; other: number }> = {}
+    for (const row of rows) {
+      const d = row.date
+      if (!byDate[d]) byDate[d] = { cash: 0, gcash: 0, card: 0, other: 0 }
+      let breakdown: any[] = []
+      try { breakdown = JSON.parse(row.payment_breakdown || '[]') } catch { breakdown = [] }
+      for (const entry of breakdown) {
+        const m = (entry.method || 'cash').toLowerCase()
+        const amt = entry.amount || 0
+        if (m === 'gcash') byDate[d].gcash += amt
+        else if (m === 'card') byDate[d].card += amt
+        else if (m === 'other') byDate[d].other += amt
+        else byDate[d].cash += amt
+      }
+    }
+    return Object.entries(byDate).map(([date, v]) => ({ date, ...v }))
   })
 }

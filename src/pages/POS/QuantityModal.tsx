@@ -29,6 +29,7 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
       product_id: product.id,
       name: product.name,
       price: product.base_price,
+      base_price: product.base_price,
       cost: product.base_cost,
       quantity: q,
       is_custom: false,

@@ -186,6 +186,43 @@ export function registerOrderHandlers() {
     return { success: true }
   })
 
+  // REFUND — void order + restore inventory + reverse debtor balance if credit
+  ipcMain.handle(IPC.ORDERS.REFUND, (_, id: string) => {
+    const db = getDb()
+    const order: any = db.prepare(`SELECT * FROM orders WHERE id = ?`).get(id)
+    if (!order) return { success: false, error: 'Order not found.' }
+    if (order.status === 'void') return { success: false, error: 'Order is already voided.' }
+
+    const items: any[] = db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).all(id)
+
+    db.transaction(() => {
+      // Mark order as void
+      db.prepare(`UPDATE orders SET status = 'void', updated_at = datetime('now') WHERE id = ?`).run(id)
+
+      // Restore inventory
+      for (const item of items) {
+        if (!item.product_id || item.is_custom) continue
+        db.prepare(`UPDATE inventory SET quantity = quantity + ?, updated_at = datetime('now') WHERE product_id = ?`)
+          .run(item.quantity, item.product_id)
+        db.prepare(`INSERT INTO stock_movements (id, product_id, type, quantity, reference_id, note) VALUES (?, ?, 'return', ?, ?, 'Refund')`)
+          .run(uuid(), item.product_id, item.quantity, id)
+        db.prepare(`UPDATE products SET monthly_sold = MAX(0, monthly_sold - ?) WHERE id = ?`)
+          .run(item.quantity, item.product_id)
+      }
+
+      // Reverse debtor balance if credit order
+      if (order.is_credit && order.debtor_id) {
+        db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_credit = MAX(0, total_credit - ?) WHERE id = ?`)
+          .run(order.total, order.total, order.debtor_id)
+        db.prepare(`INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note) VALUES (?, ?, 'note', 0, 0, ?, 'Order refunded/voided')`)
+          .run(uuid(), order.debtor_id, id)
+      }
+    })()
+
+    scheduleAutoSync()
+    return { success: true }
+  })
+
   ipcMain.handle(IPC.ORDERS.GET_PENDING, () => {
     return getDb().prepare(`
       SELECT o.*, COUNT(oi.id) as item_count

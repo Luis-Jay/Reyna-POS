@@ -1,9 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
-import { VariationGroup } from '../../types'
-import { Plus, Trash2, X } from 'lucide-react'
+import { VariationGroup, UserPermissions } from '../../types'
+import { Plus, Trash2, X, Upload, ChevronDown, ChevronUp } from 'lucide-react'
 import { useAuthStore } from '../../stores/auth.store'
+
+const PERMISSION_LABELS: Array<{ key: keyof UserPermissions; label: string; desc: string }> = [
+  { key: 'can_manage_products', label: 'Manage Products', desc: 'Add, edit, delete products' },
+  { key: 'can_manage_inventory', label: 'Manage Inventory', desc: 'View & adjust stock levels' },
+  { key: 'can_manage_debtors', label: 'Manage Debtors', desc: 'Add debtors, record payments' },
+  { key: 'can_access_reports', label: 'View Reports & Analytics', desc: 'Analytics, reports, financials' },
+  { key: 'can_access_expenses', label: 'View Expenses', desc: 'Track operating expenses' },
+  { key: 'can_access_cashier_monitoring', label: 'Cashier Monitoring', desc: 'Time-in/out, shift reports' },
+]
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -14,25 +23,69 @@ export default function SettingsPage() {
   const [newOption, setNewOption] = useState<Record<string, { name: string; price: string; cost: string }>>({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const logoInputRef = useRef<HTMLInputElement>(null)
   const [printerStatus, setPrinterStatus] = useState<any>(null)
   const [printers, setPrinters] = useState<any[]>([])
   const [syncStatus, setSyncStatus] = useState<any>(null)
+  const [users, setUsers] = useState<any[]>([])
+  const [expandedUser, setExpandedUser] = useState<string | null>(null)
+  const [userPerms, setUserPerms] = useState<Record<string, UserPermissions>>({})
+  const [savingPerms, setSavingPerms] = useState<string | null>(null)
+  const [showAddUser, setShowAddUser] = useState(false)
+  const [newUserForm, setNewUserForm] = useState({ name: '', pin: '', role: 'cashier' })
+  const [addingUser, setAddingUser] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
 
   const load = async () => {
-    const [s, g, ps, printerList, sync] = await Promise.all([
+    const [s, g, ps, printerList, sync, userList] = await Promise.all([
       window.api.settings.getAll(),
       window.api.variations.getGroups(),
       window.api.printer.getStatus(),
       window.api.printer.listPrinters(),
       window.api.sync.getStatus(),
+      window.api.auth.getUsers(),
     ])
     setSettings(s)
     setGroups(g)
     setPrinterStatus(ps)
     setPrinters(Array.isArray(printerList) ? printerList : [])
     setSyncStatus(sync)
+    setUsers(userList)
+    const perms: Record<string, UserPermissions> = {}
+    for (const u of userList) {
+      try { perms[u.id] = u.permissions ? JSON.parse(u.permissions) : {} }
+      catch { perms[u.id] = {} }
+    }
+    setUserPerms(perms)
+  }
+
+  const handleSavePermissions = async (userId: string) => {
+    setSavingPerms(userId)
+    await window.api.auth.updateUser(userId, { permissions: userPerms[userId] || {} })
+    setSavingPerms(null)
+  }
+
+  const togglePerm = (userId: string, key: keyof UserPermissions) => {
+    setUserPerms(prev => ({
+      ...prev,
+      [userId]: { ...prev[userId], [key]: !prev[userId]?.[key] },
+    }))
+  }
+
+  const handleAddUser = async () => {
+    if (!newUserForm.name.trim() || !newUserForm.pin.trim()) return
+    setAddingUser(true)
+    await window.api.auth.createUser({ name: newUserForm.name.trim(), pin: newUserForm.pin.trim(), role: newUserForm.role })
+    setNewUserForm({ name: '', pin: '', role: 'cashier' })
+    setShowAddUser(false)
+    setAddingUser(false)
+    load()
+  }
+
+  const handleToggleActive = async (userId: string, current: number) => {
+    await window.api.auth.updateUser(userId, { is_active: current ? 0 : 1 })
+    load()
   }
 
   useEffect(() => { load() }, [])
@@ -46,6 +99,19 @@ export default function SettingsPage() {
   }, [])
 
   const set = (key: string, value: string) => setSettings(s => ({ ...s, [key]: value }))
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => set('store_logo_data', reader.result as string)
+    reader.readAsDataURL(file)
+  }
+
+  const handleRemoveLogo = () => {
+    set('store_logo_data', '')
+    if (logoInputRef.current) logoInputRef.current.value = ''
+  }
 
   const handleSave = async () => {
     setSaving(true)
@@ -174,10 +240,45 @@ export default function SettingsPage() {
         <div className="max-w-2xl mx-auto p-4 space-y-4">
           {/* Store info */}
           <Section title="Store">
+            {/* Logo upload */}
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Store Logo</label>
+              {settings['store_logo_data'] ? (
+                <div className="flex items-center gap-3 mb-2">
+                  <img src={settings['store_logo_data']} alt="Store logo" className="h-16 w-16 object-contain rounded-xl border border-gray-200 bg-gray-50" />
+                  <button onClick={handleRemoveLogo} className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
+                    <X size={12} /> Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 text-gray-300">
+                  <Upload size={20} />
+                </div>
+              )}
+              <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+              <button onClick={() => logoInputRef.current?.click()}
+                className="text-sm text-[#1a8eff] hover:underline">
+                {settings['store_logo_data'] ? 'Change Logo' : 'Upload Logo'}
+              </button>
+              <p className="mt-1 text-xs text-gray-500">Used on receipts and reports. PNG or JPG recommended.</p>
+            </div>
             <div className="py-3">
               <label className="block text-sm font-medium text-gray-700 mb-1">Store Name</label>
               <input value={settings['store_name'] || ''} onChange={e => set('store_name', e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
+            </div>
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Store Address</label>
+              <input value={settings['store_address'] || ''} onChange={e => set('store_address', e.target.value)}
+                placeholder="123 Main St, Barangay..."
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
+            </div>
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">TIN (Tax Identification Number)</label>
+              <input value={settings['store_tin'] || ''} onChange={e => set('store_tin', e.target.value)}
+                placeholder="000-000-000-000"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
+              <p className="mt-1 text-xs text-gray-500">Printed on official receipts.</p>
             </div>
             <div className="py-3">
               <label className="block text-sm font-medium text-gray-700 mb-1">Store Contact Number</label>
@@ -185,6 +286,21 @@ export default function SettingsPage() {
                 placeholder="+639123456789"
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
               <p className="mt-1 text-xs text-gray-500">Used for your store profile and optional Pro SMS reminders if you subscribe later.</p>
+            </div>
+          </Section>
+
+          {/* Receipt Customization */}
+          <Section title="Receipt Customization">
+            <p className="pt-3 text-xs text-gray-500">Store name, address, and TIN are pulled from the Store section above.</p>
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Receipt Footer Message</label>
+              <input
+                value={settings['receipt_footer'] || ''}
+                onChange={e => set('receipt_footer', e.target.value)}
+                placeholder="Thank you for shopping with us!"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+              />
+              <p className="mt-1 text-xs text-gray-500">Printed at the bottom of every receipt.</p>
             </div>
           </Section>
 
@@ -224,6 +340,139 @@ export default function SettingsPage() {
             <SectionInner label="AI Features">
               <Select setting="ai_image_recognition" label="Enable AI Image Recognition" options={yesNo} />
             </SectionInner>
+            <SectionInner label="Loyalty / Sukipoints">
+              <Select setting="loyalty_enabled" label="Enable Loyalty Program" options={noYes} />
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <span className="text-sm text-gray-700">Points per ₱1 spent</span>
+                  <p className="text-xs text-gray-400">e.g. 1 = earn 1 pt per peso</p>
+                </div>
+                <input
+                  type="number"
+                  value={settings['loyalty_rate'] || '1'}
+                  onChange={e => set('loyalty_rate', e.target.value)}
+                  className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+              </div>
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <span className="text-sm text-gray-700">Points to redeem ₱1</span>
+                  <p className="text-xs text-gray-400">e.g. 10 = spend 10 pts to get ₱1 off</p>
+                </div>
+                <input
+                  type="number"
+                  value={settings['loyalty_redeem_rate'] || '1'}
+                  onChange={e => set('loyalty_redeem_rate', e.target.value)}
+                  className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+              </div>
+            </SectionInner>
+          </Section>
+
+          {/* User Management */}
+          <Section title="User Management">
+            <div className="py-2 space-y-3">
+              {users.map(u => (
+                <div key={u.id} className="border border-gray-100 rounded-xl overflow-hidden">
+                  <div
+                    className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
+                    onClick={() => setExpandedUser(expandedUser === u.id ? null : u.id)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold ${u.role === 'admin' ? 'bg-[#1a8eff]' : 'bg-slate-500'}`}>
+                        {u.name[0]?.toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">{u.name}</p>
+                        <p className="text-xs text-gray-400 capitalize">{u.role} {!u.is_active ? '· Inactive' : ''}</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {u.role !== 'admin' && (
+                        <button
+                          onClick={e => { e.stopPropagation(); handleToggleActive(u.id, u.is_active) }}
+                          className={`text-xs px-2 py-1 rounded-full font-medium ${u.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}
+                        >
+                          {u.is_active ? 'Active' : 'Inactive'}
+                        </button>
+                      )}
+                      {u.role !== 'admin' && (
+                        expandedUser === u.id
+                          ? <ChevronUp size={16} className="text-gray-400" />
+                          : <ChevronDown size={16} className="text-gray-400" />
+                      )}
+                    </div>
+                  </div>
+                  {expandedUser === u.id && u.role !== 'admin' && (
+                    <div className="border-t border-gray-100 bg-gray-50 px-4 py-3 space-y-2">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Feature Permissions</p>
+                      {PERMISSION_LABELS.map(({ key, label, desc }) => (
+                        <div key={key} className="flex items-center justify-between py-1">
+                          <div>
+                            <p className="text-sm text-gray-700">{label}</p>
+                            <p className="text-xs text-gray-400">{desc}</p>
+                          </div>
+                          <button
+                            onClick={() => togglePerm(u.id, key)}
+                            className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${userPerms[u.id]?.[key] ? 'bg-[#1a8eff]' : 'bg-gray-200'}`}
+                          >
+                            <div className={`absolute w-4 h-4 bg-white rounded-full shadow top-0.5 transition-transform ${userPerms[u.id]?.[key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => handleSavePermissions(u.id)}
+                        disabled={savingPerms === u.id}
+                        className="mt-2 w-full bg-[#1a8eff] text-white py-2 rounded-xl text-sm font-semibold hover:bg-[#0077e6] disabled:opacity-50"
+                      >
+                        {savingPerms === u.id ? 'Saving...' : 'Save Permissions'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Add User */}
+            {showAddUser ? (
+              <div className="border border-gray-200 rounded-xl p-4 space-y-3 mt-2">
+                <p className="text-sm font-semibold text-gray-700">New Cashier</p>
+                <input
+                  value={newUserForm.name}
+                  onChange={e => setNewUserForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="Name"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+                <input
+                  value={newUserForm.pin}
+                  onChange={e => setNewUserForm(f => ({ ...f, pin: e.target.value }))}
+                  placeholder="PIN"
+                  type="password"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+                <select
+                  value={newUserForm.role}
+                  onChange={e => setNewUserForm(f => ({ ...f, role: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                >
+                  <option value="cashier">Cashier</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowAddUser(false)} className="flex-1 border border-gray-200 text-gray-600 py-2 rounded-xl text-sm">Cancel</button>
+                  <button onClick={handleAddUser} disabled={addingUser} className="flex-1 bg-[#1a8eff] text-white py-2 rounded-xl text-sm font-semibold disabled:opacity-50">
+                    {addingUser ? 'Adding...' : 'Add User'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAddUser(true)}
+                className="mt-2 flex items-center gap-2 text-sm text-[#1a8eff] hover:underline"
+              >
+                <Plus size={14} /> Add New Cashier
+              </button>
+            )}
           </Section>
 
           <Section title="Cloud Sync">

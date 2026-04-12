@@ -307,6 +307,102 @@ ALTER TABLE orders ADD COLUMN payment_breakdown TEXT;
     `,
   },
   {
+    name: '008_expenses.sql',
+    sql: `
+CREATE TABLE IF NOT EXISTS expenses (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL DEFAULT 'Other',
+  description TEXT,
+  amount REAL NOT NULL,
+  date TEXT NOT NULL DEFAULT (date('now')),
+  user_id TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+    `,
+  },
+  {
+    name: '010_wholesale_tiers.sql',
+    sql: `
+CREATE TABLE IF NOT EXISTS product_price_tiers (
+  id TEXT PRIMARY KEY,
+  product_id TEXT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  min_qty REAL NOT NULL,
+  price REAL NOT NULL,
+  label TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_tiers_product ON product_price_tiers(product_id);
+    `,
+  },
+  {
+    name: '009_cashier_monitoring.sql',
+    sql: `
+CREATE TABLE IF NOT EXISTS cashier_shifts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  start_money REAL NOT NULL DEFAULT 0,
+  end_money REAL,
+  time_in TEXT NOT NULL DEFAULT (datetime('now')),
+  time_out TEXT,
+  petty_cash_total REAL NOT NULL DEFAULT 0,
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS petty_cash (
+  id TEXT PRIMARY KEY,
+  shift_id TEXT NOT NULL REFERENCES cashier_shifts(id),
+  description TEXT NOT NULL,
+  amount REAL NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_shifts_user ON cashier_shifts(user_id);
+CREATE INDEX IF NOT EXISTS idx_shifts_time_in ON cashier_shifts(time_in);
+    `,
+  },
+  {
+    name: '008_store_setup_fields.sql',
+    sql: `
+INSERT OR IGNORE INTO settings (key, value) VALUES ('store_tin','');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('store_address','');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('store_logo_data','');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('receipt_footer','Thank you for shopping with us!');
+    `,
+  },
+  {
+    name: '011_user_permissions.sql',
+    sql: `ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '{}';`,
+  },
+  {
+    name: '012_loyalty.sql',
+    sql: `
+CREATE TABLE IF NOT EXISTS loyalty_accounts (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  phone TEXT,
+  points REAL NOT NULL DEFAULT 0,
+  total_earned REAL NOT NULL DEFAULT 0,
+  total_redeemed REAL NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  deleted_at TEXT
+);
+CREATE TABLE IF NOT EXISTS loyalty_transactions (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES loyalty_accounts(id),
+  type TEXT NOT NULL CHECK(type IN ('earn','redeem','adjust')),
+  points REAL NOT NULL,
+  order_id TEXT REFERENCES orders(id),
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_loyalty_phone ON loyalty_accounts(phone);
+CREATE INDEX IF NOT EXISTS idx_loyalty_tx_account ON loyalty_transactions(account_id);
+INSERT OR IGNORE INTO settings (key, value) VALUES ('loyalty_enabled','false');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('loyalty_rate','1');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('loyalty_redeem_rate','1');
+    `,
+  },
+  {
     name: '007_customer_views.sql',
     sql: `
 DROP VIEW IF EXISTS customers;
@@ -378,6 +474,9 @@ function runMigrations(database: Database.Database) {
     }
     if (migrationName === '006_order_payment_breakdown.sql') {
       return hasColumn('orders', 'payment_breakdown')
+    }
+    if (migrationName === '011_user_permissions.sql') {
+      return hasColumn('users', 'permissions')
     }
     return false
   }

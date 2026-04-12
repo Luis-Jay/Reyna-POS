@@ -227,7 +227,7 @@ export function registerAuthHandlers() {
   ipcMain.handle(IPC.AUTH.LOGIN, (_, name: string, pin: string) => {
     const db = getDb()
     const user: any = db.prepare(`
-      SELECT id, name, role, is_active FROM users
+      SELECT id, name, role, is_active, permissions FROM users
       WHERE (LOWER(name) = LOWER(?) OR role = ?) AND pin = ? AND is_active = 1 AND deleted_at IS NULL
     `).get(name, name, pin)
     if (!user) return { success: false, error: 'Invalid name or PIN' }
@@ -243,7 +243,7 @@ export function registerAuthHandlers() {
   })
 
   ipcMain.handle(IPC.AUTH.GET_USERS, () => {
-    return getDb().prepare(`SELECT id, name, role, is_active, created_at FROM users WHERE deleted_at IS NULL ORDER BY role DESC, name`).all()
+    return getDb().prepare(`SELECT id, name, role, is_active, permissions, created_at FROM users WHERE deleted_at IS NULL ORDER BY role DESC, name`).all()
   })
 
   ipcMain.handle(IPC.AUTH.CREATE_USER, async (_, data: any) => {
@@ -270,12 +270,13 @@ export function registerAuthHandlers() {
 
   ipcMain.handle(IPC.AUTH.UPDATE_USER, async (_, id: string, data: any) => {
     const db = getDb()
+    const permissionsJson = data.permissions !== undefined ? JSON.stringify(data.permissions) : undefined
     if (data.pin) {
-      db.prepare(`UPDATE users SET name = COALESCE(?, name), pin = ?, role = COALESCE(?, role), is_active = COALESCE(?, is_active) WHERE id = ?`)
-        .run(data.name, data.pin, data.role, data.is_active, id)
+      db.prepare(`UPDATE users SET name = COALESCE(?, name), pin = ?, role = COALESCE(?, role), is_active = COALESCE(?, is_active), permissions = COALESCE(?, permissions) WHERE id = ?`)
+        .run(data.name, data.pin, data.role, data.is_active, permissionsJson ?? null, id)
     } else {
-      db.prepare(`UPDATE users SET name = COALESCE(?, name), role = COALESCE(?, role), is_active = COALESCE(?, is_active) WHERE id = ?`)
-        .run(data.name, data.role, data.is_active, id)
+      db.prepare(`UPDATE users SET name = COALESCE(?, name), role = COALESCE(?, role), is_active = COALESCE(?, is_active), permissions = COALESCE(?, permissions) WHERE id = ?`)
+        .run(data.name, data.role, data.is_active, permissionsJson ?? null, id)
     }
 
     // Push to cloud if logged in

@@ -1,8 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { Plus, Trash2 } from 'lucide-react'
 import TopBar from '../../components/layout/TopBar'
 import { Category, VariationGroup } from '../../types'
 import { getProductImageSrc } from '../../utils/images'
+
+interface PriceTier {
+  min_qty: string
+  price: string
+  label: string
+}
 
 export default function AddProductPage() {
   const navigate = useNavigate()
@@ -21,6 +28,7 @@ export default function AddProductPage() {
   })
   const [imagePreview, setImagePreview] = useState<string>('')
   const [imageDataUrl, setImageDataUrl] = useState<string>('')
+  const [tiers, setTiers] = useState<PriceTier[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -39,6 +47,11 @@ export default function AddProductPage() {
             initial_stock: '',
           })
           if (p.image_path) setImagePreview(getProductImageSrc(p.image_path))
+        }
+      })
+      window.api.priceTiers.get(id!).then((rows: any[]) => {
+        if (rows?.length) {
+          setTiers(rows.map(r => ({ min_qty: String(r.min_qty), price: String(r.price), label: r.label || '' })))
         }
       })
     }
@@ -91,6 +104,17 @@ export default function AddProductPage() {
       }
       if (imageDataUrl && productId) {
         await window.api.products.saveImage(productId!, imageDataUrl)
+      }
+      // Save price tiers
+      if (productId) {
+        const validTiers = tiers
+          .filter(t => t.min_qty && t.price)
+          .map(t => ({ min_qty: parseFloat(t.min_qty), price: parseFloat(t.price), label: t.label || null }))
+        if (validTiers.length > 0) {
+          await window.api.priceTiers.set(productId, validTiers)
+        } else {
+          await window.api.priceTiers.delete(productId)
+        }
       }
       navigate('/products')
     } catch (e: any) {
@@ -199,6 +223,54 @@ export default function AddProductPage() {
               </select>
             </div>
           )}
+
+          {/* Wholesale Price Tiers */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Wholesale Price Tiers</p>
+                <p className="text-xs text-gray-400">Auto-apply lower price when qty threshold is met</p>
+              </div>
+              <button
+                onClick={() => setTiers(t => [...t, { min_qty: '', price: '', label: '' }])}
+                className="flex items-center gap-1 text-xs text-[#1a8eff] hover:underline"
+              >
+                <Plus size={12} /> Add Tier
+              </button>
+            </div>
+            {tiers.length > 0 && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-[1fr_1fr_1.5fr_auto] gap-2 text-xs text-gray-400 px-1">
+                  <span>Min Qty</span><span>Price (₱)</span><span>Label</span><span />
+                </div>
+                {tiers.map((tier, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_1fr_1.5fr_auto] gap-2 items-center">
+                    <input
+                      value={tier.min_qty}
+                      onChange={e => setTiers(ts => ts.map((t, j) => j === i ? { ...t, min_qty: e.target.value } : t))}
+                      type="number" placeholder="e.g. 10"
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                    />
+                    <input
+                      value={tier.price}
+                      onChange={e => setTiers(ts => ts.map((t, j) => j === i ? { ...t, price: e.target.value } : t))}
+                      type="number" placeholder="0.00"
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                    />
+                    <input
+                      value={tier.label}
+                      onChange={e => setTiers(ts => ts.map((t, j) => j === i ? { ...t, label: e.target.value } : t))}
+                      placeholder="e.g. Wholesale"
+                      className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                    />
+                    <button onClick={() => setTiers(ts => ts.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
 
           {error && <p className="text-red-500 text-sm">{error}</p>}
 

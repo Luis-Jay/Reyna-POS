@@ -37,6 +37,9 @@ export default function POSPage() {
   const [showSavedOrders, setShowSavedOrders] = useState(false)
   const [showCameraScanner, setShowCameraScanner] = useState(false)
 
+  // Tier price cache: productId → sorted tiers
+  const [tierCache, setTierCache] = useState<Record<string, { min_qty: number; price: number }[]>>({})
+
   // Page
   const [page, setPage] = useState(1)
   const PER_PAGE = 20
@@ -60,6 +63,21 @@ export default function POSPage() {
     window.api.orders.getSaved().then((r: any[]) => setSavedCount(r.length))
   }, [])
 
+  const fetchAndCacheTiers = useCallback(async (productId: string) => {
+    if (tierCache[productId] !== undefined) return
+    const tiers: any[] = await window.api.priceTiers.get(productId)
+    setTierCache(prev => ({ ...prev, [productId]: tiers || [] }))
+  }, [tierCache])
+
+  const applyTierPrice = useCallback((productId: string, qty: number, basePrice: number): number => {
+    const tiers = tierCache[productId]
+    if (!tiers || tiers.length === 0) return basePrice
+    const best = [...tiers]
+      .filter(t => qty >= t.min_qty)
+      .sort((a, b) => b.min_qty - a.min_qty)[0]
+    return best ? best.price : basePrice
+  }, [tierCache])
+
   const handleScannedBarcode = useCallback(async (code: string) => {
     const product = await window.api.products.getByBarcode(code)
     if (!product) return
@@ -67,17 +85,19 @@ export default function POSPage() {
     if (product.has_variations || product.allow_fractions) {
       setQuantityProduct(product)
     } else {
+      void fetchAndCacheTiers(product.id)
       cart.addItem({
         product_id: product.id,
         name: product.name,
         price: product.base_price,
+        base_price: product.base_price,
         cost: product.base_cost,
         quantity: 1,
         is_custom: false,
         image_path: product.image_path,
       })
     }
-  }, [cart])
+  }, [cart, fetchAndCacheTiers])
 
   // Hardware barcode scanner
   useEffect(() => {
@@ -91,7 +111,18 @@ export default function POSPage() {
     if (product.has_variations || product.allow_fractions) {
       setQuantityProduct(product)
     } else {
-      cart.addItem({ product_id: product.id, name: product.name, price: product.base_price, cost: product.base_cost, quantity: 1, is_custom: false, image_path: product.image_path })
+      void fetchAndCacheTiers(product.id)
+      cart.addItem({ product_id: product.id, name: product.name, price: product.base_price, base_price: product.base_price, cost: product.base_cost, quantity: 1, is_custom: false, image_path: product.image_path })
+    }
+  }
+
+  const handleCartQtyChange = (item: CartItem, newQty: number) => {
+    if (item.product_id && !item.is_custom) {
+      const base = item.base_price ?? item.price
+      const newPrice = applyTierPrice(item.product_id, newQty, base)
+      cart.updateItemWithPrice(item.id, newQty, newPrice)
+    } else {
+      cart.updateQuantity(item.id, newQty)
     }
   }
 
@@ -220,7 +251,7 @@ export default function POSPage() {
                 ) : (
                   cart.items.map(item => (
                     <CartRow key={item.id} item={item}
-                      onQty={(q) => cart.updateQuantity(item.id, q)}
+                      onQty={(q) => handleCartQtyChange(item, q)}
                       onRemove={() => cart.removeItem(item.id)}
                     />
                   ))
@@ -267,7 +298,7 @@ export default function POSPage() {
             <div className="flex-1 overflow-y-auto space-y-2">
               {cart.items.map(item => (
                 <CartRow key={item.id} item={item}
-                  onQty={(q) => cart.updateQuantity(item.id, q)}
+                  onQty={(q) => handleCartQtyChange(item, q)}
                   onRemove={() => cart.removeItem(item.id)}
                   large
                 />
@@ -328,7 +359,11 @@ export default function POSPage() {
         <QuantityModal
           product={quantityProduct}
           onClose={() => setQuantityProduct(null)}
-          onAdd={(item) => { cart.addItem(item); setQuantityProduct(null) }}
+          onAdd={(item) => {
+            if (item.product_id) void fetchAndCacheTiers(item.product_id)
+            cart.addItem(item)
+            setQuantityProduct(null)
+          }}
         />
       )}
       {showCustom && (
@@ -410,7 +445,13 @@ function CartRow({ item, onQty, onRemove, large }: { item: CartItem; onQty: (q: 
       )}
       <div className="flex-1 min-w-0">
         <p className="truncate text-sm font-medium text-slate-800">{item.name}</p>
-        <p className="text-xs text-slate-400">{item.quantity} x {item.price} = <span className="font-bold text-[var(--brand-700)]">{item.subtotal.toFixed(0)}</span></p>
+        <p className="text-xs text-slate-400">
+          {item.quantity} x {item.price}
+          {item.base_price && item.price < item.base_price && (
+            <span className="ml-1 text-amber-600 font-semibold">★ Wholesale</span>
+          )}
+          {' = '}<span className="font-bold text-[var(--brand-700)]">{item.subtotal.toFixed(0)}</span>
+        </p>
       </div>
       <div className="flex items-center gap-1 shrink-0">
         <button onClick={() => onQty(item.quantity - 1)} className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--brand-50)] text-[var(--brand-700)] hover:bg-[var(--brand-100)]">

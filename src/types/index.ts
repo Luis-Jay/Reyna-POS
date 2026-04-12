@@ -1,11 +1,21 @@
 // ─── Auth ────────────────────────────────────────────────────────────────────
 export type UserRole = 'admin' | 'cashier'
 
+export interface UserPermissions {
+  can_access_reports?: boolean
+  can_manage_inventory?: boolean
+  can_access_expenses?: boolean
+  can_access_cashier_monitoring?: boolean
+  can_manage_debtors?: boolean
+  can_manage_products?: boolean
+}
+
 export interface User {
   id: string
   name: string
   role: UserRole
   is_active: number
+  permissions?: string  // JSON string
   created_at: string
 }
 
@@ -77,7 +87,8 @@ export interface CartItem {
   id: string           // unique cart line id
   product_id?: string
   name: string
-  price: number
+  price: number        // effective price (may be tier price)
+  base_price: number   // original product price, for reverting tiers
   cost: number
   quantity: number
   subtotal: number

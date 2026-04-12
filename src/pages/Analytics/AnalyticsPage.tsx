@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import TopBar from '../../components/layout/TopBar'
 import { AnalyticsReport, DailyStat, HourlyStat, TopProduct, CategoryStat } from '../../types'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, Legend } from 'recharts'
 import { getProductImageSrc } from '../../utils/images'
+import { exportToExcel, exportToPdf } from '../../utils/export'
+import { FileDown, FileSpreadsheet } from 'lucide-react'
 
 const PERIODS = [
   { label: 'This Month', value: 'this_month' },
@@ -20,23 +22,31 @@ export default function AnalyticsPage() {
   const [selectedDay, setSelectedDay] = useState<string | null>(null)
   const [chartMode, setChartMode] = useState<'All' | 'Sales' | 'Debt'>('All')
   const [chartPeriod, setChartPeriod] = useState<'Daily (30d)' | 'Monthly'>('Daily (30d)')
-  const [valuation, setValuation] = useState({ potential_revenue: 0, total_cost: 0 })
+  const [valuation, setValuation]         = useState({ potential_revenue: 0, total_cost: 0 })
+  const [topDebtors, setTopDebtors]       = useState<any[]>([])
+  const [slowMoving, setSlowMoving]       = useState<any[]>([])
+  const [paymentBreakdown, setPaymentBreakdown] = useState<any[]>([])
 
   const load = async () => {
-    const [r, d, h, tp, cats] = await Promise.all([
+    const [r, d, h, tp, cats, debtors, slow, payments] = await Promise.all([
       window.api.analytics.getReport(period),
       window.api.analytics.getDaily(30),
       window.api.analytics.getHourly(selectedDay || undefined),
       window.api.analytics.getTopProducts(period),
       window.api.analytics.getCategories(period),
+      window.api.analytics.getTopDebtors(),
+      window.api.analytics.getSlowMoving(period),
+      window.api.analytics.getPaymentBreakdown(30),
     ])
     setReport(r)
     setDaily(d)
     setHourly(h)
     setTopProducts(tp)
     setCategories(cats)
+    setTopDebtors(debtors)
+    setSlowMoving(slow)
+    setPaymentBreakdown(payments)
 
-    // Inventory valuation from inventory endpoint
     const inv: any[] = await window.api.inventory.getAll()
     setValuation({
       potential_revenue: inv.reduce((s, i) => s + (i.quantity * (i.base_price ?? 0)), 0),
@@ -45,6 +55,46 @@ export default function AnalyticsPage() {
   }
 
   useEffect(() => { load() }, [period, selectedDay])
+
+  const handleExcelExport = () => {
+    exportToExcel([
+      {
+        name: 'Summary',
+        rows: [{
+          Period: PERIODS.find(p => p.value === period)?.label ?? period,
+          'Total Sales': report?.total_sales ?? 0,
+          'Net Profit': report?.net_profit ?? 0,
+          'Order Count': report?.order_count ?? 0,
+          'Avg Sale': report?.avg_sale ?? 0,
+          'Outstanding Debt': report?.debt_outstanding ?? 0,
+        }],
+      },
+      { name: 'Daily Sales', rows: daily.map(d => ({ Date: d.date, Sales: d.sales, Profit: d.profit, Cost: d.cost })) },
+      { name: 'Top Products', rows: topProducts.map(p => ({ Name: p.name, 'Qty Sold': p.total_qty, Revenue: p.total_revenue })) },
+      { name: 'Top Creditors', rows: topDebtors.map(d => ({ Name: d.name, Phone: d.phone ?? '', Balance: d.balance })) },
+      { name: 'Slow Moving', rows: slowMoving.map(p => ({ Name: p.name, 'Period Sold': p.period_sold, 'Monthly Avg': p.monthly_sold })) },
+      { name: 'Payments', rows: paymentBreakdown.map(p => ({ Date: p.date, Cash: p.cash, GCash: p.gcash, Card: p.card, Other: p.other })) },
+    ], `analytics-${period}-${new Date().toISOString().slice(0,10)}`)
+  }
+
+  const handlePdfExport = () => {
+    const rows = (arr: any[], cols: string[]) =>
+      `<table><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>` +
+      arr.map(r => `<tr>${cols.map(c => `<td>${r[c] ?? ''}</td>`).join('')}</tr>`).join('') +
+      `</tbody></table>`
+
+    const html = `
+      <div class="section-title">Summary — ${PERIODS.find(p => p.value === period)?.label}</div>
+      ${rows([{ 'Total Sales': `₱${(report?.total_sales??0).toLocaleString()}`, 'Net Profit': `₱${(report?.net_profit??0).toLocaleString()}`, 'Orders': report?.order_count??0, 'Avg Sale': `₱${(report?.avg_sale??0).toLocaleString()}`, 'Outstanding Debt': `₱${(report?.debt_outstanding??0).toLocaleString()}` }], ['Total Sales','Net Profit','Orders','Avg Sale','Outstanding Debt'])}
+      <div class="section-title">Top Products</div>
+      ${rows(topProducts.map(p => ({ Name: p.name, 'Qty Sold': p.total_qty, Revenue: `₱${p.total_revenue.toLocaleString()}` })), ['Name','Qty Sold','Revenue'])}
+      <div class="section-title">Top 10 Creditors</div>
+      ${rows(topDebtors.map(d => ({ Name: d.name, Phone: d.phone??'', Balance: `₱${Number(d.balance).toLocaleString()}` })), ['Name','Phone','Balance'])}
+      <div class="section-title">Slow-Moving Items</div>
+      ${rows(slowMoving.map(p => ({ Name: p.name, 'Sold This Period': p.period_sold, 'Monthly Avg': p.monthly_sold })), ['Name','Sold This Period','Monthly Avg'])}
+    `
+    exportToPdf(`Analytics Report — ${PERIODS.find(p => p.value === period)?.label}`, html)
+  }
 
   const displayDay = selectedDay
     ? new Date(selectedDay).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
@@ -73,6 +123,29 @@ export default function AnalyticsPage() {
     <div className="h-screen flex flex-col bg-gray-50">
       <TopBar title="Analytics & Reports" back="/" />
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+        {/* Period picker + export */}
+        <div className="flex items-center justify-between">
+          <div className="flex gap-1">
+            {PERIODS.map(p => (
+              <button key={p.value} onClick={() => setPeriod(p.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${period === p.value ? 'bg-[#1a8eff] text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={handleExcelExport}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-green-600 text-white hover:bg-green-700">
+              <FileSpreadsheet size={13} /> Excel
+            </button>
+            <button onClick={handlePdfExport}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500 text-white hover:bg-red-600">
+              <FileDown size={13} /> PDF
+            </button>
+          </div>
+        </div>
+
         {/* Monthly performance */}
         <div>
           <p className="text-sm font-semibold text-gray-700 mb-2">This Month's Performance</p>
@@ -251,6 +324,64 @@ export default function AnalyticsPage() {
               <p className="text-2xl font-bold text-[#1a8eff]">₱{valuation.total_cost.toLocaleString()}</p>
               <p className="text-xs text-gray-400 mt-1">Total cost invested in current stock</p>
             </div>
+          </div>
+        </div>
+
+        {/* Payments Monitoring */}
+        <div className="bg-white rounded-xl p-4 shadow-sm">
+          <p className="font-semibold text-gray-800 mb-3">Payments by Method (Last 30 Days)</p>
+          {paymentBreakdown.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-6">No payment data yet.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={180}>
+              <BarChart data={paymentBreakdown}>
+                <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={d => d.slice(5)} />
+                <YAxis hide />
+                <Tooltip formatter={(v: any) => `₱${Number(v).toLocaleString()}`} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey="cash"  name="Cash"  stackId="a" fill="#22c55e" radius={[0,0,0,0]} />
+                <Bar dataKey="gcash" name="GCash" stackId="a" fill="#3b82f6" />
+                <Bar dataKey="card"  name="Card"  stackId="a" fill="#a855f7" />
+                <Bar dataKey="other" name="Other" stackId="a" fill="#f59e0b" radius={[3,3,0,0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Top Reports: Creditors + Slow-Moving */}
+        <div className="grid grid-cols-2 gap-4">
+          {/* Top 10 Creditors */}
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <p className="font-semibold text-gray-800 mb-3">Top 10 Creditors (Highest Balance)</p>
+            {topDebtors.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">No outstanding debts.</p>
+            ) : topDebtors.map((d, i) => (
+              <div key={d.id} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
+                <span className="text-xs font-bold text-gray-400 w-5">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{d.name}</p>
+                  {d.phone && <p className="text-xs text-gray-400">{d.phone}</p>}
+                </div>
+                <span className="text-sm font-bold text-red-500">₱{Number(d.balance).toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Top 10 Slow-Moving Items */}
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <p className="font-semibold text-gray-800 mb-3">Top 10 Slow-Moving Items</p>
+            {slowMoving.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-6">No product data yet.</p>
+            ) : slowMoving.map((p, i) => (
+              <div key={p.id} className="flex items-center gap-2 py-1.5 border-b border-gray-50 last:border-0">
+                <span className="text-xs font-bold text-gray-400 w-5">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>
+                  <p className="text-xs text-gray-400">{p.period_sold} sold this period</p>
+                </div>
+                <span className="text-xs text-gray-500 shrink-0">{p.monthly_sold}/mo avg</span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

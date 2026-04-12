@@ -10,7 +10,7 @@ export default function CustomItemModal({ onClose, onAdd }: Props) {
 
   const handleAdd = () => {
     if (!name.trim() || !price) return
-    onAdd({ name: name.trim(), price: parseFloat(price), cost: parseFloat(cost) || parseFloat(price), quantity: 1, is_custom: true })
+    onAdd({ name: name.trim(), price: parseFloat(price), base_price: parseFloat(price), cost: parseFloat(cost) || parseFloat(price), quantity: 1, is_custom: true })
   }
 
   return (

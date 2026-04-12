@@ -8,8 +8,8 @@ import { IPC } from '../../../shared/ipc-channels'
 
 const SUPABASE_URL = 'https://rzhjfsgjkbvcspfncyku.supabase.co'
 const SUPABASE_FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`
-const AUTO_SYNC_INTERVAL_MS = 5 * 60 * 1000
-const AUTO_SYNC_DEBOUNCE_MS = 15 * 1000
+const AUTO_SYNC_INTERVAL_MS = 20 * 1000
+const AUTO_SYNC_DEBOUNCE_MS = 3 * 1000
 
 type SyncTrigger = 'manual' | 'startup' | 'interval' | 'online' | 'local_change'
 
@@ -203,6 +203,7 @@ function applyCatalogSnapshot(snapshot: any) {
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           description = excluded.description,
+          image_path = excluded.image_path,
           barcode = excluded.barcode,
           category_id = excluded.category_id,
           base_price = excluded.base_price,

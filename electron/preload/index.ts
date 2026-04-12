@@ -49,6 +49,7 @@ const api = {
     getAll:       (filters?: any)          => ipcRenderer.invoke(IPC.ORDERS.GET_ALL, filters),
     getById:      (id: string)             => ipcRenderer.invoke(IPC.ORDERS.GET_BY_ID, id),
     updateStatus: (id: string, status: string) => ipcRenderer.invoke(IPC.ORDERS.UPDATE_STATUS, id, status),
+    refund:       (id: string)                 => ipcRenderer.invoke(IPC.ORDERS.REFUND, id),
     excludeSales: (id: string, exclude: boolean) => ipcRenderer.invoke(IPC.ORDERS.EXCLUDE_SALES, id, exclude),
     saveCart:     (data: any)              => ipcRenderer.invoke(IPC.ORDERS.SAVE_CART, data),
     getSaved:     ()                       => ipcRenderer.invoke(IPC.ORDERS.GET_SAVED),
@@ -86,9 +87,38 @@ const api = {
     getReport:      (period: string)      => ipcRenderer.invoke(IPC.ANALYTICS.GET_REPORT, period),
     getDaily:       (days: number)        => ipcRenderer.invoke(IPC.ANALYTICS.GET_DAILY, days),
     getHourly:      (date?: string)       => ipcRenderer.invoke(IPC.ANALYTICS.GET_HOURLY, date),
-    getTopProducts: (period: string)      => ipcRenderer.invoke(IPC.ANALYTICS.GET_TOP_PRODUCTS, period),
-    getCategories:  (period: string)      => ipcRenderer.invoke(IPC.ANALYTICS.GET_CATEGORIES, period),
-    getFinancials:  (period: string)      => ipcRenderer.invoke(IPC.ANALYTICS.GET_FINANCIALS, period),
+    getTopProducts:       (period: string) => ipcRenderer.invoke(IPC.ANALYTICS.GET_TOP_PRODUCTS, period),
+    getCategories:        (period: string) => ipcRenderer.invoke(IPC.ANALYTICS.GET_CATEGORIES, period),
+    getFinancials:        (period: string) => ipcRenderer.invoke(IPC.ANALYTICS.GET_FINANCIALS, period),
+    getTopDebtors:        ()               => ipcRenderer.invoke(IPC.ANALYTICS.GET_TOP_DEBTORS),
+    getSlowMoving:        (period: string) => ipcRenderer.invoke(IPC.ANALYTICS.GET_SLOW_MOVING, period),
+    getPaymentBreakdown:  (days: number)   => ipcRenderer.invoke(IPC.ANALYTICS.GET_PAYMENT_BREAKDOWN, days),
+  },
+
+  // ─── Price Tiers (Wholesale) ───────────────────────────────────────────────
+  priceTiers: {
+    get:    (productId: string)              => ipcRenderer.invoke(IPC.PRICE_TIERS.GET, productId),
+    set:    (productId: string, tiers: any[])=> ipcRenderer.invoke(IPC.PRICE_TIERS.SET, productId, tiers),
+    delete: (productId: string)              => ipcRenderer.invoke(IPC.PRICE_TIERS.DELETE, productId),
+  },
+
+  // ─── Shifts (Cashier Monitoring) ───────────────────────────────────────────
+  shifts: {
+    timeIn:       (data: any)              => ipcRenderer.invoke(IPC.SHIFTS.TIME_IN, data),
+    timeOut:      (data: any)              => ipcRenderer.invoke(IPC.SHIFTS.TIME_OUT, data),
+    getActive:    (userId?: string)        => ipcRenderer.invoke(IPC.SHIFTS.GET_ACTIVE, userId),
+    getAll:       (filters?: any)          => ipcRenderer.invoke(IPC.SHIFTS.GET_ALL, filters),
+    addPettyCash: (data: any)              => ipcRenderer.invoke(IPC.SHIFTS.ADD_PETTY_CASH, data),
+    getPettyCash: (shiftId: string)        => ipcRenderer.invoke(IPC.SHIFTS.GET_PETTY_CASH, shiftId),
+  },
+
+  // ─── Expenses ──────────────────────────────────────────────────────────────
+  expenses: {
+    getAll:      (filters?: any)              => ipcRenderer.invoke(IPC.EXPENSES.GET_ALL, filters),
+    create:      (data: any)                  => ipcRenderer.invoke(IPC.EXPENSES.CREATE, data),
+    update:      (id: string, data: any)      => ipcRenderer.invoke(IPC.EXPENSES.UPDATE, id, data),
+    delete:      (id: string)                 => ipcRenderer.invoke(IPC.EXPENSES.DELETE, id),
+    getSummary:  (period: string)             => ipcRenderer.invoke(IPC.EXPENSES.GET_SUMMARY, period),
   },
 
   // ─── Settings ──────────────────────────────────────────────────────────────
@@ -143,6 +173,21 @@ const api = {
     export: ()                            => ipcRenderer.invoke(IPC.BACKUP.EXPORT),
     import: (filePath: string)            => ipcRenderer.invoke(IPC.BACKUP.IMPORT, filePath),
     reset:  ()                            => ipcRenderer.invoke(IPC.BACKUP.RESET),
+  },
+
+  // ─── Loyalty / Sukipoints ─────────────────────────────────────────────────
+  loyalty: {
+    getAll:     (search?: string)                          => ipcRenderer.invoke(IPC.LOYALTY.GET_ALL, search),
+    getByPhone: (phone: string)                            => ipcRenderer.invoke(IPC.LOYALTY.GET_BY_PHONE, phone),
+    create:     (data: any)                                => ipcRenderer.invoke(IPC.LOYALTY.CREATE, data),
+    earn:       (accountId: string, points: number, orderId?: string, note?: string) =>
+                  ipcRenderer.invoke(IPC.LOYALTY.EARN, accountId, points, orderId, note),
+    redeem:     (accountId: string, points: number, orderId?: string, note?: string) =>
+                  ipcRenderer.invoke(IPC.LOYALTY.REDEEM, accountId, points, orderId, note),
+    adjust:     (accountId: string, points: number, note?: string) =>
+                  ipcRenderer.invoke(IPC.LOYALTY.ADJUST, accountId, points, note),
+    getHistory: (accountId: string)                        => ipcRenderer.invoke(IPC.LOYALTY.GET_HISTORY, accountId),
+    delete:     (accountId: string)                        => ipcRenderer.invoke(IPC.LOYALTY.DELETE, accountId),
   },
 
   // ─── Push events (main → renderer) ─────────────────────────────────────────

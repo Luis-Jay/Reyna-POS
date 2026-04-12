@@ -15,6 +15,10 @@ import { registerPrinterHandlers } from './ipc/printer.ipc'
 import { registerSyncHandlers, startAutoSync } from './ipc/sync.ipc'
 import { registerBackupHandlers } from './ipc/backup.ipc'
 import { registerActivationHandlers } from './ipc/activation.ipc'
+import { registerExpenseHandlers } from './ipc/expenses.ipc'
+import { registerShiftHandlers } from './ipc/shifts.ipc'
+import { registerPriceTierHandlers } from './ipc/pricetiers.ipc'
+import { registerLoyaltyHandlers } from './ipc/loyalty.ipc'
 import { BarcodeService } from './services/barcode.service'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
@@ -147,6 +151,10 @@ app.whenReady().then(() => {
   registerSyncHandlers()
   registerBackupHandlers()
   registerActivationHandlers()
+  registerExpenseHandlers()
+  registerShiftHandlers()
+  registerPriceTierHandlers()
+  registerLoyaltyHandlers()
   startAutoSync()
 
   createWindow()
