@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
 import { Debtor, DebtorTransaction } from '../../types'
 import { formatDate } from '../../utils/format'
-import { CreditCard, Plus, FileText, ArrowDown, ArrowUp, BellRing, LockKeyhole, Save } from 'lucide-react'
+import { CreditCard, Plus, FileText, ArrowDown, ArrowUp, BellRing, LockKeyhole, Save, MessageSquare } from 'lucide-react'
 
 const TX_FILTERS = ['All', 'This Month', 'Last Month']
 
@@ -21,6 +21,8 @@ export default function DebtorDetailPage() {
   const [followUpDate, setFollowUpDate] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
   const [sendingReminder, setSendingReminder] = useState(false)
+  const [sendingSms, setSendingSms] = useState(false)
+  const [smsResult, setSmsResult] = useState<{ ok: boolean; msg: string } | null>(null)
   const [isPro, setIsPro] = useState(false)
 
   const load = async () => {
@@ -67,6 +69,28 @@ export default function DebtorDetailPage() {
       alert(`Failed to update debtor profile: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setSavingProfile(false)
+    }
+  }
+
+  const handleSendSms = async () => {
+    if (!debtor?.phone) return
+    setSendingSms(true)
+    setSmsResult(null)
+    try {
+      const storeName = (await window.api.settings.get('store_name')) || 'Your Store'
+      const message = `Hi ${debtor.name}, this is a reminder from ${storeName}. Your outstanding balance is ₱${debtor.balance.toFixed(2)}. Please settle at your earliest convenience. Thank you!`
+      const res = await window.api.sms.send(debtor.phone, message)
+      if (res.success) {
+        setSmsResult({ ok: true, msg: `SMS sent! Credits remaining: ${res.credits_remaining}` })
+        await window.api.debtors.markReminder(id!, 'SMS reminder sent via Semaphore.')
+        load()
+      } else {
+        setSmsResult({ ok: false, msg: res.error || 'Failed to send SMS.' })
+      }
+    } catch (err: any) {
+      setSmsResult({ ok: false, msg: err?.message || 'Failed to send SMS.' })
+    } finally {
+      setSendingSms(false)
     }
   }
 
@@ -183,6 +207,22 @@ export default function DebtorDetailPage() {
                 >
                   <span className="inline-flex items-center gap-2"><LockKeyhole size={16} /> Pro Reminder Tools</span>
                 </button>
+              )}
+
+              {debtor.phone && (
+                <button
+                  onClick={handleSendSms}
+                  disabled={sendingSms}
+                  className="rounded-xl bg-violet-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-600 disabled:opacity-60"
+                >
+                  <span className="inline-flex items-center gap-2"><MessageSquare size={16} /> {sendingSms ? 'Sending...' : 'Send SMS Reminder'}</span>
+                </button>
+              )}
+
+              {smsResult && (
+                <p className={`text-xs rounded-lg px-3 py-2 ${smsResult.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                  {smsResult.msg}
+                </p>
               )}
 
               {debtor.last_reminder_at && (

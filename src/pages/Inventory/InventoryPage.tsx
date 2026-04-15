@@ -1,16 +1,19 @@
 import { useEffect, useState } from 'react'
 import TopBar from '../../components/layout/TopBar'
 import { InventoryItem } from '../../types'
-import { CheckCircle, AlertTriangle, AlertCircle, XCircle, Plus } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
 
 const FILTERS = ['Fast Moving', 'Low Stock', 'Out of Stock', 'Critical', 'All']
+
+type EditMode = 'add' | 'set'
 
 export default function InventoryPage() {
   const [items, setItems] = useState<InventoryItem[]>([])
   const [filter, setFilter] = useState('Fast Moving')
   const [search, setSearch] = useState('')
-  const [addingStock, setAddingStock] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editMode, setEditMode] = useState<EditMode>('add')
   const [stockQty, setStockQty] = useState('')
   const [counts, setCounts] = useState({ total: 0, safe: 0, low: 0, critical: 0 })
 
@@ -31,27 +34,31 @@ export default function InventoryPage() {
 
   useEffect(() => { load() }, [filter, search])
 
-  const handleAddStock = async (productId: string) => {
+  const openEdit = (productId: string) => {
+    setEditingId(productId)
+    setEditMode('add')
+    setStockQty('')
+  }
+
+  const handleConfirm = async (productId: string) => {
     const qty = parseFloat(stockQty)
-    if (!qty) return
-    await window.api.inventory.addStock(productId, qty)
-    setAddingStock(null)
+    if (isNaN(qty)) return
+    if (editMode === 'add') {
+      await window.api.inventory.addStock(productId, qty)
+    } else {
+      if (qty < 0) return
+      await window.api.inventory.setStock(productId, qty)
+    }
+    setEditingId(null)
     setStockQty('')
     load()
   }
 
-  const statusIcon = (s: string) => ({
-    safe:     <CheckCircle size={14} className="text-green-500" />,
-    low:      <AlertTriangle size={14} className="text-yellow-500" />,
-    critical: <AlertCircle size={14} className="text-red-500" />,
-    out:      <XCircle size={14} className="text-red-500" />,
-  }[s] || null)
-
-  const statusLabel = (s: string, qty: number) => {
-    if (s === 'out') return { text: 'Out of Stock', class: 'bg-red-100 text-red-600' }
-    if (s === 'critical') return { text: 'Critical', class: 'bg-red-100 text-red-600' }
-    if (s === 'low') return { text: 'Low Stock (~2d left)', class: 'bg-yellow-100 text-yellow-700' }
-    return { text: 'Safe', class: 'bg-green-100 text-green-600' }
+  const statusLabel = (s: string) => {
+    if (s === 'out')      return { text: 'Out of Stock',      class: 'bg-red-100 text-red-600' }
+    if (s === 'critical') return { text: 'Critical',          class: 'bg-red-100 text-red-600' }
+    if (s === 'low')      return { text: 'Low Stock',         class: 'bg-yellow-100 text-yellow-700' }
+    return                       { text: 'Safe',              class: 'bg-green-100 text-green-600' }
   }
 
   return (
@@ -61,10 +68,10 @@ export default function InventoryPage() {
       {/* Status cards */}
       <div className="grid grid-cols-4 gap-3 p-4">
         {[
-          { label: 'Total', value: counts.total, icon: '📦', color: 'bg-gray-700' },
-          { label: 'Safe', value: counts.safe, icon: '✓', color: 'bg-green-500' },
-          { label: 'Low', value: counts.low, icon: '!', color: 'bg-yellow-400' },
-          { label: 'Critical', value: counts.critical, icon: '⚠', color: 'bg-red-500' },
+          { label: 'Total',    value: counts.total,    icon: '📦', color: 'bg-gray-700' },
+          { label: 'Safe',     value: counts.safe,     icon: '✓',  color: 'bg-green-500' },
+          { label: 'Low',      value: counts.low,      icon: '!',  color: 'bg-yellow-400' },
+          { label: 'Critical', value: counts.critical, icon: '⚠',  color: 'bg-red-500' },
         ].map(c => (
           <div key={c.label} className={`${c.color} text-white rounded-xl p-3 flex items-center gap-3`}>
             <span className="text-2xl">{c.icon}</span>
@@ -79,7 +86,7 @@ export default function InventoryPage() {
       {/* Controls */}
       <div className="px-4 pb-3 flex gap-3">
         <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search products or scan barcode..."
+          placeholder="Search products..."
           className="flex-1 border border-gray-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
         <select value={filter} onChange={e => setFilter(e.target.value)}
           className="border border-gray-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]">
@@ -90,11 +97,12 @@ export default function InventoryPage() {
       {/* List */}
       <div className="flex-1 overflow-y-auto px-4 space-y-2">
         {items.map(item => {
-          const sl = statusLabel(item.status, item.quantity)
+          const sl = statusLabel(item.status)
+          const isEditing = editingId === item.product_id
           return (
             <div key={item.id} className="bg-white rounded-xl p-4 flex items-center gap-4 shadow-sm">
               <div className="w-12 h-12 bg-gray-100 rounded-lg overflow-hidden shrink-0">
-                {item.product_image && <img src={getProductImageSrc(item.product_image)} alt={item.product_name || ''} className="w-full h-full object-cover" />}
+                {item.image_path && <img src={getProductImageSrc(item.image_path)} alt={item.product_name || ''} className="w-full h-full object-cover" />}
               </div>
               <div className="flex-1">
                 <div className="flex items-center justify-between">
@@ -113,19 +121,38 @@ export default function InventoryPage() {
                 </div>
               </div>
 
-              {addingStock === item.product_id ? (
-                <div className="flex items-center gap-2">
-                  <input value={stockQty} onChange={e => setStockQty(e.target.value)}
-                    type="number" placeholder="Qty" autoFocus
-                    className="w-20 border-2 border-[#1a8eff] rounded-lg px-2 py-1.5 text-center text-sm focus:outline-none"
-                    onKeyDown={e => e.key === 'Enter' && handleAddStock(item.product_id)} />
-                  <button onClick={() => handleAddStock(item.product_id)}
-                    className="bg-green-500 text-white px-3 py-1.5 rounded-lg text-sm font-medium">Add</button>
-                  <button onClick={() => { setAddingStock(null); setStockQty('') }}
-                    className="text-gray-400 hover:text-gray-600 px-2">✕</button>
+              {isEditing ? (
+                <div className="flex flex-col gap-2 items-end">
+                  {/* Mode toggle */}
+                  <div className="flex rounded-lg border border-gray-200 overflow-hidden text-xs font-semibold">
+                    <button
+                      onClick={() => { setEditMode('add'); setStockQty('') }}
+                      className={`px-3 py-1.5 transition ${editMode === 'add' ? 'bg-[#1a8eff] text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+                    >+ Add</button>
+                    <button
+                      onClick={() => { setEditMode('set'); setStockQty(String(item.quantity)) }}
+                      className={`px-3 py-1.5 transition ${editMode === 'set' ? 'bg-purple-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}
+                    >Set To</button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={stockQty}
+                      onChange={e => setStockQty(e.target.value)}
+                      type="number"
+                      placeholder={editMode === 'add' ? '±Qty' : 'Exact qty'}
+                      autoFocus
+                      className="w-24 border-2 border-[#1a8eff] rounded-lg px-2 py-1.5 text-center text-sm focus:outline-none"
+                      onKeyDown={e => e.key === 'Enter' && handleConfirm(item.product_id)}
+                    />
+                    <button
+                      onClick={() => handleConfirm(item.product_id)}
+                      className={`text-white px-3 py-1.5 rounded-lg text-sm font-medium ${editMode === 'add' ? 'bg-green-500 hover:bg-green-600' : 'bg-purple-500 hover:bg-purple-600'}`}
+                    >{editMode === 'add' ? 'Add' : 'Set'}</button>
+                    <button onClick={() => { setEditingId(null); setStockQty('') }} className="text-gray-400 hover:text-gray-600 px-1">✕</button>
+                  </div>
                 </div>
               ) : (
-                <button onClick={() => { setAddingStock(item.product_id); setStockQty('') }}
+                <button onClick={() => openEdit(item.product_id)}
                   className="w-10 h-10 bg-[#1a8eff] text-white rounded-full flex items-center justify-center hover:bg-[#0077e6] shrink-0">
                   <Plus size={20} />
                 </button>

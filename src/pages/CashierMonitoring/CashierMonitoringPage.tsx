@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import TopBar from '../../components/layout/TopBar'
-import { Clock, LogIn, LogOut, Plus, X, Check, ChevronDown, ChevronUp } from 'lucide-react'
+import { Clock, LogIn, LogOut, Plus, X, Check, ChevronDown, ChevronUp, ShoppingCart, TrendingUp } from 'lucide-react'
 
 type Shift = {
   id: string
@@ -30,6 +30,7 @@ export default function CashierMonitoringPage() {
   const [allShifts, setAllShifts] = useState<Shift[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [tab, setTab] = useState<'active' | 'history'>('active')
+  const [cashierSales, setCashierSales] = useState<any[]>([])
 
   // Time-in modal
   const [showTimeIn, setShowTimeIn] = useState(false)
@@ -56,14 +57,16 @@ export default function CashierMonitoringPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   const load = async () => {
-    const [active, all, userList] = await Promise.all([
+    const [active, all, userList, sales] = await Promise.all([
       window.api.shifts.getActive(),
       window.api.shifts.getAll({}),
       window.api.auth.getUsers(),
+      window.api.orders.getCashierSalesToday(),
     ])
     setActiveShifts(active)
     setAllShifts(all)
     setUsers(userList)
+    setCashierSales(sales)
   }
 
   useEffect(() => { load() }, [])
@@ -113,6 +116,68 @@ export default function CashierMonitoringPage() {
       <TopBar title="Cashier Monitoring" back="/" />
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto p-4 space-y-4">
+
+          {/* Today's Sales Summary */}
+          {(() => {
+            const totalSales = cashierSales.reduce((s, c) => s + c.total_sales, 0)
+            const totalOrders = cashierSales.reduce((s, c) => s + c.order_count, 0)
+            const active = cashierSales.filter(c => c.order_count > 0)
+            return (
+              <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
+                <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+                  <TrendingUp size={18} className="text-[#1a8eff]" />
+                  <h2 className="font-bold text-gray-900">Sales Today</h2>
+                  <span className="ml-auto text-xs text-gray-400">{new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                </div>
+
+                {/* Totals row */}
+                <div className="grid grid-cols-2 divide-x divide-gray-100 border-b border-gray-100">
+                  <div className="px-5 py-4">
+                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Sales</p>
+                    <p className="text-2xl font-bold text-[#1a8eff]">{fmt(totalSales)}</p>
+                  </div>
+                  <div className="px-5 py-4">
+                    <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Orders</p>
+                    <p className="text-2xl font-bold text-gray-800">{totalOrders}</p>
+                  </div>
+                </div>
+
+                {/* Per-cashier rows */}
+                <div className="divide-y divide-gray-50">
+                  {cashierSales.map((c, i) => {
+                    const pct = totalSales > 0 ? (c.total_sales / totalSales) * 100 : 0
+                    return (
+                      <div key={c.user_id} className="flex items-center gap-3 px-5 py-3">
+                        <div className="w-8 h-8 rounded-full bg-[#1a8eff]/10 flex items-center justify-center shrink-0">
+                          <span className="text-xs font-bold text-[#1a8eff]">{c.cashier_name.charAt(0).toUpperCase()}</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-semibold text-gray-800">{c.cashier_name}</span>
+                            <span className="text-sm font-bold text-gray-900">{fmt(c.total_sales)}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div className="h-full bg-[#1a8eff] rounded-full transition-all" style={{ width: `${pct}%` }} />
+                            </div>
+                            <span className="text-xs text-gray-400 shrink-0">
+                              <ShoppingCart size={11} className="inline mr-0.5" />{c.order_count} orders
+                            </span>
+                          </div>
+                          {(c.credit_sales > 0) && (
+                            <p className="text-xs text-orange-500 mt-0.5">includes {fmt(c.credit_sales)} credit</p>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {active.length === 0 && (
+                    <p className="px-5 py-4 text-sm text-gray-400">No sales recorded today yet.</p>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Tabs + Time In button */}
           <div className="flex items-center justify-between">

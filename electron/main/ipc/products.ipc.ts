@@ -72,12 +72,15 @@ export function registerProductHandlers() {
     const tx = db.transaction(() => {
       db.prepare(`
         INSERT INTO products (id, name, description, image_path, barcode, category_id,
-          base_price, base_cost, markup_pct, has_variations, variation_group_id,
+          base_price, retail_price, wholesale_price, base_cost, markup_pct, has_variations, variation_group_id,
           allow_fractions, track_inventory, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(id, data.name, data.description || null, data.image_path || null,
              data.barcode || null, data.category_id || null,
-             data.base_price || 0, data.base_cost || 0,
+             data.retail_price ?? data.base_price ?? 0,
+             data.retail_price ?? data.base_price ?? 0,
+             data.wholesale_price ?? data.retail_price ?? data.base_price ?? 0,
+             data.base_cost || 0,
              data.markup_pct != null ? data.markup_pct : null,
              data.has_variations ? 1 : 0, data.variation_group_id || null,
              data.allow_fractions ? 1 : 0, data.track_inventory !== false ? 1 : 0,
@@ -103,6 +106,8 @@ export function registerProductHandlers() {
         barcode = ?,
         category_id = ?,
         base_price = COALESCE(?, base_price),
+        retail_price = COALESCE(?, retail_price),
+        wholesale_price = COALESCE(?, wholesale_price),
         base_cost = COALESCE(?, base_cost),
         markup_pct = ?,
         has_variations = COALESCE(?, has_variations),
@@ -114,7 +119,10 @@ export function registerProductHandlers() {
     `).run(data.name, data.description, data.image_path,
            data.barcode !== undefined ? data.barcode : undefined,
            data.category_id !== undefined ? data.category_id : undefined,
-           data.base_price, data.base_cost,
+           data.retail_price ?? data.base_price,
+           data.retail_price ?? data.base_price,
+           data.wholesale_price,
+           data.base_cost,
            data.markup_pct !== undefined ? data.markup_pct : null,
            data.has_variations != null ? (data.has_variations ? 1 : 0) : null,
            data.variation_group_id !== undefined ? data.variation_group_id : undefined,
@@ -137,8 +145,15 @@ export function registerProductHandlers() {
     const db = getDb()
     const tx = db.transaction(() => {
       for (const u of updates) {
-        db.prepare(`UPDATE products SET base_price = ?, markup_pct = ?, updated_at = datetime('now') WHERE id = ?`)
-          .run(u.price, u.markup_pct != null ? u.markup_pct : null, u.id)
+        db.prepare(`
+          UPDATE products
+          SET base_price = ?,
+              retail_price = ?,
+              markup_pct = ?,
+              updated_at = datetime('now')
+          WHERE id = ?
+        `)
+          .run(u.price, u.price, u.markup_pct != null ? u.markup_pct : null, u.id)
       }
     })
     tx()

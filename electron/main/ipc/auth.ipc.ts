@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid'
 import axios from 'axios'
 import { getActiveCloudUserId, getDb, migrateLocalDeviceDataToCloudUser, setActiveCloudUserId, withScopedDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { reconnectRealtime, disconnectRealtime } from '../realtime'
 
 const SUPABASE_URL = 'https://rzhjfsgjkbvcspfncyku.supabase.co'
 const SUPABASE_FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`
@@ -239,6 +240,7 @@ export function registerAuthHandlers() {
   ipcMain.handle(IPC.AUTH.CLOUD_LOGOUT, () => {
     clearCloudSession()
     setActiveCloudUserId(null)
+    disconnectRealtime()
     return { success: true }
   })
 
@@ -464,6 +466,9 @@ export function registerAuthHandlers() {
 
       // 5. Upsert all cashiers into local users table
       applyCloudCashiers(cashiers)
+
+      // Connect Realtime to the signed-in account's broadcast channel
+      reconnectRealtime()
 
       return { success: true, userId: user.id }
     } catch (err: any) {

@@ -44,16 +44,94 @@ Deno.serve(async (req) => {
       const orders = Array.isArray(payload.orders) ? payload.orders : []
       const orderItems = Array.isArray(payload.orderItems) ? payload.orderItems : []
 
-      const { error } = await supabase.rpc('sync_sales_upserts', {
-        business_id: businessId,
-        debtors,
-        orders,
-        order_items: orderItems,
-        debtor_transactions: debtorTransactions,
-      })
+      if (debtors.length > 0) {
+        const valid = debtors.filter(d => typeof d.id === 'string' && d.id.trim())
+        const { error } = await supabase.from('sales_debtors').upsert(
+          valid.map(d => ({
+            id: d.id,
+            business_id: businessId,
+            name: d.name,
+            phone: d.phone ?? null,
+            balance: d.balance ?? 0,
+            total_credit: d.total_credit ?? 0,
+            total_paid: d.total_paid ?? 0,
+            due_date: d.due_date ?? null,
+            follow_up_date: d.follow_up_date ?? null,
+            last_reminder_at: d.last_reminder_at ?? null,
+            created_at: d.created_at ?? new Date().toISOString(),
+            deleted_at: d.deleted_at ?? null,
+          })),
+          { onConflict: 'id' }
+        )
+        if (error) return json({ error: `Failed to sync debtors: ${error.message}` }, 500)
+      }
 
-      if (error) {
-        return json({ error: `Failed to sync sales data: ${error.message}` }, 500)
+      if (orders.length > 0) {
+        const valid = orders.filter(o => typeof o.id === 'string' && o.id.trim())
+        const { error } = await supabase.from('sales_orders').upsert(
+          valid.map(o => ({
+            id: o.id,
+            business_id: businessId,
+            order_number: o.order_number ?? null,
+            customer_name: o.customer_name ?? null,
+            status: o.status ?? 'completed',
+            subtotal: o.subtotal ?? 0,
+            discount: o.discount ?? 0,
+            total: o.total ?? 0,
+            payment_amount: o.payment_amount ?? 0,
+            change_amount: o.change_amount ?? 0,
+            payment_breakdown: o.payment_breakdown ?? [],
+            is_credit: Boolean(o.is_credit),
+            debtor_id: o.debtor_id ?? null,
+            user_id: o.user_id ?? null,
+            note: o.note ?? null,
+            exclude_sales: Boolean(o.exclude_sales),
+            created_at: o.created_at ?? new Date().toISOString(),
+            deleted_at: o.deleted_at ?? null,
+          })),
+          { onConflict: 'id' }
+        )
+        if (error) return json({ error: `Failed to sync orders: ${error.message}` }, 500)
+      }
+
+      if (orderItems.length > 0) {
+        const valid = orderItems.filter(i => typeof i.id === 'string' && i.id.trim())
+        const { error } = await supabase.from('sales_order_items').upsert(
+          valid.map(i => ({
+            id: i.id,
+            business_id: businessId,
+            order_id: i.order_id,
+            product_id: i.product_id ?? null,
+            name: i.name,
+            price: i.price ?? 0,
+            cost: i.cost ?? 0,
+            quantity: i.quantity ?? 1,
+            subtotal: i.subtotal ?? 0,
+            is_custom: Boolean(i.is_custom),
+          })),
+          { onConflict: 'id' }
+        )
+        if (error) return json({ error: `Failed to sync order items: ${error.message}` }, 500)
+      }
+
+      if (debtorTransactions.length > 0) {
+        const valid = debtorTransactions.filter(t => typeof t.id === 'string' && t.id.trim())
+        const { error } = await supabase.from('sales_debtor_transactions').upsert(
+          valid.map(t => ({
+            id: t.id,
+            business_id: businessId,
+            debtor_id: t.debtor_id,
+            type: t.type,
+            amount: t.amount ?? 0,
+            profit: t.profit ?? null,
+            note: t.note ?? null,
+            order_id: t.order_id ?? null,
+            user_id: t.user_id ?? null,
+            created_at: t.created_at ?? new Date().toISOString(),
+          })),
+          { onConflict: 'id' }
+        )
+        if (error) return json({ error: `Failed to sync debtor transactions: ${error.message}` }, 500)
       }
 
       return json({ success: true })

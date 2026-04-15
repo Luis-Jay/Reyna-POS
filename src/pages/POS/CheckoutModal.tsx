@@ -1,16 +1,17 @@
 import { useEffect, useState } from 'react'
-import { X, Tag, User, Star } from 'lucide-react'
+import { X, Tag, User, Star, CreditCard } from 'lucide-react'
 import { useCartStore } from '../../stores/cart.store'
 import { useAuthStore } from '../../stores/auth.store'
 import { formatCurrency } from '../../utils/format'
 import { PaymentEntry, PaymentMethod } from '../../types'
 
 const QUICK_AMOUNTS = [100, 200, 500, 1000]
-const PAYMENT_MODES: Array<{ key: 'cash' | 'gcash' | 'card' | 'split'; label: string }> = [
-  { key: 'cash', label: 'Cash' },
-  { key: 'gcash', label: 'GCash' },
-  { key: 'card', label: 'Card' },
-  { key: 'split', label: 'Split Payment' },
+const PAYMENT_MODES: Array<{ key: 'cash' | 'gcash' | 'card' | 'split' | 'credit'; label: string }> = [
+  { key: 'cash',   label: 'Cash' },
+  { key: 'gcash',  label: 'GCash' },
+  { key: 'card',   label: 'Card' },
+  { key: 'split',  label: 'Split' },
+  { key: 'credit', label: 'Credit' },
 ]
 
 interface Props { onClose: () => void; onComplete: () => void }
@@ -18,7 +19,7 @@ interface Props { onClose: () => void; onComplete: () => void }
 export default function CheckoutModal({ onClose, onComplete }: Props) {
   const cart = useCartStore()
   const { user } = useAuthStore()
-  const [paymentMode, setPaymentMode] = useState<'cash' | 'gcash' | 'card' | 'split'>('cash')
+  const [paymentMode, setPaymentMode] = useState<'cash' | 'gcash' | 'card' | 'split' | 'credit'>('cash')
   const [paymentInput, setPaymentInput] = useState(cart.total().toFixed(2))
   const [splitPayments, setSplitPayments] = useState<Record<PaymentMethod, string>>({
     cash: cart.total().toFixed(2),
@@ -31,6 +32,18 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
   const [discountInput, setDiscountInput] = useState('')
   const [showDiscount, setShowDiscount] = useState(false)
   const [error, setError] = useState('')
+
+  // Credit / debtor
+  const [debtorSearch, setDebtorSearch] = useState('')
+  const [debtorResults, setDebtorResults] = useState<any[]>([])
+  const [selectedDebtor, setSelectedDebtor] = useState<any>(null)
+
+  const searchDebtors = async (q: string) => {
+    setDebtorSearch(q)
+    if (!q.trim()) { setDebtorResults([]); return }
+    const res = await window.api.debtors.getAll({ search: q })
+    setDebtorResults(res.slice(0, 5))
+  }
 
   // Loyalty
   const [loyaltyEnabled, setLoyaltyEnabled] = useState(false)
@@ -60,7 +73,8 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
   const cashSplit = Math.max(0, parseFloat(splitPayments.cash) || 0)
   const gcashSplit = Math.max(0, parseFloat(splitPayments.gcash) || 0)
   const cardSplit = Math.max(0, parseFloat(splitPayments.card) || 0)
-  const totalPaid = paymentMode === 'split' ? cashSplit + gcashSplit + cardSplit : singlePayment
+  const isCredit = paymentMode === 'credit'
+  const totalPaid = isCredit ? total : paymentMode === 'split' ? cashSplit + gcashSplit + cardSplit : singlePayment
   const change = paymentMode === 'cash' || paymentMode === 'split' ? Math.max(0, totalPaid - total) : 0
 
   const paymentBreakdown: PaymentEntry[] = paymentMode === 'split'
@@ -69,6 +83,7 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
         { method: 'gcash', amount: gcashSplit },
         { method: 'card', amount: cardSplit },
       ] as PaymentEntry[]).filter(entry => entry.amount > 0)
+    : isCredit ? []
     : totalPaid > 0
       ? [{ method: paymentMode as PaymentMethod, amount: totalPaid }]
       : []
@@ -83,20 +98,25 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
   }
 
   const handleConfirm = async () => {
-    if (totalPaid < total) { setError('Payment is less than total'); return }
-    if (paymentBreakdown.length === 0) { setError('Enter at least one payment amount.'); return }
+    if (isCredit) {
+      if (!selectedDebtor) { setError('Select a debtor to charge to.'); return }
+    } else {
+      if (totalPaid < total) { setError('Payment is less than total'); return }
+      if (paymentBreakdown.length === 0) { setError('Enter at least one payment amount.'); return }
+    }
     setError('')
     setLoading(true)
     try {
       const result = await window.api.orders.create({
-        customer_name: customerName || null,
+        customer_name: isCredit ? selectedDebtor.name : (customerName || null),
         subtotal: cart.subtotal(),
         discount: cart.discount,
         total,
-        payment_amount: totalPaid,
-        change_amount: change,
+        payment_amount: isCredit ? 0 : totalPaid,
+        change_amount: isCredit ? 0 : change,
         payment_breakdown: paymentBreakdown,
-        is_credit: false,
+        is_credit: isCredit,
+        debtor_id: isCredit ? selectedDebtor.id : null,
         user_id: user?.id,
         items: cart.items.map(i => ({
           product_id: i.product_id,
@@ -117,7 +137,10 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
           }
         }
         try {
-          await window.api.printer.printReceipt(result.order)
+          const printResult = await window.api.printer.printReceipt(result.order)
+          if (!printResult?.success) {
+            window.alert(`Sale saved, but receipt was not printed.\n\n${printResult?.error || 'Printer unavailable.'}`)
+          }
         } catch (printError: any) {
           window.alert(`Sale saved, but receipt was not printed.\n\n${printError?.message || 'Printer unavailable.'}`)
         }
@@ -226,44 +249,76 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
 
           <div>
             <label className="text-sm text-gray-600 block mb-2">Payment Method</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {PAYMENT_MODES.map(mode => (
                 <button
                   key={mode.key}
                   onClick={() => {
                     setPaymentMode(mode.key)
                     setError('')
-                    if (mode.key !== 'split') setPaymentInput(total.toFixed(2))
+                    setSelectedDebtor(null)
+                    setDebtorSearch('')
+                    setDebtorResults([])
+                    if (mode.key !== 'split' && mode.key !== 'credit') setPaymentInput(total.toFixed(2))
                   }}
-                  className={`rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                  className={`rounded-xl border px-3 py-2 text-sm font-semibold transition flex items-center justify-center gap-1 ${
                     paymentMode === mode.key
-                      ? 'border-[#1a8eff] bg-blue-50 text-[#1a8eff]'
+                      ? mode.key === 'credit'
+                        ? 'border-orange-400 bg-orange-50 text-orange-600'
+                        : 'border-[#1a8eff] bg-blue-50 text-[#1a8eff]'
                       : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
                   }`}
                 >
+                  {mode.key === 'credit' && <CreditCard size={13} />}
                   {mode.label}
                 </button>
               ))}
             </div>
           </div>
 
-          {paymentMode === 'split' ? (
+          {/* Credit mode — debtor search */}
+          {isCredit ? (
+            <div className="space-y-2">
+              {selectedDebtor ? (
+                <div className="flex items-center justify-between bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+                  <div>
+                    <p className="font-semibold text-orange-800">{selectedDebtor.name}</p>
+                    <p className="text-xs text-orange-500">Current balance: {formatCurrency(selectedDebtor.balance)}</p>
+                  </div>
+                  <button onClick={() => { setSelectedDebtor(null); setDebtorSearch('') }} className="text-orange-400 hover:text-orange-600"><X size={16} /></button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input
+                    value={debtorSearch}
+                    onChange={e => searchDebtors(e.target.value)}
+                    placeholder="Search debtor by name..."
+                    className="w-full border-2 border-orange-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-orange-400"
+                    autoFocus
+                  />
+                  {debtorResults.length > 0 && (
+                    <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 overflow-hidden">
+                      {debtorResults.map(d => (
+                        <button key={d.id} onClick={() => { setSelectedDebtor(d); setDebtorSearch(d.name); setDebtorResults([]) }}
+                          className="w-full text-left px-4 py-2.5 hover:bg-orange-50 text-sm border-b last:border-0">
+                          <span className="font-medium">{d.name}</span>
+                          <span className="text-gray-400 ml-2 text-xs">Balance: {formatCurrency(d.balance)}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="bg-orange-50 rounded-xl px-4 py-3 text-center">
+                <p className="text-xs text-orange-500 uppercase tracking-wide">Amount to be charged</p>
+                <p className="text-3xl font-bold text-orange-600">{formatCurrency(total)}</p>
+              </div>
+            </div>
+          ) : paymentMode === 'split' ? (
             <div className="space-y-3">
-              <SplitInput
-                label="Cash"
-                value={splitPayments.cash}
-                onChange={value => { setSplitPayments(prev => ({ ...prev, cash: value })); setError('') }}
-              />
-              <SplitInput
-                label="GCash"
-                value={splitPayments.gcash}
-                onChange={value => { setSplitPayments(prev => ({ ...prev, gcash: value })); setError('') }}
-              />
-              <SplitInput
-                label="Card"
-                value={splitPayments.card}
-                onChange={value => { setSplitPayments(prev => ({ ...prev, card: value })); setError('') }}
-              />
+              <SplitInput label="Cash"  value={splitPayments.cash}  onChange={v => { setSplitPayments(p => ({ ...p, cash: v }));  setError('') }} />
+              <SplitInput label="GCash" value={splitPayments.gcash} onChange={v => { setSplitPayments(p => ({ ...p, gcash: v })); setError('') }} />
+              <SplitInput label="Card"  value={splitPayments.card}  onChange={v => { setSplitPayments(p => ({ ...p, card: v }));  setError('') }} />
             </div>
           ) : (
             <div>
@@ -279,28 +334,32 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
             </div>
           )}
 
-          {/* Quick amounts */}
-          <div className="flex gap-2">
-            {QUICK_AMOUNTS.map(a => (
-              <button key={a} onClick={() => applyQuickAmount(a)}
-                className="flex-1 bg-blue-50 hover:bg-blue-100 text-[#1a8eff] py-2 rounded-lg text-sm font-medium">
-                ₱{a}
-              </button>
-            ))}
-          </div>
-
-          <div className="rounded-xl bg-slate-50 px-4 py-3">
-            <div className="flex justify-between text-sm text-slate-500">
-              <span>Total Paid</span>
-              <span className="font-semibold text-slate-800">{formatCurrency(totalPaid)}</span>
+          {/* Quick amounts — hidden for credit */}
+          {!isCredit && (
+            <div className="flex gap-2">
+              {QUICK_AMOUNTS.map(a => (
+                <button key={a} onClick={() => applyQuickAmount(a)}
+                  className="flex-1 bg-blue-50 hover:bg-blue-100 text-[#1a8eff] py-2 rounded-lg text-sm font-medium">
+                  ₱{a}
+                </button>
+              ))}
             </div>
-          </div>
+          )}
 
-          {/* Change */}
-          <div className="text-center">
-            <p className="text-sm text-gray-500">Change</p>
-            <p className="text-3xl font-bold text-green-500">{formatCurrency(change)}</p>
-          </div>
+          {!isCredit && (
+            <>
+              <div className="rounded-xl bg-slate-50 px-4 py-3">
+                <div className="flex justify-between text-sm text-slate-500">
+                  <span>Total Paid</span>
+                  <span className="font-semibold text-slate-800">{formatCurrency(totalPaid)}</span>
+                </div>
+              </div>
+              <div className="text-center">
+                <p className="text-sm text-gray-500">Change</p>
+                <p className="text-3xl font-bold text-green-500">{formatCurrency(change)}</p>
+              </div>
+            </>
+          )}
 
           {error && <p className="text-red-500 text-sm text-center">{error}</p>}
         </div>
@@ -308,10 +367,12 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
         <div className="px-6 pb-6">
           <button
             onClick={handleConfirm}
-            disabled={loading || totalPaid < total}
-            className="w-full bg-green-500 text-white py-4 rounded-xl font-bold text-base hover:bg-green-600 active:scale-95 transition-all disabled:opacity-50"
+            disabled={loading || (!isCredit && totalPaid < total) || (isCredit && !selectedDebtor)}
+            className={`w-full py-4 rounded-xl font-bold text-base active:scale-95 transition-all disabled:opacity-50 text-white ${
+              isCredit ? 'bg-orange-500 hover:bg-orange-600' : 'bg-green-500 hover:bg-green-600'
+            }`}
           >
-            {loading ? 'Processing...' : 'Confirm Payment'}
+            {loading ? 'Processing...' : isCredit ? 'Charge to Debtor' : 'Confirm Payment'}
           </button>
         </div>
       </div>

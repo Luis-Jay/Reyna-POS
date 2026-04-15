@@ -10,14 +10,14 @@ import CustomItemModal from './CustomItemModal'
 import SaveOrderModal from './SaveOrderModal'
 import SavedOrdersModal from './SavedOrdersModal'
 import CameraScannerModal from './CameraScannerModal'
-import { ShoppingBag, Plus, Minus, X, Search, Clock, ClipboardList, Settings, Camera } from 'lucide-react'
+import { ShoppingBag, Plus, Minus, X, Search, Clock, ClipboardList, Settings, Camera, LogOut } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
 
 export default function POSPage() {
   const navigate = useNavigate()
-  const { user } = useAuthStore()
+  const { user, logout } = useAuthStore()
   const cart = useCartStore()
 
   const [products, setProducts] = useState<Product[]>([])
@@ -82,19 +82,20 @@ export default function POSPage() {
     const product = await window.api.products.getByBarcode(code)
     if (!product) return
 
-    if (product.has_variations || product.allow_fractions) {
+    if (product.has_variations || product.allow_fractions || ((product.wholesale_price ?? 0) > 0 && (product.wholesale_price ?? 0) !== (product.retail_price ?? product.base_price))) {
       setQuantityProduct(product)
     } else {
       void fetchAndCacheTiers(product.id)
       cart.addItem({
         product_id: product.id,
         name: product.name,
-        price: product.base_price,
-        base_price: product.base_price,
+        price: product.retail_price ?? product.base_price,
+        base_price: product.retail_price ?? product.base_price,
         cost: product.base_cost,
         quantity: 1,
         is_custom: false,
         image_path: product.image_path,
+        price_type: 'retail',
       })
     }
   }, [cart, fetchAndCacheTiers])
@@ -108,16 +109,20 @@ export default function POSPage() {
   }, [handleScannedBarcode])
 
   const handleAddProduct = (product: Product) => {
-    if (product.has_variations || product.allow_fractions) {
+    if (product.has_variations || product.allow_fractions || ((product.wholesale_price ?? 0) > 0 && (product.wholesale_price ?? 0) !== (product.retail_price ?? product.base_price))) {
       setQuantityProduct(product)
     } else {
       void fetchAndCacheTiers(product.id)
-      cart.addItem({ product_id: product.id, name: product.name, price: product.base_price, base_price: product.base_price, cost: product.base_cost, quantity: 1, is_custom: false, image_path: product.image_path })
+      cart.addItem({ product_id: product.id, name: product.name, price: product.retail_price ?? product.base_price, base_price: product.retail_price ?? product.base_price, cost: product.base_cost, quantity: 1, is_custom: false, image_path: product.image_path, price_type: 'retail' })
     }
   }
 
   const handleCartQtyChange = (item: CartItem, newQty: number) => {
     if (item.product_id && !item.is_custom) {
+      if (item.price_type === 'wholesale') {
+        cart.updateQuantity(item.id, newQty)
+        return
+      }
       const base = item.base_price ?? item.price
       const newPrice = applyTierPrice(item.product_id, newQty, base)
       cart.updateItemWithPrice(item.id, newQty, newPrice)
@@ -159,7 +164,14 @@ export default function POSPage() {
         <button onClick={() => setShowCameraScanner(true)} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-3 py-2 text-sm text-white transition hover:bg-white/20">
           <Camera size={16} /> Scan
         </button>
-        <span className="relative rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold tracking-[0.18em] text-white/90">{user?.name?.toUpperCase()}</span>
+        <button
+          onClick={() => { logout(); navigate('/login') }}
+          className="relative flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-semibold tracking-[0.18em] text-white/90 transition hover:bg-red-500/40 hover:text-white"
+          title="Sign out"
+        >
+          {user?.name?.toUpperCase()}
+          <LogOut size={13} />
+        </button>
       </div>
 
       <div className="flex flex-1 gap-4 overflow-hidden p-4">
@@ -273,7 +285,7 @@ export default function POSPage() {
                   disabled={cart.items.length === 0}
                   className="w-full rounded-2xl bg-[var(--brand-600)] py-3 text-white font-semibold shadow-[0_14px_30px_rgba(27,125,75,0.22)] transition hover:bg-[var(--brand-700)] active:scale-95 disabled:opacity-40"
                 >Checkout</button>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-2">
                   <button onClick={() => setShowCustom(true)} className="rounded-xl bg-slate-800 py-2 text-xs font-medium text-white flex items-center justify-center gap-1 hover:bg-slate-900">
                     <Plus size={14} /> Custom
                   </button>
@@ -283,6 +295,13 @@ export default function POSPage() {
                   >
                     <ShoppingBag size={14} /> Save
                     {savedCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center">{savedCount}</span>}
+                  </button>
+                  <button
+                    onClick={() => { if (cart.items.length > 0) cart.clearCart() }}
+                    disabled={cart.items.length === 0}
+                    className="rounded-xl bg-red-500 py-2 text-xs font-medium text-white flex items-center justify-center gap-1 hover:bg-red-600 disabled:opacity-40"
+                  >
+                    <X size={14} /> Cancel
                   </button>
                 </div>
               </div>
@@ -324,7 +343,7 @@ export default function POSPage() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="truncate text-sm font-medium text-slate-800">{p.name}</p>
-                      <p className="text-xs text-[var(--brand-700)]">₱{p.base_price.toFixed(2)}</p>
+                      <p className="text-xs text-[var(--brand-700)]">R ₱{(p.retail_price ?? p.base_price).toFixed(2)}</p>
                     </div>
                     <button onClick={() => handleAddProduct(p)} className="rounded-full bg-[var(--brand-50)] px-3 py-1 text-xs font-semibold text-[var(--brand-700)] hover:bg-[var(--brand-100)]">+ Add</button>
                   </div>
@@ -425,7 +444,10 @@ function ProductCard({ product, onAdd }: { product: Product; onAdd: (p: Product)
       </div>
       <div className="p-3">
         <p className="truncate text-sm font-semibold text-slate-800">{product.name}</p>
-        <p className="mt-1 text-xs font-medium text-slate-500">₱{product.base_price.toFixed(2)}</p>
+        <p className="mt-1 text-xs font-medium text-slate-500">R ₱{(product.retail_price ?? product.base_price).toFixed(2)}</p>
+        {(product.wholesale_price ?? 0) > 0 && (product.wholesale_price ?? 0) !== (product.retail_price ?? product.base_price) && (
+          <p className="mt-1 text-xs font-medium text-emerald-600">W ₱{(product.wholesale_price ?? 0).toFixed(2)}</p>
+        )}
         <button
           onClick={() => onAdd(product)}
           className="mt-3 w-full rounded-2xl border border-emerald-900/8 bg-[var(--brand-50)] py-2 text-xs font-semibold text-[var(--brand-700)] transition hover:bg-[var(--brand-600)] hover:text-white"
@@ -447,7 +469,7 @@ function CartRow({ item, onQty, onRemove, large }: { item: CartItem; onQty: (q: 
         <p className="truncate text-sm font-medium text-slate-800">{item.name}</p>
         <p className="text-xs text-slate-400">
           {item.quantity} x {item.price}
-          {item.base_price && item.price < item.base_price && (
+          {item.price_type === 'wholesale' && (
             <span className="ml-1 text-amber-600 font-semibold">★ Wholesale</span>
           )}
           {' = '}<span className="font-bold text-[var(--brand-700)]">{item.subtotal.toFixed(0)}</span>

@@ -95,16 +95,40 @@ Deno.serve(async (req) => {
 
       if (products.length > 0) {
         const validProducts = products.filter(p => typeof p.id === 'string' && p.id.trim())
+
+        // Upload images to Storage and collect URLs
+        const imageUrls = new Map<string, string>()
+        for (const product of validProducts) {
+          if (!product.image_data || typeof product.image_data !== 'string') continue
+          try {
+            const match = product.image_data.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
+            if (!match) continue
+            const [, mimeType, base64] = match
+            const ext = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg'
+            const fileName = `${businessId}/${product.id}.${ext}`
+            const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+            const { error: uploadError } = await supabase.storage
+              .from('product-images')
+              .upload(fileName, bytes, { contentType: mimeType, upsert: true })
+            if (!uploadError) {
+              const { data: { publicUrl } } = supabase.storage.from('product-images').getPublicUrl(fileName)
+              imageUrls.set(product.id, publicUrl)
+            }
+          } catch { /* skip failed image uploads silently */ }
+        }
+
         const { error } = await supabase.from('catalog_products').upsert(
           validProducts.map(product => ({
             id: product.id,
             business_id: businessId,
             name: product.name,
             description: product.description ?? null,
-            image_data: product.image_data ?? null,
+            image_url: imageUrls.get(product.id) ?? product.image_url ?? null,
             barcode: product.barcode ?? null,
             category_id: product.category_id ?? null,
-            base_price: product.base_price ?? 0,
+            base_price: product.retail_price ?? product.base_price ?? 0,
+            retail_price: product.retail_price ?? product.base_price ?? 0,
+            wholesale_price: product.wholesale_price ?? product.retail_price ?? product.base_price ?? 0,
             base_cost: product.base_cost ?? 0,
             markup_pct: product.markup_pct ?? null,
             has_variations: Boolean(product.has_variations),
@@ -123,16 +147,52 @@ Deno.serve(async (req) => {
       }
 
       if (inventory.length > 0) {
-        const validInventory = inventory.filter(i => typeof i.id === 'string' && i.id.trim())
-        const { error } = await supabase.from('catalog_inventory').upsert(
-          validInventory.map(item => ({
-            id: item.id,
+        const validInventory = inventory.filter(
+          i =>
+            typeof i.id === 'string' &&
+            i.id.trim() &&
+            typeof i.product_id === 'string' &&
+            i.product_id.trim(),
+        )
+
+        const productIds = [...new Set(validInventory.map(item => item.product_id))]
+        const existingInventoryByProduct = new Map<string, { id: string }>()
+
+        if (productIds.length > 0) {
+          const { data: existingInventory, error: existingInventoryError } = await supabase
+            .from('catalog_inventory')
+            .select('id, product_id')
+            .eq('business_id', businessId)
+            .in('product_id', productIds)
+
+          if (existingInventoryError) {
+            return json({ error: `Failed to read existing inventory: ${existingInventoryError.message}` }, 500)
+          }
+
+          for (const row of existingInventory ?? []) {
+            existingInventoryByProduct.set(row.product_id, { id: row.id })
+          }
+        }
+
+        // Deduplicate by product_id — keep the latest entry per product.
+        // Two local rows for the same product would both resolve to the same
+        // cloud id and cause a primary key conflict on upsert.
+        const deduped = new Map<string, object>()
+        for (const item of validInventory) {
+          const cloudId = existingInventoryByProduct.get(item.product_id)?.id ?? item.id
+          deduped.set(item.product_id, {
+            id: cloudId,
             business_id: businessId,
             product_id: item.product_id,
             quantity: item.quantity ?? 0,
             low_threshold: item.low_threshold ?? 5,
             updated_at: item.updated_at ?? new Date().toISOString(),
-          }))
+          })
+        }
+
+        const { error } = await supabase.from('catalog_inventory').upsert(
+          Array.from(deduped.values()),
+          { onConflict: 'id' },
         )
         if (error) return json({ error: `Failed to sync inventory: ${error.message}` }, 500)
       }

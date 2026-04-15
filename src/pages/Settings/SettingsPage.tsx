@@ -36,6 +36,7 @@ export default function SettingsPage() {
   const [addingUser, setAddingUser] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
+  const [smsCredits, setSmsCredits] = useState<number | null>(null)
 
   const load = async () => {
     const [s, g, ps, printerList, sync, userList] = await Promise.all([
@@ -58,6 +59,9 @@ export default function SettingsPage() {
       catch { perms[u.id] = {} }
     }
     setUserPerms(perms)
+    window.api.sms.getCredits().then((res: any) => {
+      if (res?.credits !== null && res?.credits !== undefined) setSmsCredits(res.credits)
+    }).catch(() => {})
   }
 
   const handleSavePermissions = async (userId: string) => {
@@ -512,6 +516,26 @@ export default function SettingsPage() {
               >
                 {syncing ? 'Syncing Now...' : 'Sync Now'}
               </button>
+            </div>
+          </Section>
+
+          {/* SMS Credits */}
+          <Section title="SMS Credits">
+            <div className="py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Available Credits</p>
+                  <p className="mt-1 text-xs text-gray-500">Each SMS reminder sent to a debtor uses 1 credit.</p>
+                </div>
+                <span className={`text-2xl font-bold ${smsCredits === null ? 'text-gray-400' : smsCredits > 10 ? 'text-emerald-600' : smsCredits > 0 ? 'text-amber-600' : 'text-red-500'}`}>
+                  {smsCredits === null ? '—' : smsCredits}
+                </span>
+              </div>
+              {smsCredits !== null && smsCredits <= 10 && (
+                <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  {smsCredits === 0 ? 'You have no SMS credits. Contact your provider to top up.' : `Low balance — only ${smsCredits} credit${smsCredits === 1 ? '' : 's'} remaining.`}
+                </p>
+              )}
             </div>
           </Section>
 

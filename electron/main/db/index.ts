@@ -244,8 +244,9 @@ CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, pin T
 CREATE TABLE IF NOT EXISTS categories (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, sort_order INTEGER NOT NULL DEFAULT 0, deleted_at TEXT);
 CREATE TABLE IF NOT EXISTS variation_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL, deleted_at TEXT);
 CREATE TABLE IF NOT EXISTS variation_options (id TEXT PRIMARY KEY, group_id TEXT NOT NULL REFERENCES variation_groups(id), name TEXT NOT NULL, price REAL NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, deleted_at TEXT);
-CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, image_path TEXT, barcode TEXT UNIQUE, category_id TEXT REFERENCES categories(id), base_price REAL NOT NULL DEFAULT 0, base_cost REAL NOT NULL DEFAULT 0, markup_pct REAL, has_variations INTEGER NOT NULL DEFAULT 0, variation_group_id TEXT REFERENCES variation_groups(id), allow_fractions INTEGER NOT NULL DEFAULT 0, track_inventory INTEGER NOT NULL DEFAULT 1, is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, monthly_sold REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), deleted_at TEXT);
+CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, image_path TEXT, barcode TEXT UNIQUE, category_id TEXT REFERENCES categories(id), base_price REAL NOT NULL DEFAULT 0, retail_price REAL NOT NULL DEFAULT 0, wholesale_price REAL, base_cost REAL NOT NULL DEFAULT 0, markup_pct REAL, has_variations INTEGER NOT NULL DEFAULT 0, variation_group_id TEXT REFERENCES variation_groups(id), allow_fractions INTEGER NOT NULL DEFAULT 0, track_inventory INTEGER NOT NULL DEFAULT 1, is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, monthly_sold REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')), deleted_at TEXT);
 CREATE TABLE IF NOT EXISTS inventory (id TEXT PRIMARY KEY, product_id TEXT NOT NULL REFERENCES products(id), quantity REAL NOT NULL DEFAULT 0, low_threshold REAL NOT NULL DEFAULT 5, updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_product_unique ON inventory(product_id);
 CREATE TABLE IF NOT EXISTS stock_movements (id TEXT PRIMARY KEY, product_id TEXT NOT NULL REFERENCES products(id), type TEXT NOT NULL CHECK(type IN ('sale','restock','adjustment','return')), quantity REAL NOT NULL, reference_id TEXT, note TEXT, user_id TEXT REFERENCES users(id), created_at TEXT NOT NULL DEFAULT (datetime('now')), synced INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS orders (id TEXT PRIMARY KEY, order_number TEXT NOT NULL UNIQUE, customer_name TEXT, status TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('pending','completed','cancelled','void')), subtotal REAL NOT NULL DEFAULT 0, discount REAL NOT NULL DEFAULT 0, total REAL NOT NULL DEFAULT 0, payment_amount REAL, change_amount REAL, is_credit INTEGER NOT NULL DEFAULT 0, debtor_id TEXT REFERENCES debtors(id), user_id TEXT REFERENCES users(id), note TEXT, exclude_sales INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')), deleted_at TEXT, synced INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS order_items (id TEXT PRIMARY KEY, order_id TEXT NOT NULL REFERENCES orders(id), product_id TEXT REFERENCES products(id), name TEXT NOT NULL, price REAL NOT NULL, cost REAL NOT NULL DEFAULT 0, quantity REAL NOT NULL, subtotal REAL NOT NULL, is_custom INTEGER NOT NULL DEFAULT 0);
@@ -403,6 +404,42 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('loyalty_redeem_rate','1');
     `,
   },
   {
+    name: '012a_product_retail_wholesale_prices.sql',
+    sql: `
+ALTER TABLE products ADD COLUMN retail_price REAL NOT NULL DEFAULT 0;
+ALTER TABLE products ADD COLUMN wholesale_price REAL;
+UPDATE products
+SET retail_price = CASE
+  WHEN retail_price IS NULL OR retail_price = 0 THEN base_price
+  ELSE retail_price
+END
+WHERE retail_price IS NULL OR retail_price = 0;
+UPDATE products
+SET wholesale_price = retail_price
+WHERE wholesale_price IS NULL;
+    `,
+  },
+  {
+    name: '013_inventory_unique_per_product.sql',
+    sql: `
+DELETE FROM inventory
+WHERE id IN (
+  SELECT id
+  FROM (
+    SELECT
+      id,
+      ROW_NUMBER() OVER (
+        PARTITION BY product_id
+        ORDER BY datetime(updated_at) DESC, rowid DESC
+      ) AS row_num
+    FROM inventory
+  )
+  WHERE row_num > 1
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_product_unique ON inventory(product_id);
+    `,
+  },
+  {
     name: '007_customer_views.sql',
     sql: `
 DROP VIEW IF EXISTS customers;
@@ -477,6 +514,9 @@ function runMigrations(database: Database.Database) {
     }
     if (migrationName === '011_user_permissions.sql') {
       return hasColumn('users', 'permissions')
+    }
+    if (migrationName === '012a_product_retail_wholesale_prices.sql') {
+      return hasColumn('products', 'retail_price') && hasColumn('products', 'wholesale_price')
     }
     return false
   }

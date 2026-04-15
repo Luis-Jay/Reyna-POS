@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import { getCurrentProductImagesDir, getDb } from '../db'
 import { getValidCloudToken } from './auth.ipc'
+import { broadcastDataUpdated, updateRealtimeAuth } from '../realtime'
 import { IPC } from '../../../shared/ipc-channels'
 
 const SUPABASE_URL = 'https://rzhjfsgjkbvcspfncyku.supabase.co'
@@ -11,7 +12,7 @@ const SUPABASE_FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`
 const AUTO_SYNC_INTERVAL_MS = 20 * 1000
 const AUTO_SYNC_DEBOUNCE_MS = 3 * 1000
 
-type SyncTrigger = 'manual' | 'startup' | 'interval' | 'online' | 'local_change'
+type SyncTrigger = 'manual' | 'startup' | 'interval' | 'online' | 'local_change' | 'realtime'
 
 type SyncResult = {
   success: boolean
@@ -25,11 +26,19 @@ let lastSyncedAt: string | null = null
 let lastSyncError: string | null = null
 let lastSyncTrigger: SyncTrigger | null = null
 
+function readImageAsDataUrl(imagePath?: string | null): string | null {
+  if (!imagePath || !fs.existsSync(imagePath)) return null
+  const buffer = fs.readFileSync(imagePath)
+  const ext = path.extname(imagePath).toLowerCase()
+  const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+  return `data:${mime};base64,${buffer.toString('base64')}`
+}
+
 function getCatalogSnapshot() {
   const db = getDb()
   const products = db.prepare(`
     SELECT
-      id, name, description, image_path, barcode, category_id, base_price, base_cost, markup_pct,
+      id, name, description, image_path, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct,
       has_variations, variation_group_id, allow_fractions, track_inventory, is_active,
       sort_order, monthly_sold, created_at, updated_at, deleted_at
     FROM products
@@ -48,9 +57,9 @@ function getCatalogSnapshot() {
       SELECT id, group_id, name, price, cost, sort_order, deleted_at
       FROM variation_options
     `).all(),
-    products: products.map(product => ({
-      ...product,
-      image_data: readImageAsDataUrl(product.image_path),
+    products: products.map(p => ({
+      ...p,
+      image_data: readImageAsDataUrl(p.image_path),
     })),
     inventory: db.prepare(`
       SELECT id, product_id, quantity, low_threshold, updated_at
@@ -59,21 +68,6 @@ function getCatalogSnapshot() {
   }
 }
 
-function getImageMimeType(filePath: string) {
-  const ext = path.extname(filePath).toLowerCase()
-  if (ext === '.png') return 'image/png'
-  if (ext === '.webp') return 'image/webp'
-  if (ext === '.gif') return 'image/gif'
-  return 'image/jpeg'
-}
-
-function readImageAsDataUrl(imagePath?: string | null) {
-  if (!imagePath || !fs.existsSync(imagePath)) return null
-
-  const buffer = fs.readFileSync(imagePath)
-  const mimeType = getImageMimeType(imagePath)
-  return `data:${mimeType};base64,${buffer.toString('base64')}`
-}
 
 function persistProductImage(productId: string, imageData?: string | null) {
   if (!imageData || typeof imageData !== 'string') return null
@@ -135,8 +129,9 @@ function getSalesSnapshot() {
   }
 }
 
-function applyCatalogSnapshot(snapshot: any) {
+function applyCatalogSnapshot(snapshot: any): Array<{ productId: string; url: string }> {
   const db = getDb()
+  const pendingImageDownloads: Array<{ productId: string; url: string }> = []
   const tx = db.transaction(() => {
     for (const category of snapshot.categories || []) {
       db.prepare(`
@@ -192,14 +187,19 @@ function applyCatalogSnapshot(snapshot: any) {
 
     for (const product of snapshot.products || []) {
       const existing = db.prepare(`SELECT image_path FROM products WHERE id = ?`).get(product.id) as { image_path?: string } | undefined
-      const imagePath = persistProductImage(product.id, product.image_data) ?? existing?.image_path ?? null
+      // Prefer base64 image_data (same-session push); fall back to existing local path.
+      // If neither exists but a cloud image_url is available, queue an async download.
+      let imagePath: string | null = persistProductImage(product.id, product.image_data) ?? existing?.image_path ?? null
+      if (!imagePath && product.image_url) {
+        pendingImageDownloads.push({ productId: product.id, url: product.image_url })
+      }
       db.prepare(`
         INSERT INTO products (
-          id, name, description, image_path, barcode, category_id, base_price, base_cost, markup_pct,
+          id, name, description, image_path, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct,
           has_variations, variation_group_id, allow_fractions, track_inventory, is_active, sort_order,
           monthly_sold, created_at, updated_at, deleted_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           description = excluded.description,
@@ -207,6 +207,8 @@ function applyCatalogSnapshot(snapshot: any) {
           barcode = excluded.barcode,
           category_id = excluded.category_id,
           base_price = excluded.base_price,
+          retail_price = excluded.retail_price,
+          wholesale_price = excluded.wholesale_price,
           base_cost = excluded.base_cost,
           markup_pct = excluded.markup_pct,
           has_variations = excluded.has_variations,
@@ -226,7 +228,9 @@ function applyCatalogSnapshot(snapshot: any) {
         imagePath,
         product.barcode ?? null,
         product.category_id ?? null,
-        product.base_price ?? 0,
+        product.retail_price ?? product.base_price ?? 0,
+        product.retail_price ?? product.base_price ?? 0,
+        product.wholesale_price ?? product.retail_price ?? product.base_price ?? 0,
         product.base_cost ?? 0,
         product.markup_pct ?? null,
         product.has_variations ? 1 : 0,
@@ -271,6 +275,24 @@ function applyCatalogSnapshot(snapshot: any) {
   })
 
   tx()
+  return pendingImageDownloads
+}
+
+async function downloadProductImages(downloads: Array<{ productId: string; url: string }>) {
+  const db = getDb()
+  const imagesDir = getCurrentProductImagesDir()
+  for (const { productId, url } of downloads) {
+    try {
+      const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 15000 })
+      const contentType: string = res.headers['content-type'] ?? 'image/jpeg'
+      const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg'
+      const filePath = path.join(imagesDir, `${productId}.${ext}`)
+      fs.writeFileSync(filePath, Buffer.from(res.data))
+      db.prepare(`UPDATE products SET image_path = ? WHERE id = ?`).run(filePath, productId)
+    } catch {
+      // Non-fatal — image will be retried on next sync
+    }
+  }
 }
 
 function applySalesSnapshot(snapshot: any) {
@@ -494,6 +516,7 @@ async function broadcastSyncStatus() {
 
 async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
   const token = await getValidCloudToken()
+  if (token) updateRealtimeAuth(token)
   if (!token) {
     lastSyncTrigger = trigger
     await broadcastSyncStatus()
@@ -530,7 +553,8 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
       { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
     )
 
-    applyCatalogSnapshot(remoteCatalog.data)
+    const pendingImages = applyCatalogSnapshot(remoteCatalog.data)
+    if (pendingImages.length > 0) void downloadProductImages(pendingImages)
 
     const syncStart = new Date().toISOString()
     const localSales = getSalesSnapshot()
@@ -570,6 +594,11 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
 
     lastSyncedAt = new Date().toISOString()
     lastSyncError = null
+
+    // Notify other devices only when this device pushed data (not on realtime-triggered pulls)
+    if (trigger !== 'realtime') {
+      void broadcastDataUpdated()
+    }
 
     return {
       success: true,

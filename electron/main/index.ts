@@ -12,13 +12,15 @@ import { registerAnalyticsHandlers } from './ipc/analytics.ipc'
 import { registerSettingsHandlers } from './ipc/settings.ipc'
 import { registerAuthHandlers } from './ipc/auth.ipc'
 import { registerPrinterHandlers } from './ipc/printer.ipc'
-import { registerSyncHandlers, startAutoSync } from './ipc/sync.ipc'
+import { registerSyncHandlers, startAutoSync, scheduleAutoSync } from './ipc/sync.ipc'
+import { initRealtime } from './realtime'
 import { registerBackupHandlers } from './ipc/backup.ipc'
 import { registerActivationHandlers } from './ipc/activation.ipc'
 import { registerExpenseHandlers } from './ipc/expenses.ipc'
 import { registerShiftHandlers } from './ipc/shifts.ipc'
 import { registerPriceTierHandlers } from './ipc/pricetiers.ipc'
 import { registerLoyaltyHandlers } from './ipc/loyalty.ipc'
+import { registerSmsHandlers } from './ipc/sms.ipc'
 import { BarcodeService } from './services/barcode.service'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
@@ -155,7 +157,9 @@ app.whenReady().then(() => {
   registerShiftHandlers()
   registerPriceTierHandlers()
   registerLoyaltyHandlers()
+  registerSmsHandlers()
   startAutoSync()
+  initRealtime(() => scheduleAutoSync('realtime', 500))
 
   createWindow()
 

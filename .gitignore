@@ -7,3 +7,5 @@ build/*
 electron/dist
 .DS_Store
 *.log
+.claude/
+.vscode/

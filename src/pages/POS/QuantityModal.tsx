@@ -19,8 +19,13 @@ interface Props {
 export default function QuantityModal({ product, onClose, onAdd }: Props) {
   const [qty, setQty] = useState<number | string>(1)
   const [customQty, setCustomQty] = useState('')
+  const retailPrice = product.retail_price ?? product.base_price
+  const wholesalePrice = product.wholesale_price ?? retailPrice
+  const hasWholesale = wholesalePrice > 0 && wholesalePrice !== retailPrice
+  const [priceType, setPriceType] = useState<'retail' | 'wholesale'>('retail')
 
   const finalQty = typeof qty === 'number' ? qty : parseFloat(qty) || 1
+  const selectedPrice = priceType === 'wholesale' ? wholesalePrice : retailPrice
 
   const handleAdd = () => {
     const q = customQty ? parseFloat(customQty) : finalQty
@@ -28,12 +33,13 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
     onAdd({
       product_id: product.id,
       name: product.name,
-      price: product.base_price,
-      base_price: product.base_price,
+      price: selectedPrice,
+      base_price: retailPrice,
       cost: product.base_cost,
       quantity: q,
       is_custom: false,
       image_path: product.image_path,
+      price_type: priceType,
     })
   }
 
@@ -46,7 +52,37 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
         </div>
 
         <div className="p-6">
-          <p className="text-sm text-gray-500 mb-4 text-center">{product.name} — ₱{product.base_price}</p>
+          <p className="text-sm text-gray-500 mb-3 text-center">{product.name}</p>
+
+          <div className="mb-4 rounded-xl bg-gray-50 p-3">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-500">Retail</span>
+              <span className="font-semibold text-gray-800">₱{retailPrice.toFixed(2)}</span>
+            </div>
+            {hasWholesale && (
+              <div className="mt-1 flex items-center justify-between text-sm">
+                <span className="text-gray-500">Wholesale</span>
+                <span className="font-semibold text-emerald-700">₱{wholesalePrice.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+
+          {hasWholesale && (
+            <div className="mb-4 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setPriceType('retail')}
+                className={`rounded-xl border px-3 py-2 text-sm font-semibold ${priceType === 'retail' ? 'border-[#1a8eff] bg-[#1a8eff] text-white' : 'border-gray-200 bg-white text-gray-700'}`}
+              >
+                Retail
+              </button>
+              <button
+                onClick={() => setPriceType('wholesale')}
+                className={`rounded-xl border px-3 py-2 text-sm font-semibold ${priceType === 'wholesale' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-gray-200 bg-white text-gray-700'}`}
+              >
+                Wholesale
+              </button>
+            </div>
+          )}
 
           {/* Fractions */}
           {product.allow_fractions ? (

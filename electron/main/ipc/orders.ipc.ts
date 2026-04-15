@@ -147,6 +147,28 @@ export function registerOrderHandlers() {
     return db.prepare(query).all(...params).map(mapOrder)
   })
 
+  // PER-CASHIER SALES TODAY
+  ipcMain.handle(IPC.ORDERS.GET_CASHIER_SALES_TODAY, () => {
+    return getDb().prepare(`
+      SELECT
+        u.id   AS user_id,
+        u.name AS cashier_name,
+        COALESCE(SUM(CASE WHEN o.exclude_sales = 0 THEN 1 ELSE 0 END), 0) AS order_count,
+        COALESCE(SUM(CASE WHEN o.is_credit = 0 AND o.exclude_sales = 0 THEN o.total ELSE 0 END), 0) AS cash_sales,
+        COALESCE(SUM(CASE WHEN o.is_credit = 1 AND o.exclude_sales = 0 THEN o.total ELSE 0 END), 0) AS credit_sales,
+        COALESCE(SUM(CASE WHEN o.exclude_sales = 0 THEN o.total ELSE 0 END), 0) AS total_sales
+      FROM users u
+      LEFT JOIN orders o
+        ON o.user_id = u.id
+        AND o.deleted_at IS NULL
+        AND o.status != 'void'
+        AND DATE(o.created_at, '+8 hours') = DATE('now', '+8 hours')
+      WHERE u.is_active = 1 AND u.deleted_at IS NULL
+      GROUP BY u.id
+      ORDER BY total_sales DESC
+    `).all()
+  })
+
   // GET BY ID with items
   ipcMain.handle(IPC.ORDERS.GET_BY_ID, (_, id: string) => {
     const db = getDb()

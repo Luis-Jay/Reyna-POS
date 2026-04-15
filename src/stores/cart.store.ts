@@ -27,7 +27,13 @@ export const useCartStore = create<CartState>((set, get) => ({
     const { items } = get()
     // If same product + not custom, merge qty
     if (item.product_id && !item.is_custom) {
-      const existing = items.find(i => i.product_id === item.product_id && !i.is_custom)
+      const existing = items.find(
+        i =>
+          i.product_id === item.product_id &&
+          !i.is_custom &&
+          (i.price_type ?? 'retail') === (item.price_type ?? 'retail') &&
+          i.price === item.price
+      )
       if (existing) {
         set({
           items: items.map(i =>

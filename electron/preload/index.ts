@@ -54,7 +54,8 @@ const api = {
     saveCart:     (data: any)              => ipcRenderer.invoke(IPC.ORDERS.SAVE_CART, data),
     getSaved:     ()                       => ipcRenderer.invoke(IPC.ORDERS.GET_SAVED),
     deleteSaved:  (id: string)             => ipcRenderer.invoke(IPC.ORDERS.DELETE_SAVED, id),
-    getPending:   ()                       => ipcRenderer.invoke(IPC.ORDERS.GET_PENDING),
+    getPending:           ()        => ipcRenderer.invoke(IPC.ORDERS.GET_PENDING),
+    getCashierSalesToday: ()        => ipcRenderer.invoke(IPC.ORDERS.GET_CASHIER_SALES_TODAY),
   },
 
   // ─── Inventory ─────────────────────────────────────────────────────────────
@@ -62,6 +63,8 @@ const api = {
     getAll:       (filter?: string)        => ipcRenderer.invoke(IPC.INVENTORY.GET_ALL, filter),
     addStock:     (productId: string, qty: number, note?: string) =>
                     ipcRenderer.invoke(IPC.INVENTORY.ADD_STOCK, productId, qty, note),
+    setStock:     (productId: string, qty: number, note?: string) =>
+                    ipcRenderer.invoke(IPC.INVENTORY.SET_STOCK, productId, qty, note),
     getMovements: (productId: string)      => ipcRenderer.invoke(IPC.INVENTORY.GET_MOVEMENTS, productId),
     setThreshold: (productId: string, threshold: number) =>
                     ipcRenderer.invoke(IPC.INVENTORY.SET_THRESHOLD, productId, threshold),
@@ -84,14 +87,15 @@ const api = {
   // ─── Analytics ─────────────────────────────────────────────────────────────
   analytics: {
     getDashboard:   ()                    => ipcRenderer.invoke(IPC.ANALYTICS.GET_DASHBOARD),
-    getReport:      (period: string)      => ipcRenderer.invoke(IPC.ANALYTICS.GET_REPORT, period),
+    getReport:      (periodOrRange: any)  => ipcRenderer.invoke(IPC.ANALYTICS.GET_REPORT, periodOrRange),
     getDaily:       (days: number)        => ipcRenderer.invoke(IPC.ANALYTICS.GET_DAILY, days),
-    getHourly:      (date?: string)       => ipcRenderer.invoke(IPC.ANALYTICS.GET_HOURLY, date),
-    getTopProducts:       (period: string) => ipcRenderer.invoke(IPC.ANALYTICS.GET_TOP_PRODUCTS, period),
-    getCategories:        (period: string) => ipcRenderer.invoke(IPC.ANALYTICS.GET_CATEGORIES, period),
-    getFinancials:        (period: string) => ipcRenderer.invoke(IPC.ANALYTICS.GET_FINANCIALS, period),
+    getCashflow:    (periodOrRange: any)  => ipcRenderer.invoke(IPC.ANALYTICS.GET_CASHFLOW, periodOrRange),
+    getHourly:      (dateOrRange?: any)   => ipcRenderer.invoke(IPC.ANALYTICS.GET_HOURLY, dateOrRange),
+    getTopProducts:       (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_TOP_PRODUCTS, periodOrRange),
+    getCategories:        (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_CATEGORIES, periodOrRange),
+    getFinancials:        (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_FINANCIALS, periodOrRange),
     getTopDebtors:        ()               => ipcRenderer.invoke(IPC.ANALYTICS.GET_TOP_DEBTORS),
-    getSlowMoving:        (period: string) => ipcRenderer.invoke(IPC.ANALYTICS.GET_SLOW_MOVING, period),
+    getSlowMoving:        (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_SLOW_MOVING, periodOrRange),
     getPaymentBreakdown:  (days: number)   => ipcRenderer.invoke(IPC.ANALYTICS.GET_PAYMENT_BREAKDOWN, days),
   },
 
@@ -173,6 +177,13 @@ const api = {
     export: ()                            => ipcRenderer.invoke(IPC.BACKUP.EXPORT),
     import: (filePath: string)            => ipcRenderer.invoke(IPC.BACKUP.IMPORT, filePath),
     reset:  ()                            => ipcRenderer.invoke(IPC.BACKUP.RESET),
+  },
+
+  // ─── SMS ───────────────────────────────────────────────────────────────────
+  sms: {
+    send:       (phone: string, message: string) => ipcRenderer.invoke(IPC.SMS.SEND, phone, message),
+    getCredits: ()                               => ipcRenderer.invoke(IPC.SMS.GET_CREDITS),
+    getLog:     ()                               => ipcRenderer.invoke(IPC.SMS.GET_LOG),
   },
 
   // ─── Loyalty / Sukipoints ─────────────────────────────────────────────────

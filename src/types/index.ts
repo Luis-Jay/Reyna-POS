@@ -55,6 +55,8 @@ export interface Product {
   category_id?: string
   category_name?: string
   base_price: number
+  retail_price: number
+  wholesale_price?: number
   base_cost: number
   markup_pct?: number
   has_variations: number
@@ -94,6 +96,7 @@ export interface CartItem {
   subtotal: number
   is_custom: boolean
   image_path?: string
+  price_type?: 'retail' | 'wholesale'
 }
 
 // ─── Orders ──────────────────────────────────────────────────────────────────
@@ -153,6 +156,7 @@ export interface InventoryItem {
   product_id: string
   product_name: string
   product_image?: string
+  image_path?: string
   quantity: number
   low_threshold: number
   monthly_sold: number
@@ -220,7 +224,9 @@ export interface RecentOrder {
 export interface AnalyticsReport {
   total_sales: number
   net_profit: number
+  net_income: number
   total_cost: number
+  total_expenses: number
   order_count: number
   avg_sale: number
   debt_outstanding: number
@@ -233,6 +239,21 @@ export interface DailyStat {
   sales: number
   profit: number
   cost: number
+  expenses?: number
+  net_income?: number
+}
+
+export interface AnalyticsRange {
+  preset?: 'today' | 'yesterday' | 'last_7_days' | 'last_month' | 'this_month'
+  from?: string
+  to?: string
+}
+
+export interface CashflowPoint {
+  date: string
+  sales: number
+  expenses: number
+  net_income: number
 }
 
 export interface HourlyStat {

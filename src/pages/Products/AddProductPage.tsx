@@ -21,7 +21,7 @@ export default function AddProductPage() {
   const [groups, setGroups] = useState<VariationGroup[]>([])
   const [form, setForm] = useState({
     name: '', barcode: '', description: '',
-    category_id: '', base_price: '', base_cost: '',
+    category_id: '', retail_price: '', wholesale_price: '', base_cost: '',
     has_variations: false, variation_group_id: '',
     allow_fractions: false, track_inventory: true,
     initial_stock: '',
@@ -40,7 +40,8 @@ export default function AddProductPage() {
         if (p) {
           setForm({
             name: p.name, barcode: p.barcode || '', description: p.description || '',
-            category_id: p.category_id || '', base_price: String(p.base_price),
+            category_id: p.category_id || '', retail_price: String(p.retail_price ?? p.base_price),
+            wholesale_price: String(p.wholesale_price ?? p.retail_price ?? p.base_price),
             base_cost: String(p.base_cost), has_variations: !!p.has_variations,
             variation_group_id: p.variation_group_id || '',
             allow_fractions: !!p.allow_fractions, track_inventory: !!p.track_inventory,
@@ -80,7 +81,8 @@ export default function AddProductPage() {
           name: form.name.trim(), barcode: form.barcode || null,
           description: form.description,
           category_id: form.category_id || null,
-          base_price: parseFloat(form.base_price) || 0,
+          retail_price: parseFloat(form.retail_price) || 0,
+          wholesale_price: parseFloat(form.wholesale_price) || 0,
           base_cost: parseFloat(form.base_cost) || 0,
           has_variations: form.has_variations,
           variation_group_id: form.variation_group_id || null,
@@ -92,7 +94,8 @@ export default function AddProductPage() {
           name: form.name.trim(), barcode: form.barcode || null,
           description: form.description,
           category_id: form.category_id || null,
-          base_price: parseFloat(form.base_price) || 0,
+          retail_price: parseFloat(form.retail_price) || 0,
+          wholesale_price: parseFloat(form.wholesale_price) || 0,
           base_cost: parseFloat(form.base_cost) || 0,
           has_variations: form.has_variations,
           variation_group_id: form.variation_group_id || null,
@@ -171,17 +174,24 @@ export default function AddProductPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Selling Price (₱)</label>
-              <input value={form.base_price} onChange={e => set('base_price', e.target.value)}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Retail Price (₱)</label>
+              <input value={form.retail_price} onChange={e => set('retail_price', e.target.value)}
                 type="number" placeholder="0.00"
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
             </div>
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Wholesale Price (₱)</label>
+              <input value={form.wholesale_price} onChange={e => set('wholesale_price', e.target.value)}
+                type="number" placeholder="0.00"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
+            </div>
+          </div>
+
+          <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Cost Price (₱)</label>
               <input value={form.base_cost} onChange={e => set('base_cost', e.target.value)}
                 type="number" placeholder="0.00"
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
-            </div>
           </div>
 
           {!isEdit && (

@@ -43,6 +43,8 @@ CREATE TABLE IF NOT EXISTS catalog_products (
   barcode             TEXT,
   category_id         TEXT REFERENCES catalog_categories(id) ON DELETE SET NULL,
   base_price          NUMERIC NOT NULL DEFAULT 0,
+  retail_price        NUMERIC NOT NULL DEFAULT 0,
+  wholesale_price     NUMERIC,
   base_cost           NUMERIC NOT NULL DEFAULT 0,
   markup_pct          NUMERIC,
   has_variations      BOOLEAN NOT NULL DEFAULT false,

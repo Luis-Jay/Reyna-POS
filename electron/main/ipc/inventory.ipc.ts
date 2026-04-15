@@ -63,6 +63,29 @@ export function registerInventoryHandlers() {
     return { success: true }
   })
 
+  ipcMain.handle(IPC.INVENTORY.SET_STOCK, (_, productId: string, qty: number, note?: string) => {
+    const db = getDb()
+    const tx = db.transaction(() => {
+      const inv: any = db.prepare(`SELECT * FROM inventory WHERE product_id = ?`).get(productId)
+      const previous = inv?.quantity ?? 0
+      const diff = qty - previous
+      if (!inv) {
+        db.prepare(`INSERT INTO inventory (id, product_id, quantity) VALUES (?, ?, ?)`)
+          .run(uuid(), productId, qty)
+      } else {
+        db.prepare(`UPDATE inventory SET quantity = ?, updated_at = datetime('now') WHERE product_id = ?`)
+          .run(qty, productId)
+      }
+      db.prepare(`
+        INSERT INTO stock_movements (id, product_id, type, quantity, note)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(uuid(), productId, diff >= 0 ? 'restock' : 'adjustment', Math.abs(diff), note || `Set to ${qty}`)
+    })
+    tx()
+    scheduleAutoSync()
+    return { success: true }
+  })
+
   ipcMain.handle(IPC.INVENTORY.GET_MOVEMENTS, (_, productId: string) => {
     return getDb().prepare(`
       SELECT sm.*, p.name as product_name
