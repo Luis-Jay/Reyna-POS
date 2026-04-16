@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Plus, Trash2 } from 'lucide-react'
+import JsBarcode from 'jsbarcode'
 import TopBar from '../../components/layout/TopBar'
 import { Category, VariationGroup } from '../../types'
 import { getProductImageSrc } from '../../utils/images'
@@ -11,11 +12,21 @@ interface PriceTier {
   label: string
 }
 
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 export default function AddProductPage() {
   const navigate = useNavigate()
   const { id } = useParams()
   const isEdit = !!id
   const fileRef = useRef<HTMLInputElement>(null)
+  const barcodeSvgRef = useRef<SVGSVGElement>(null)
 
   const [categories, setCategories] = useState<Category[]>([])
   const [groups, setGroups] = useState<VariationGroup[]>([])
@@ -57,6 +68,33 @@ export default function AddProductPage() {
       })
     }
   }, [id])
+
+  useEffect(() => {
+    const svg = barcodeSvgRef.current
+    const value = form.barcode.trim()
+    if (!svg) return
+
+    if (!value) {
+      svg.innerHTML = ''
+      return
+    }
+
+    try {
+      JsBarcode(svg, value, {
+        format: 'CODE128',
+        displayValue: true,
+        background: '#ffffff',
+        lineColor: '#111827',
+        width: 2,
+        height: 72,
+        margin: 12,
+        fontSize: 16,
+      })
+      setError(current => current === 'Please enter a valid barcode value.' ? '' : current)
+    } catch {
+      svg.innerHTML = ''
+    }
+  }, [form.barcode])
 
   const handleImagePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -129,6 +167,138 @@ export default function AddProductPage() {
 
   const set = (key: string, value: any) => setForm(f => ({ ...f, [key]: value }))
 
+  const generateBarcodeValue = () => {
+    const timestamp = Date.now().toString().slice(-10)
+    const randomSuffix = Math.floor(Math.random() * 100000).toString().padStart(5, '0')
+    set('barcode', `${timestamp}${randomSuffix}`)
+  }
+
+  const withBarcodeSvg = () => {
+    const svg = barcodeSvgRef.current
+    const value = form.barcode.trim()
+    if (!svg || !value) {
+      setError('Please enter a barcode first.')
+      return null
+    }
+
+    try {
+      JsBarcode(svg, value, {
+        format: 'CODE128',
+        displayValue: true,
+        background: '#ffffff',
+        lineColor: '#111827',
+        width: 2,
+        height: 72,
+        margin: 12,
+        fontSize: 16,
+      })
+      return svg
+    } catch {
+      setError('Please enter a valid barcode value.')
+      return null
+    }
+  }
+
+  const handleDownloadBarcode = () => {
+    const svg = withBarcodeSvg()
+    if (!svg) return
+
+    const serialized = new XMLSerializer().serializeToString(svg)
+    const blob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    const fallbackName = form.name.trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'product'
+    link.href = url
+    link.download = `${fallbackName}-barcode.svg`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const handlePrintBarcode = () => {
+    const svg = withBarcodeSvg()
+    if (!svg) return
+
+    const serialized = new XMLSerializer().serializeToString(svg)
+    const productName = form.name.trim() || 'Product Barcode'
+    const safeProductName = escapeHtml(productName)
+    const safeBarcodeValue = escapeHtml(form.barcode.trim())
+    const printWindow = window.open('', '_blank', 'width=420,height=600')
+    if (!printWindow) {
+      setError('Unable to open print window.')
+      return
+    }
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>${safeProductName}</title>
+          <style>
+            body {
+              margin: 0;
+              font-family: Arial, sans-serif;
+              background: #ffffff;
+              color: #111827;
+            }
+            .sheet {
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              padding: 24px;
+              box-sizing: border-box;
+            }
+            .card {
+              border: 1px solid #e5e7eb;
+              border-radius: 16px;
+              padding: 24px;
+              text-align: center;
+              width: 100%;
+              max-width: 320px;
+            }
+            .name {
+              font-size: 18px;
+              font-weight: 600;
+              margin-bottom: 12px;
+            }
+            .code {
+              font-size: 13px;
+              letter-spacing: 0.08em;
+              color: #6b7280;
+              margin-top: 12px;
+            }
+            svg {
+              width: 100%;
+              height: auto;
+            }
+            @media print {
+              body { margin: 0; }
+              .card { border: none; padding: 0; max-width: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="sheet">
+            <div class="card">
+              <div class="name">${safeProductName}</div>
+              ${serialized}
+              <div class="code">${safeBarcodeValue}</div>
+            </div>
+          </div>
+          <script>
+            window.onload = () => {
+              window.print();
+              window.onafterprint = () => window.close();
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       <TopBar title={isEdit ? 'Edit Product' : 'Add Product'} back="/products" />
@@ -162,6 +332,47 @@ export default function AddProductPage() {
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
             </div>
           ))}
+
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Barcode Generator</p>
+                <p className="text-xs text-gray-400">Create, download, or print a barcode for this product.</p>
+              </div>
+              <button
+                type="button"
+                onClick={generateBarcodeValue}
+                className="rounded-lg bg-slate-800 px-3 py-2 text-xs font-medium text-white hover:bg-slate-900"
+              >
+                Generate Code
+              </button>
+            </div>
+            <div className="mt-4 rounded-xl border border-dashed border-gray-300 bg-white p-4">
+              {form.barcode.trim() ? (
+                <svg ref={barcodeSvgRef} className="mx-auto max-w-full" />
+              ) : (
+                <div className="py-10 text-center text-sm text-gray-400">Enter or generate a barcode to preview it here.</div>
+              )}
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={handleDownloadBarcode}
+                disabled={!form.barcode.trim()}
+                className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Download SVG
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintBarcode}
+                disabled={!form.barcode.trim()}
+                className="flex-1 rounded-lg bg-[#1a8eff] px-3 py-2 text-sm font-medium text-white hover:bg-[#0077e6] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Print Barcode
+              </button>
+            </div>
+          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>

@@ -37,38 +37,59 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
   const [debtorSearch, setDebtorSearch] = useState('')
   const [debtorResults, setDebtorResults] = useState<any[]>([])
   const [selectedDebtor, setSelectedDebtor] = useState<any>(null)
+  const [allDebtors, setAllDebtors] = useState<any[]>([])
 
   const searchDebtors = async (q: string) => {
     setDebtorSearch(q)
-    if (!q.trim()) { setDebtorResults([]); return }
+    if (!q.trim()) {
+      setDebtorResults(allDebtors.slice(0, 8))
+      return
+    }
     const res = await window.api.debtors.getAll({ search: q })
-    setDebtorResults(res.slice(0, 5))
+    setDebtorResults(res.slice(0, 8))
   }
+
+  // VAT
+  const [vatEnabled, setVatEnabled] = useState(false)
+  const [vatRate, setVatRate] = useState(12)
+
+  // Receipt preview
+  const [showReceiptPreview, setShowReceiptPreview] = useState(false)
+  const [completedOrder, setCompletedOrder] = useState<any>(null)
+  const [printError, setPrintError] = useState('')
+  const [printing, setPrinting] = useState(false)
 
   // Loyalty
   const [loyaltyEnabled, setLoyaltyEnabled] = useState(false)
   const [loyaltyRate, setLoyaltyRate] = useState(1)
-  const [loyaltyPhone, setLoyaltyPhone] = useState('')
+  const [loyaltyQuery, setLoyaltyQuery] = useState('')
+  const [loyaltyResults, setLoyaltyResults] = useState<any[]>([])
   const [loyaltyAccount, setLoyaltyAccount] = useState<any>(null)
-  const [loyaltySearch, setLoyaltySearch] = useState(false)
-  const [loyaltySearching, setLoyaltySearching] = useState(false)
+  const [loyaltySearchOpen, setLoyaltySearchOpen] = useState(false)
 
   useEffect(() => {
     window.api.settings.getAll().then((s: any) => {
       setLoyaltyEnabled(s['loyalty_enabled'] === 'true')
       setLoyaltyRate(parseFloat(s['loyalty_rate'] || '1'))
+      setVatEnabled(s['vat_enabled'] === 'true')
+      setVatRate(parseFloat(s['vat_rate'] || '12'))
+    })
+    // Pre-load all debtors so credit mode shows them immediately
+    window.api.debtors.getAll({}).then((list: any[]) => {
+      setAllDebtors(list)
     })
   }, [])
 
-  const handleLoyaltySearch = async () => {
-    if (!loyaltyPhone.trim()) return
-    setLoyaltySearching(true)
-    const acc = await window.api.loyalty.getByPhone(loyaltyPhone.trim())
-    setLoyaltyAccount(acc || null)
-    setLoyaltySearching(false)
+  const handleLoyaltyQuery = async (q: string) => {
+    setLoyaltyQuery(q)
+    if (!q.trim()) { setLoyaltyResults([]); return }
+    const results = await window.api.loyalty.getAll(q.trim())
+    setLoyaltyResults((results as any[]).slice(0, 6))
   }
 
-  const total = cart.total()
+  const subtotalBeforeVat = cart.total()
+  const vatAmount = vatEnabled ? Math.round(subtotalBeforeVat * (vatRate / 100) * 100) / 100 : 0
+  const total = subtotalBeforeVat + vatAmount
   const singlePayment = Math.max(0, parseFloat(paymentInput) || 0)
   const cashSplit = Math.max(0, parseFloat(splitPayments.cash) || 0)
   const gcashSplit = Math.max(0, parseFloat(splitPayments.gcash) || 0)
@@ -136,15 +157,9 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
             await window.api.loyalty.earn(loyaltyAccount.id, pts, result.order?.id, 'Sale')
           }
         }
-        try {
-          const printResult = await window.api.printer.printReceipt(result.order)
-          if (!printResult?.success) {
-            window.alert(`Sale saved, but receipt was not printed.\n\n${printResult?.error || 'Printer unavailable.'}`)
-          }
-        } catch (printError: any) {
-          window.alert(`Sale saved, but receipt was not printed.\n\n${printError?.message || 'Printer unavailable.'}`)
-        }
-        onComplete()
+        // Show receipt preview instead of auto-printing
+        setCompletedOrder(result.order)
+        setShowReceiptPreview(true)
       }
     } catch (e: any) {
       setError(e.message)
@@ -209,33 +224,37 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
                     <p className="text-xs text-amber-600">{loyaltyAccount.points} pts · +{Math.floor(total * loyaltyRate)} pts this sale</p>
                   </div>
                 </div>
-                <button onClick={() => { setLoyaltyAccount(null); setLoyaltyPhone(''); setLoyaltySearch(false) }} className="text-amber-400 hover:text-amber-600">
+                <button onClick={() => { setLoyaltyAccount(null); setLoyaltyQuery(''); setLoyaltyResults([]); setLoyaltySearchOpen(false) }} className="text-amber-400 hover:text-amber-600">
                   <X size={14} />
                 </button>
               </div>
-            ) : loyaltySearch ? (
-              <div className="flex gap-2">
+            ) : loyaltySearchOpen ? (
+              <div className="relative">
                 <input
-                  value={loyaltyPhone}
-                  onChange={e => setLoyaltyPhone(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleLoyaltySearch()}
-                  placeholder="Phone number..."
-                  className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  value={loyaltyQuery}
+                  onChange={e => handleLoyaltyQuery(e.target.value)}
+                  placeholder="Search by name or phone..."
+                  className="w-full border-2 border-amber-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-amber-400"
                   autoFocus
                 />
-                <button
-                  onClick={handleLoyaltySearch}
-                  disabled={loyaltySearching}
-                  className="bg-amber-500 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 disabled:opacity-50"
-                >
-                  {loyaltySearching ? '...' : 'Find'}
-                </button>
-                <button onClick={() => setLoyaltySearch(false)} className="text-gray-400 hover:text-gray-600 px-1">
-                  <X size={16} />
-                </button>
+                {loyaltyResults.length > 0 && (
+                  <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 overflow-hidden">
+                    {loyaltyResults.map((a: any) => (
+                      <button key={a.id}
+                        onClick={() => { setLoyaltyAccount(a); setLoyaltyQuery(''); setLoyaltyResults([]); setLoyaltySearchOpen(false) }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-amber-50 text-sm border-b last:border-0">
+                        <span className="font-medium">{a.name}</span>
+                        <span className="text-gray-400 ml-2 text-xs">{a.phone} · {a.points} pts</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {loyaltyQuery.length > 0 && loyaltyResults.length === 0 && (
+                  <p className="text-xs text-gray-400 mt-1 px-1">No loyalty account found.</p>
+                )}
               </div>
             ) : (
-              <button onClick={() => setLoyaltySearch(true)} className="flex items-center gap-2 text-amber-600 text-sm hover:underline">
+              <button onClick={() => setLoyaltySearchOpen(true)} className="flex items-center gap-2 text-amber-600 text-sm hover:underline">
                 <Star size={14} /> + Link Loyalty Account
               </button>
             )
@@ -243,6 +262,16 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
 
           {/* Total */}
           <div className="bg-blue-50 rounded-xl p-4 text-center">
+            {vatEnabled && (
+              <div className="flex justify-between text-xs text-gray-500 mb-1 px-2">
+                <span>Subtotal</span><span>{formatCurrency(subtotalBeforeVat)}</span>
+              </div>
+            )}
+            {vatEnabled && (
+              <div className="flex justify-between text-xs text-gray-500 mb-2 px-2">
+                <span>VAT ({vatRate}%)</span><span>+{formatCurrency(vatAmount)}</span>
+              </div>
+            )}
             <p className="text-xs text-gray-500 uppercase tracking-wide">Total Amount Due</p>
             <p className="text-4xl font-bold text-[#1a8eff]">{formatCurrency(total)}</p>
           </div>
@@ -285,19 +314,20 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
                     <p className="font-semibold text-orange-800">{selectedDebtor.name}</p>
                     <p className="text-xs text-orange-500">Current balance: {formatCurrency(selectedDebtor.balance)}</p>
                   </div>
-                  <button onClick={() => { setSelectedDebtor(null); setDebtorSearch('') }} className="text-orange-400 hover:text-orange-600"><X size={16} /></button>
+                  <button onClick={() => { setSelectedDebtor(null); setDebtorSearch(''); setDebtorResults(allDebtors.slice(0, 8)) }} className="text-orange-400 hover:text-orange-600"><X size={16} /></button>
                 </div>
               ) : (
                 <div className="relative">
                   <input
                     value={debtorSearch}
                     onChange={e => searchDebtors(e.target.value)}
-                    placeholder="Search debtor by name..."
+                    onFocus={() => { if (!debtorSearch) setDebtorResults(allDebtors.slice(0, 8)) }}
+                    placeholder="Search or pick a debtor..."
                     className="w-full border-2 border-orange-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-orange-400"
                     autoFocus
                   />
                   {debtorResults.length > 0 && (
-                    <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 overflow-hidden">
+                    <div className="absolute z-10 w-full bg-white border border-gray-200 rounded-xl shadow-lg mt-1 overflow-hidden max-h-48 overflow-y-auto">
                       {debtorResults.map(d => (
                         <button key={d.id} onClick={() => { setSelectedDebtor(d); setDebtorSearch(d.name); setDebtorResults([]) }}
                           className="w-full text-left px-4 py-2.5 hover:bg-orange-50 text-sm border-b last:border-0">
@@ -376,6 +406,82 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Receipt Preview */}
+      {showReceiptPreview && completedOrder && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+            <div className="px-6 pt-5 pb-3 border-b text-center">
+              <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2">
+                <span className="text-2xl">✓</span>
+              </div>
+              <h3 className="text-lg font-bold text-gray-800">Sale Complete</h3>
+              <p className="text-sm text-gray-500">Order #{completedOrder.order_number}</p>
+            </div>
+            <div className="px-6 py-4 space-y-1 max-h-48 overflow-y-auto text-sm">
+              {completedOrder.items?.map((item: any, i: number) => (
+                <div key={i} className="flex justify-between text-gray-700">
+                  <span className="truncate mr-2">{item.name} × {item.quantity}</span>
+                  <span className="shrink-0 font-medium">₱{(item.subtotal || 0).toFixed(2)}</span>
+                </div>
+              ))}
+              {vatEnabled && vatAmount > 0 && (
+                <div className="flex justify-between text-gray-500 pt-1 border-t mt-1">
+                  <span>VAT ({vatRate}%)</span>
+                  <span>₱{vatAmount.toFixed(2)}</span>
+                </div>
+              )}
+              <div className="flex justify-between font-bold text-gray-800 pt-2 border-t">
+                <span>Total</span>
+                <span>₱{(completedOrder.total || 0).toFixed(2)}</span>
+              </div>
+              {!isCredit && (
+                <div className="flex justify-between text-green-600 font-medium">
+                  <span>Change</span>
+                  <span>₱{(completedOrder.change_amount || 0).toFixed(2)}</span>
+                </div>
+              )}
+            </div>
+            {printError && (
+              <p className="px-6 pb-2 text-xs text-red-500 text-center">{printError}</p>
+            )}
+            <div className="px-6 pb-6 grid grid-cols-2 gap-3 pt-2">
+              <button
+                onClick={() => { setShowReceiptPreview(false); setPrintError(''); onComplete() }}
+                className="py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold hover:bg-gray-50"
+              >
+                Skip Print
+              </button>
+              <button
+                disabled={printing}
+                onClick={async () => {
+                  setPrintError('')
+                  setPrinting(true)
+                  try {
+                    const res = await window.api.printer.printReceipt(completedOrder)
+                    if (!res?.success) {
+                      setPrintError(res?.error || 'Printer unavailable. Check printer settings.')
+                      setPrinting(false)
+                      return
+                    }
+                  } catch {
+                    setPrintError('Printer unavailable. Check printer settings.')
+                    setPrinting(false)
+                    return
+                  }
+                  setPrinting(false)
+                  setShowReceiptPreview(false)
+                  setPrintError('')
+                  onComplete()
+                }}
+                className="py-3 rounded-xl bg-[#1a8eff] text-white font-semibold hover:bg-[#0077e6] disabled:opacity-60"
+              >
+                {printing ? 'Printing...' : 'Print Receipt'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

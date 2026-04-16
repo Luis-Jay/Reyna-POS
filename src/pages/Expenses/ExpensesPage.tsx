@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import TopBar from '../../components/layout/TopBar'
 import { Plus, Trash2, Pencil, X, Check } from 'lucide-react'
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts'
 
 const CATEGORIES = ['Utilities', 'Rent', 'Salaries', 'Supplies', 'Maintenance', 'Transportation', 'Other']
 
@@ -25,6 +26,7 @@ export default function ExpensesPage() {
   const [expenses, setExpenses]   = useState<Expense[]>([])
   const [summary, setSummary]     = useState<{ rows: any[]; total: number }>({ rows: [], total: 0 })
   const [period, setPeriod]       = useState<'today' | 'week' | 'month' | 'year'>('month')
+  const [trendData, setTrendData] = useState<{ label: string; amount: number }[]>([])
   const [showForm, setShowForm]   = useState(false)
   const [editing, setEditing]     = useState<Expense | null>(null)
   const [form, setForm]           = useState(blank())
@@ -38,6 +40,19 @@ export default function ExpensesPage() {
     ])
     setExpenses(list)
     setSummary(sum)
+
+    // Build bar chart trend data from the expense list grouped by date
+    const byDate: Record<string, number> = {}
+    for (const e of list as Expense[]) {
+      byDate[e.date] = (byDate[e.date] || 0) + e.amount
+    }
+    const sorted = Object.entries(byDate)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, amount]) => ({
+        label: date.slice(5), // "MM-DD"
+        amount: Math.round(amount * 100) / 100,
+      }))
+    setTrendData(sorted)
   }
 
   useEffect(() => { load() }, [period, filterCat])
@@ -98,6 +113,25 @@ export default function ExpensesPage() {
               </div>
             )}
           </div>
+
+          {/* Trend bar chart */}
+          {trendData.length > 1 && (
+            <div className="bg-white rounded-xl shadow-sm p-4">
+              <h3 className="font-semibold text-gray-800 mb-3">Expense Trend</h3>
+              <ResponsiveContainer width="100%" height={140}>
+                <BarChart data={trendData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(v: any) => `₱${Number(v).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`} />
+                  <Bar dataKey="amount" radius={[4, 4, 0, 0]}>
+                    {trendData.map((_, i) => (
+                      <Cell key={i} fill={i === trendData.length - 1 ? '#f43f5e' : '#fda4af'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
 
           {/* Controls */}
           <div className="flex gap-2">

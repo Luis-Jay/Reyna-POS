@@ -18,12 +18,16 @@ export default function InventoryPage() {
   const [counts, setCounts] = useState({ total: 0, safe: 0, low: 0, critical: 0 })
 
   const load = async () => {
-    const data: InventoryItem[] = await window.api.inventory.getAll(filter)
+    // When searching, fetch ALL items then filter client-side so search isn't
+    // limited to the currently selected category filter
+    const [data, all]: [InventoryItem[], InventoryItem[]] = await Promise.all([
+      window.api.inventory.getAll(search ? undefined : filter),
+      window.api.inventory.getAll(),
+    ])
     const filtered = search
-      ? data.filter(i => i.product_name.toLowerCase().includes(search.toLowerCase()))
+      ? all.filter(i => i.product_name.toLowerCase().includes(search.toLowerCase()))
       : data
     setItems(filtered)
-    const all: InventoryItem[] = await window.api.inventory.getAll()
     setCounts({
       total: all.length,
       safe: all.filter(i => i.status === 'safe').length,

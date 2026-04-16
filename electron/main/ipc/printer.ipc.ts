@@ -1,8 +1,20 @@
 import { ipcMain, BrowserWindow } from 'electron'
+import os from 'os'
+import path from 'path'
+import fs from 'fs'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 
 let printerStatus = { connected: false, type: '', device: '', error: '' }
+
+// Load JsBarcode once at startup for inlining into receipt HTML
+let _jsBarcodeScript = ''
+try {
+  const scriptPath = require.resolve('jsbarcode/dist/JsBarcode.all.min.js')
+  _jsBarcodeScript = require('fs').readFileSync(scriptPath, 'utf-8')
+} catch {
+  console.warn('[printer] JsBarcode not found — barcode will be skipped on receipts')
+}
 
 function getPrinterSettings() {
   const db = getDb()
@@ -45,11 +57,9 @@ export function registerPrinterHandlers() {
     db.prepare(`INSERT INTO settings (key,value,updated_at) VALUES (?,?,datetime('now'))
       ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
       .run('paper_size', config.paperSize || '58mm')
-    if (config.interface) {
-      db.prepare(`INSERT INTO settings (key,value,updated_at) VALUES (?,?,datetime('now'))
-        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
-        .run('printer_interface', config.interface)
-    }
+    db.prepare(`INSERT INTO settings (key,value,updated_at) VALUES (?,?,datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`)
+      .run('printer_interface', config.interface || '')
     return { success: true }
   })
 
@@ -88,25 +98,23 @@ export function registerPrinterHandlers() {
       }
     }
 
-    try {
-      const result = await printHtmlReceipt(order, {
-        storeName, storeAddress, storePhone, storeTin, receiptFooter,
-      }, printerInterface)
-      if (!result.success) {
-        throw new Error(result.error || 'Print failed')
-      }
-      printerStatus.connected = true
-      printerStatus.type = 'system'
-      printerStatus.device = result.device
-      printerStatus.error = ''
-    } catch (err: any) {
-      const systemDevice = printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : 'system-dialog'
+    const result = await printHtmlReceipt(order, {
+      storeName, storeAddress, storePhone, storeTin, receiptFooter,
+    }, printerInterface)
+
+    const systemDevice = printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : 'system-dialog'
+    if (!result.success) {
       printerStatus.connected = false
-      printerStatus.error = err.message
+      printerStatus.error = result.error || 'Print failed'
       printerStatus.type = 'system'
       printerStatus.device = systemDevice
-      throw err
+      return { success: false, error: result.error }
     }
+
+    printerStatus.connected = true
+    printerStatus.type = 'system'
+    printerStatus.device = result.device || systemDevice
+    printerStatus.error = ''
     return { success: true }
   })
 
@@ -192,9 +200,6 @@ function getCashierName(userId?: string) {
   return row?.name || ''
 }
 
-function getItemCount(order: any) {
-  return (order.items || []).reduce((sum: number, item: any) => sum + Number(item.quantity || 0), 0)
-}
 
 function buildReceiptHtml(
   order: any,
@@ -203,192 +208,185 @@ function buildReceiptHtml(
   const { storeName, storeAddress, storePhone, storeTin, receiptFooter } = store
   const createdAt = formatDateTime(order?.created_at)
   const cashierName = getCashierName(order?.user_id)
-  const itemCount = getItemCount(order)
   const payments = Array.isArray(order?.payment_breakdown) ? order.payment_breakdown : []
+
+  // ── Items rows ──────────────────────────────────────────────────────────────
   const itemsHtml = (order?.items || []).map((item: any) => `
     <tr>
-      <td class="qty">${escapeHtml(formatQty(item.quantity))}x</td>
-      <td class="desc">
-        <div class="name">${escapeHtml(item.name)}</div>
-        <div class="meta">${escapeHtml(formatPeso(item.price))} each</div>
-      </td>
-      <td class="amount">${escapeHtml(formatPeso(item.subtotal))}</td>
+      <td class="name-col">${escapeHtml(item.name)}</td>
+      <td class="qty-col">${escapeHtml(formatQty(item.quantity))}</td>
+      <td class="price-col">${escapeHtml(formatPeso(item.subtotal))}</td>
     </tr>
   `).join('')
 
-  const paymentsHtml = order?.test ? '' : (
-    order?.is_credit
-      ? `<div class="summary-row"><span>Payment</span><span>Charge to Account</span></div>`
-      : (
-        payments.length > 0
-          ? payments.map((entry: any) => {
-              const label = entry.method === 'gcash' ? 'GCash' : entry.method === 'card' ? 'Card' : 'Cash'
-              return `<div class="summary-row"><span>${escapeHtml(label)}</span><span>${escapeHtml(formatPeso(entry.amount))}</span></div>`
-            }).join('')
-          : (order?.payment_amount != null
-              ? `<div class="summary-row"><span>Cash</span><span>${escapeHtml(formatPeso(order.payment_amount))}</span></div>`
-              : '')
-      )
-  )
+  // ── Payment / change rows ───────────────────────────────────────────────────
+  let paymentRows = ''
+  if (!order?.test) {
+    if (order?.is_credit) {
+      paymentRows = `<div class="summary-row"><span>Payment</span><span>Charge to Account</span></div>`
+    } else if (payments.length > 0) {
+      paymentRows = payments.map((entry: any) => {
+        const label = entry.method === 'gcash' ? 'GCASH' : entry.method === 'card' ? 'CARD' : 'CASH'
+        return `<div class="summary-row"><span>${escapeHtml(label)}</span><span>${escapeHtml(formatPeso(entry.amount))}</span></div>`
+      }).join('')
+      if (!order?.is_credit && order?.change_amount != null) {
+        paymentRows += `<div class="summary-row"><span>CHANGE</span><span>${escapeHtml(formatPeso(order.change_amount))}</span></div>`
+      }
+    } else if (order?.payment_amount != null) {
+      paymentRows = `<div class="summary-row"><span>CASH</span><span>${escapeHtml(formatPeso(order.payment_amount))}</span></div>`
+      if (!order?.is_credit && order?.change_amount != null) {
+        paymentRows += `<div class="summary-row"><span>CHANGE</span><span>${escapeHtml(formatPeso(order.change_amount))}</span></div>`
+      }
+    }
+  }
 
-  const changeHtml = !order?.test && !order?.is_credit && order?.payment_amount != null
-    ? `<div class="summary-row"><span>Change</span><span>${escapeHtml(formatPeso(order.change_amount))}</span></div>`
-    : ''
-
-  const discountHtml = !order?.test && Number(order?.discount || 0) > 0
+  const discountRow = !order?.test && Number(order?.discount || 0) > 0
     ? `<div class="summary-row"><span>Discount</span><span>- ${escapeHtml(formatPeso(order.discount))}</span></div>`
     : ''
 
-  const noteHtml = order?.note
-    ? `<div class="note"><strong>Note:</strong> ${escapeHtml(order.note)}</div>`
+  const noteRow = order?.note
+    ? `<p class="note"><strong>Note:</strong> ${escapeHtml(order.note)}</p>`
     : ''
 
-  const orderMetaHtml = order?.test ? `
-    <div class="meta-block">
-      <div>Printer Test Page</div>
-      <div>${escapeHtml(createdAt)}</div>
+  // ── Barcode script ──────────────────────────────────────────────────────────
+  const orderNumber = escapeHtml(order?.order_number || '')
+  const barcodeHtml = (_jsBarcodeScript && orderNumber && !order?.test) ? `
+    <div class="barcode-wrap">
+      <svg id="rcpt-barcode"></svg>
     </div>
-  ` : `
-    <div class="meta-block">
-      <div>Receipt #: ${escapeHtml(order?.order_number || 'N/A')}</div>
-      <div>Date: ${escapeHtml(createdAt)}</div>
-      ${cashierName ? `<div>Cashier: ${escapeHtml(cashierName)}</div>` : ''}
-      ${order?.customer_name ? `<div>Customer: ${escapeHtml(order.customer_name)}</div>` : ''}
-    </div>
-  `
+    <script>${_jsBarcodeScript}</script>
+    <script>
+      try {
+        JsBarcode("#rcpt-barcode", ${JSON.stringify(order?.order_number || '')}, {
+          format: "CODE128", width: 1.5, height: 48,
+          displayValue: true, fontSize: 11, margin: 4,
+          lineColor: "#000", background: "#fff"
+        });
+      } catch(e) {}
+    </script>
+  ` : (orderNumber && !order?.test ? `<div class="center barcode-text">${orderNumber}</div>` : '')
 
-  const itemsSection = order?.test ? `
-    <div class="center section-gap">Test page printed successfully.</div>
+  // ── Main body ───────────────────────────────────────────────────────────────
+  const bodyHtml = order?.test ? `
+    <div class="divider"></div>
+    <p class="center section-gap">Test page printed successfully.</p>
+    <p class="center" style="font-size:11px">${escapeHtml(createdAt)}</p>
   ` : `
+    <div class="divider"></div>
+    <div class="info-row"><span>Cashier:</span><span>${escapeHtml(cashierName)}</span></div>
+    <div class="info-row"><span>Receipt #:</span><span>${orderNumber}</span></div>
+    <div class="info-row"><span>Date:</span><span>${escapeHtml(createdAt)}</span></div>
+    ${order?.customer_name ? `<div class="info-row"><span>Customer:</span><span>${escapeHtml(order.customer_name)}</span></div>` : ''}
+    <div class="divider"></div>
     <table>
       <thead>
         <tr>
-          <th class="qty">Qty</th>
-          <th class="desc">Item</th>
-          <th class="amount">Amount</th>
+          <th class="name-col">Name</th>
+          <th class="qty-col">Qty</th>
+          <th class="price-col">Price</th>
         </tr>
       </thead>
       <tbody>${itemsHtml}</tbody>
     </table>
-
     <div class="divider"></div>
-
-    <div class="summary-row"><span>Subtotal</span><span>${escapeHtml(formatPeso(order?.subtotal))}</span></div>
-    ${discountHtml}
-    <div class="summary-row total"><span>Total</span><span>${escapeHtml(formatPeso(order?.total))}</span></div>
-    ${paymentsHtml}
-    ${changeHtml}
-    <div class="divider"></div>
-    <div class="center sold">${escapeHtml(formatQty(itemCount))} item(s) sold</div>
-    ${noteHtml}
+    ${discountRow}
+    <div class="summary-row subtotal"><span>Sub Total</span><span>${escapeHtml(formatPeso(order?.total))}</span></div>
+    ${paymentRows}
+    ${noteRow}
+    <div class="short-divider"></div>
+    ${barcodeHtml}
   `
 
   return `<!doctype html>
-  <html>
-    <head>
-      <meta charset="utf-8" />
-      <title>Receipt</title>
-      <style>
-        :root { color-scheme: light; }
-        * { box-sizing: border-box; }
-        body {
-          margin: 0;
-          background: #fff;
-          color: #000;
-          font-family: "Courier New", Courier, monospace;
-          font-size: 12px;
-          line-height: 1.35;
-        }
-        .receipt {
-          width: 72mm;
-          max-width: 100%;
-          margin: 0 auto;
-          padding: 8px 10px 18px;
-        }
-        .center { text-align: center; }
-        .store-name {
-          font-size: 18px;
-          font-weight: 700;
-          line-height: 1.2;
-          margin-bottom: 4px;
-        }
-        .meta-block {
-          margin: 10px 0 8px;
-          text-align: left;
-        }
-        .divider {
-          border-top: 1px dashed #000;
-          margin: 8px 0;
-        }
-        .section-gap {
-          margin: 18px 0;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-        }
-        th, td {
-          padding: 2px 0;
-          vertical-align: top;
-        }
-        th {
-          font-weight: 700;
-          text-align: left;
-        }
-        .qty {
-          width: 32px;
-          white-space: nowrap;
-        }
-        .amount {
-          width: 74px;
-          text-align: right;
-          white-space: nowrap;
-        }
-        .meta {
-          font-size: 11px;
-        }
-        .summary-row {
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-          margin: 2px 0;
-        }
-        .total {
-          font-size: 14px;
-          font-weight: 700;
-          margin-top: 4px;
-        }
-        .sold {
-          font-weight: 700;
-          text-transform: uppercase;
-          letter-spacing: 0.04em;
-        }
-        .note {
-          margin-top: 8px;
-        }
-        @page {
-          margin: 6mm;
-          size: auto;
-        }
-      </style>
-    </head>
-    <body>
-      <main class="receipt">
-        <div class="center">
-          <div class="store-name">${escapeHtml(storeName)}</div>
-          ${storeAddress ? `<div>${escapeHtml(storeAddress)}</div>` : ''}
-          ${storePhone ? `<div>${escapeHtml(storePhone)}</div>` : ''}
-          ${storeTin ? `<div>TIN: ${escapeHtml(storeTin)}</div>` : ''}
-        </div>
-        <div class="divider"></div>
-        ${orderMetaHtml}
-        <div class="divider"></div>
-        ${itemsSection}
-        <div class="divider"></div>
-        <div class="center">${escapeHtml(receiptFooter)}</div>
-      </main>
-    </body>
-  </html>`
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Receipt</title>
+    <style>
+      :root { color-scheme: light; }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        background: #fff;
+        color: #000;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      .receipt {
+        width: 76mm;
+        max-width: 100%;
+        margin: 0 auto;
+        padding: 10px 8px 20px;
+      }
+      .center { text-align: center; }
+      .store-name {
+        font-size: 20px;
+        font-weight: 900;
+        text-decoration: underline;
+        letter-spacing: 0.02em;
+        margin-bottom: 2px;
+      }
+      .store-info { font-size: 11px; line-height: 1.6; }
+      .divider {
+        border: none;
+        border-top: 1px dotted #777;
+        margin: 7px 0;
+      }
+      .short-divider {
+        border: none;
+        border-top: 1px dotted #777;
+        width: 55%;
+        margin: 8px auto;
+      }
+      .info-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        margin: 1px 0;
+      }
+      table { width: 100%; border-collapse: collapse; margin: 3px 0; }
+      th, td { padding: 2px 0; vertical-align: top; font-size: 12px; }
+      th { font-weight: 700; }
+      .name-col { text-align: left; }
+      .qty-col  { text-align: center; width: 32px; }
+      .price-col { text-align: right; width: 70px; white-space: nowrap; }
+      .summary-row {
+        display: flex;
+        justify-content: space-between;
+        margin: 2px 0;
+        font-size: 12px;
+      }
+      .summary-row.subtotal {
+        font-size: 15px;
+        font-weight: 700;
+        margin: 4px 0 3px;
+      }
+      .barcode-wrap { text-align: center; margin: 4px 0 2px; }
+      .barcode-wrap svg { max-width: 100%; }
+      .barcode-text { font-family: monospace; font-size: 13px; letter-spacing: 0.1em; margin: 6px 0; }
+      .thank-you { font-size: 15px; font-weight: 700; letter-spacing: 0.05em; margin-top: 4px; }
+      .footer-msg { font-size: 11px; margin-top: 2px; }
+      .section-gap { margin: 16px 0; }
+      .note { font-size: 11px; margin-top: 4px; }
+      @page { margin: 4mm; size: auto; }
+    </style>
+  </head>
+  <body>
+    <div class="receipt">
+      <div class="center">
+        <div class="store-name">${escapeHtml(storeName)}</div>
+        ${storeAddress ? `<div class="store-info">${escapeHtml(storeAddress)}</div>` : ''}
+        ${storePhone ? `<div class="store-info">Tel.: ${escapeHtml(storePhone)}</div>` : ''}
+        ${storeTin ? `<div class="store-info">TIN: ${escapeHtml(storeTin)}</div>` : ''}
+      </div>
+      ${bodyHtml}
+      <div class="center">
+        <div class="thank-you">THANK YOU!</div>
+        <div class="footer-msg">${escapeHtml(receiptFooter)}</div>
+      </div>
+    </div>
+  </body>
+</html>`
 }
 
 async function printHtmlReceipt(
@@ -401,21 +399,23 @@ async function printHtmlReceipt(
 }
 
 async function printHtmlContent(html: string, printerInterface: string) {
+  // Write to a temp file so the renderer can load scripts (data: URLs have size limits)
+  const tmpFile = path.join(os.tmpdir(), `reyna_receipt_${Date.now()}.html`)
+  fs.writeFileSync(tmpFile, html, 'utf-8')
+
   const printWindow = new BrowserWindow({
     show: false,
-    webPreferences: {
-      sandbox: false,
-    },
+    webPreferences: { sandbox: false, nodeIntegration: false },
   })
 
   const deviceName = printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : undefined
   const deviceLabel = deviceName || 'system-dialog'
 
   try {
-    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    await printWindow.loadURL(`file://${tmpFile}`)
     await new Promise<void>((resolve, reject) => {
       printWindow.webContents.print({
-        silent: false,
+        silent: !!deviceName,   // silent only when a specific printer is selected
         printBackground: true,
         deviceName,
       }, (success, error) => {
@@ -427,9 +427,8 @@ async function printHtmlContent(html: string, printerInterface: string) {
   } catch (err: any) {
     return { success: false, error: err?.message || 'Print failed', device: deviceLabel }
   } finally {
-    if (!printWindow.isDestroyed()) {
-      printWindow.close()
-    }
+    if (!printWindow.isDestroyed()) printWindow.close()
+    try { fs.unlinkSync(tmpFile) } catch {}
   }
 }
 
@@ -451,42 +450,55 @@ async function printThermal(order: any, store: { storeName: string; storeAddress
 
     const { paperSize } = getPrinterSettings()
     const colWidth = paperSize === '80mm' ? 48 : 32
-    const divider = '-'.repeat(colWidth)
+    const divider = '.'.repeat(colWidth)
 
     printer = new Printer(device)
 
     // ── Header ────────────────────────────────────────────────────────────────
-    printer.align('CT').style(true, false, false).text(storeName)
-    printer.style(false, false, false)
+    printer.align('CT').style(true, false, false).size(1, 1).text(storeName)
+    printer.style(false, false, false).size(0, 0)
     if (storeAddress) printer.text(storeAddress)
-    if (storePhone) printer.text(storePhone)
+    if (storePhone) printer.text(`Tel.: ${storePhone}`)
     if (storeTin) printer.text(`TIN: ${storeTin}`)
-    printer.text(`Date: ${formatDateTime(order?.created_at)}`)
     printer.text(divider)
 
     if (order.test) {
       printer.text('Test Page - Printer OK')
+      printer.text(formatDateTime(order?.created_at))
     } else {
       const cashierName = getCashierName(order?.user_id)
-      printer.text(`Receipt #: ${order.order_number || 'N/A'}`)
-      if (cashierName) printer.text(`Cashier: ${cashierName}`)
-      if (order.customer_name) printer.text(`Customer: ${order.customer_name}`)
+      printer.align('LT')
+      printer.text(rowLine('Cashier:', cashierName, colWidth))
+      printer.text(rowLine('Receipt #:', order.order_number || 'N/A', colWidth))
+      printer.text(rowLine('Date:', formatDateTime(order?.created_at), colWidth))
+      if (order.customer_name) printer.text(rowLine('Customer:', order.customer_name, colWidth))
+      printer.text(divider)
+
+      // ── Items header ───────────────────────────────────────────────────────
+      const qtyW = 5, priceW = 10
+      const nameW = colWidth - qtyW - priceW - 2
+      const hdrName = 'Name'.padEnd(nameW)
+      const hdrQty = 'Qty'.padStart(qtyW)
+      const hdrPrice = 'Price'.padStart(priceW)
+      printer.style(true, false, false).text(`${hdrName}${hdrQty}  ${hdrPrice}`)
+      printer.style(false, false, false)
       printer.text(divider)
 
       // ── Items ──────────────────────────────────────────────────────────────
-      printer.align('LT')
       for (const item of order.items || []) {
-        printer.text(rowLine(`${formatQty(item.quantity)}x ${item.name}`, formatPeso(item.subtotal), colWidth))
-        printer.text(rowLine(`  @ ${formatPeso(item.price)}`, '', colWidth))
+        const name = item.name.length > nameW ? item.name.slice(0, nameW - 1) + '…' : item.name.padEnd(nameW)
+        const qty = formatQty(item.quantity).padStart(qtyW)
+        const price = formatPeso(item.subtotal).padStart(priceW)
+        printer.text(`${name}${qty}  ${price}`)
       }
       printer.text(divider)
 
-      printer.text(rowLine('Subtotal', formatPeso(order.subtotal), colWidth))
+      // ── Totals ─────────────────────────────────────────────────────────────
       if (Number(order.discount || 0) > 0) {
         printer.text(rowLine('Discount', `- ${formatPeso(order.discount)}`, colWidth))
       }
-      const totalRight = formatPeso(order.total)
-      printer.style(true, false, false).text(rowLine('TOTAL', totalRight, colWidth))
+      printer.style(true, false, false)
+      printer.text(rowLine('Sub Total', formatPeso(order.total), colWidth))
       printer.style(false, false, false)
 
       // ── Payments ──────────────────────────────────────────────────────────
@@ -495,22 +507,32 @@ async function printThermal(order: any, store: { storeName: string; storeAddress
         printer.text(rowLine('Payment', 'Charge to Account', colWidth))
       } else if (payments.length > 0) {
         for (const entry of payments) {
-          const label = entry.method === 'gcash' ? 'GCash' : entry.method === 'card' ? 'Card' : 'Cash'
+          const label = entry.method === 'gcash' ? 'GCASH' : entry.method === 'card' ? 'CARD' : 'CASH'
           printer.text(rowLine(label, formatPeso(entry.amount || 0), colWidth))
         }
-      } else if (order.payment_amount) {
-        printer.text(rowLine('Cash', formatPeso(order.payment_amount), colWidth))
+        if (order.change_amount != null) {
+          printer.text(rowLine('CHANGE', formatPeso(order.change_amount || 0), colWidth))
+        }
+      } else if (order.payment_amount != null) {
+        printer.text(rowLine('CASH', formatPeso(order.payment_amount), colWidth))
+        if (order.change_amount != null) {
+          printer.text(rowLine('CHANGE', formatPeso(order.change_amount || 0), colWidth))
+        }
       }
-      if (!order.is_credit && order.payment_amount != null) {
-        printer.text(rowLine('Change', formatPeso(order.change_amount || 0), colWidth))
+
+      if (order.note) printer.text(`Note: ${order.note}`)
+
+      // ── Barcode ───────────────────────────────────────────────────────────
+      try {
+        printer.align('CT').barcode(order.order_number, 'CODE128', { width: 2, height: 64, position: 'BLW' })
+      } catch {
+        printer.align('CT').text(order.order_number)
       }
-      printer.text(divider)
-      printer.align('CT').text(`${formatQty(getItemCount(order))} item(s) sold`)
     }
 
     // ── Footer ────────────────────────────────────────────────────────────────
-    printer.text(divider)
-    printer.align('CT').text(receiptFooter).cut()
+    printer.align('CT').style(true, false, false).text('THANK YOU!')
+    printer.style(false, false, false).text(receiptFooter).cut()
   } catch (err: any) {
     throw new Error(err?.message || 'Thermal printer not available')
   } finally {

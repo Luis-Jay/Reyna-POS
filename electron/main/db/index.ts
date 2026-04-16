@@ -440,6 +440,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_product_unique ON inventory(prod
     `,
   },
   {
+    name: '014_debtor_credit_limit.sql',
+    sql: `ALTER TABLE debtors ADD COLUMN credit_limit REAL NOT NULL DEFAULT 0;`,
+  },
+  {
+    name: '015_vat_settings.sql',
+    sql: `
+INSERT OR IGNORE INTO settings (key, value) VALUES ('vat_enabled','false');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('vat_rate','12');
+    `,
+  },
+  {
     name: '007_customer_views.sql',
     sql: `
 DROP VIEW IF EXISTS customers;
@@ -517,6 +528,9 @@ function runMigrations(database: Database.Database) {
     }
     if (migrationName === '012a_product_retail_wholesale_prices.sql') {
       return hasColumn('products', 'retail_price') && hasColumn('products', 'wholesale_price')
+    }
+    if (migrationName === '014_debtor_credit_limit.sql') {
+      return hasColumn('debtors', 'credit_limit')
     }
     return false
   }

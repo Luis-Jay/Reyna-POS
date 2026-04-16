@@ -38,6 +38,21 @@ export default function SettingsPage() {
   const [syncMessage, setSyncMessage] = useState('')
   const [smsCredits, setSmsCredits] = useState<number | null>(null)
 
+  const persistSettings = async (nextSettings: Record<string, string>) => {
+    const normalizedSettings = Object.fromEntries(
+      Object.entries(nextSettings).map(([key, value]) => [key, value == null ? '' : String(value)])
+    )
+
+    await window.api.settings.setMany(normalizedSettings)
+    await window.api.printer.setConfig({
+      enabled: normalizedSettings['thermal_enabled'] === 'true',
+      paperSize: normalizedSettings['paper_size'] || '58mm',
+      interface: normalizedSettings['printer_interface'] || '',
+    })
+
+    return await window.api.settings.getAll()
+  }
+
   const load = async () => {
     const [s, g, ps, printerList, sync, userList] = await Promise.all([
       window.api.settings.getAll(),
@@ -104,6 +119,23 @@ export default function SettingsPage() {
 
   const set = (key: string, value: string) => setSettings(s => ({ ...s, [key]: value }))
 
+  const setAndSave = async (key: string, value: string) => {
+    const nextSettings = { ...settings, [key]: value }
+    setSettings(nextSettings)
+    setSaving(true)
+    try {
+      const persistedSettings = await persistSettings(nextSettings)
+      setSettings(persistedSettings)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (error) {
+      setSettings(settings)
+      alert(`Failed to save settings: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -119,15 +151,16 @@ export default function SettingsPage() {
 
   const handleSave = async () => {
     setSaving(true)
-    await window.api.settings.setMany(settings)
-    await window.api.printer.setConfig({
-      enabled: settings['thermal_enabled'] === 'true',
-      paperSize: settings['paper_size'] || '58mm',
-      interface: settings['printer_interface'] || '',
-    })
-    setSaving(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    try {
+      const persistedSettings = await persistSettings(settings)
+      setSettings(persistedSettings)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (error) {
+      alert(`Failed to save settings: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleAddGroup = async () => {
@@ -220,7 +253,7 @@ export default function SettingsPage() {
   const Select = ({ setting, label, options }: { setting: string; label: string; options: Array<{ label: string; value: string }> }) => (
     <div className="flex items-center justify-between py-3">
       <span className="text-sm text-gray-700">{label}</span>
-      <select value={settings[setting] ?? options[0]?.value ?? ''} onChange={e => set(setting, e.target.value)}
+      <select value={settings[setting] ?? options[0]?.value ?? ''} onChange={e => setAndSave(setting, e.target.value)}
         className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]">
         {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
@@ -343,6 +376,25 @@ export default function SettingsPage() {
             </SectionInner>
             <SectionInner label="AI Features">
               <Select setting="ai_image_recognition" label="Enable AI Image Recognition" options={yesNo} />
+            </SectionInner>
+            <SectionInner label="VAT / Tax">
+              <Select setting="vat_enabled" label="Enable VAT on Sales" options={noYes} />
+              {settings['vat_enabled'] === 'true' && (
+                <div className="flex items-center justify-between py-3">
+                  <div>
+                    <span className="text-sm text-gray-700">VAT Rate (%)</span>
+                    <p className="text-xs text-gray-400">Philippines standard VAT is 12%</p>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={settings['vat_rate'] || '12'}
+                    onChange={e => set('vat_rate', e.target.value)}
+                    className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                  />
+                </div>
+              )}
             </SectionInner>
             <SectionInner label="Loyalty / Sukipoints">
               <Select setting="loyalty_enabled" label="Enable Loyalty Program" options={noYes} />

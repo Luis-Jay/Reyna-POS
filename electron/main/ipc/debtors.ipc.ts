@@ -44,7 +44,8 @@ export function registerDebtorHandlers() {
         phone = ?,
         due_date = ?,
         follow_up_date = ?,
-        last_reminder_at = COALESCE(?, last_reminder_at)
+        last_reminder_at = COALESCE(?, last_reminder_at),
+        credit_limit = COALESCE(?, credit_limit)
       WHERE id = ?
     `).run(
       data.name,
@@ -52,6 +53,7 @@ export function registerDebtorHandlers() {
       data.due_date || null,
       data.follow_up_date || null,
       data.last_reminder_at || null,
+      data.credit_limit !== undefined ? data.credit_limit : null,
       id,
     )
     scheduleAutoSync()

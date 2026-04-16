@@ -21,6 +21,7 @@ const api = {
     bulkCosts:    (updates: any[])       => ipcRenderer.invoke(IPC.PRODUCTS.BULK_COSTS, updates),
     saveImage:    (productId: string, dataUrl: string) =>
                     ipcRenderer.invoke(IPC.PRODUCTS.SAVE_IMAGE, productId, dataUrl),
+    importBatch:  (rows: any[])          => ipcRenderer.invoke(IPC.PRODUCTS.IMPORT_BATCH, rows),
   },
 
   // ─── Categories ────────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ const api = {
     getById:      (id: string)             => ipcRenderer.invoke(IPC.ORDERS.GET_BY_ID, id),
     updateStatus: (id: string, status: string) => ipcRenderer.invoke(IPC.ORDERS.UPDATE_STATUS, id, status),
     refund:       (id: string)                 => ipcRenderer.invoke(IPC.ORDERS.REFUND, id),
+    partialRefund:(id: string, items: any[])   => ipcRenderer.invoke(IPC.ORDERS.PARTIAL_REFUND, id, items),
     excludeSales: (id: string, exclude: boolean) => ipcRenderer.invoke(IPC.ORDERS.EXCLUDE_SALES, id, exclude),
     saveCart:     (data: any)              => ipcRenderer.invoke(IPC.ORDERS.SAVE_CART, data),
     getSaved:     ()                       => ipcRenderer.invoke(IPC.ORDERS.GET_SAVED),

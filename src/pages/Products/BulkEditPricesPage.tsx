@@ -1,6 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import Papa from 'papaparse'
 import { Product } from '../../types'
 import { Check, Plus, Tag, Type, Barcode, DollarSign, LayoutGrid, X, Upload, Wand2 } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
@@ -21,10 +20,6 @@ export default function BulkEditPricesPage() {
   const [customMarkup, setCustomMarkup] = useState('')
   const [saving, setSaving] = useState(false)
   const [priceMode, setPriceMode] = useState<'manual' | 'percentage'>('manual')
-  const [showCsvModal, setShowCsvModal] = useState(false)
-  const [csvRows, setCsvRows] = useState<any[]>([])
-  const [csvImporting, setCsvImporting] = useState(false)
-  const csvInputRef = useRef<HTMLInputElement>(null)
 
   const load = async () => {
     const data = await window.api.products.getAll()
@@ -69,38 +64,6 @@ export default function BulkEditPricesPage() {
     setSelected(new Set())
   }
 
-  const handleCsvFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (result) => {
-        setCsvRows(result.data as any[])
-        setShowCsvModal(true)
-      },
-    })
-    if (csvInputRef.current) csvInputRef.current.value = ''
-  }
-
-  const handleCsvImport = async () => {
-    setCsvImporting(true)
-    for (const row of csvRows) {
-      const name = row['name'] || row['Name'] || row['product_name'] || ''
-      if (!name.trim()) continue
-      await window.api.products.create({
-        name: name.trim(),
-        base_price: parseFloat(row['price'] || row['Price'] || '0') || 0,
-        base_cost: parseFloat(row['cost'] || row['Cost'] || '0') || 0,
-        barcode: (row['barcode'] || row['Barcode'] || '').trim() || null,
-      })
-    }
-    setCsvImporting(false)
-    setShowCsvModal(false)
-    setCsvRows([])
-    load()
-  }
-
   const handleAutoGenerateBarcodes = () => {
     const updates: Record<string, any> = {}
     for (const p of filtered) {
@@ -132,10 +95,9 @@ export default function BulkEditPricesPage() {
       <button onClick={() => navigate('/products/add')} className="bg-green-500 text-white text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1 hover:bg-green-600">
         <Plus size={14} /> Add Product
       </button>
-      <button onClick={() => csvInputRef.current?.click()} className="bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1 hover:bg-indigo-600">
+      <button onClick={() => navigate('/products/import')} className="bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg font-medium flex items-center gap-1 hover:bg-indigo-600">
         <Upload size={14} /> Import CSV
       </button>
-      <input ref={csvInputRef} type="file" accept=".csv" onChange={handleCsvFile} className="hidden" />
       {(['prices','names','barcodes','costs'] as Tab[]).map((t, i) => {
         const labels = ['Edit Prices','Edit Names','Edit Barcodes','Edit Costs']
         const colors = ['bg-purple-500 hover:bg-purple-600','bg-pink-500 hover:bg-pink-600','bg-fuchsia-600 hover:bg-fuchsia-700','bg-orange-500 hover:bg-orange-600']
@@ -335,50 +297,6 @@ export default function BulkEditPricesPage() {
             <button onClick={removeMarkup} className="flex w-full items-center justify-center gap-1 text-sm text-red-500 hover:underline">
               <X size={14} /> Remove Markup (Use Manual Price)
             </button>
-          </div>
-        </div>
-      )}
-
-      {/* CSV Import Modal */}
-      {showCsvModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl p-5 shadow-2xl max-h-[80vh] flex flex-col">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="font-bold text-gray-900">Import Products from CSV</h3>
-                <p className="text-xs text-gray-500 mt-0.5">Columns: <code className="bg-gray-100 px-1 rounded">name, price, cost, barcode</code> (header row required)</p>
-              </div>
-              <button onClick={() => { setShowCsvModal(false); setCsvRows([]) }} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
-            </div>
-            <div className="flex-1 overflow-y-auto border border-gray-200 rounded-xl">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
-                  <tr>
-                    <th className="text-left px-3 py-2 text-gray-600 font-medium">Name</th>
-                    <th className="text-right px-3 py-2 text-gray-600 font-medium">Price</th>
-                    <th className="text-right px-3 py-2 text-gray-600 font-medium">Cost</th>
-                    <th className="text-left px-3 py-2 text-gray-600 font-medium">Barcode</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {csvRows.map((row, i) => (
-                    <tr key={i} className="border-b border-gray-100 last:border-0">
-                      <td className="px-3 py-2 text-gray-800">{row['name'] || row['Name'] || row['product_name'] || <span className="text-red-400">missing</span>}</td>
-                      <td className="px-3 py-2 text-right text-gray-700">₱{parseFloat(row['price'] || row['Price'] || '0') || 0}</td>
-                      <td className="px-3 py-2 text-right text-gray-700">₱{parseFloat(row['cost'] || row['Cost'] || '0') || 0}</td>
-                      <td className="px-3 py-2 text-gray-500">{row['barcode'] || row['Barcode'] || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex gap-2 mt-3">
-              <button onClick={() => { setShowCsvModal(false); setCsvRows([]) }} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50">Cancel</button>
-              <button onClick={handleCsvImport} disabled={csvImporting || csvRows.length === 0}
-                className="flex-1 py-2.5 rounded-xl bg-[#1a8eff] text-white text-sm font-semibold hover:bg-[#0077e6] disabled:opacity-50">
-                {csvImporting ? 'Importing...' : `Import ${csvRows.length} Product${csvRows.length !== 1 ? 's' : ''}`}
-              </button>
-            </div>
           </div>
         </div>
       )}

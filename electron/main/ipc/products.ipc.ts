@@ -200,6 +200,77 @@ export function registerProductHandlers() {
     return { success: true }
   })
 
+  // IMPORT BATCH — accepts parsed rows from renderer (CSV or XLSX)
+  ipcMain.handle(IPC.PRODUCTS.IMPORT_BATCH, (_, rows: any[]) => {
+    const db = getDb()
+    const existingCats: { id: string; name: string }[] = db.prepare(
+      `SELECT id, name FROM categories WHERE deleted_at IS NULL`
+    ).all() as any[]
+
+    let created = 0
+    let skipped = 0
+    const errors: string[] = []
+
+    const tx = db.transaction(() => {
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i]
+        const rowNum = i + 2 // row 1 is header
+
+        const name = String(row.name || row.Name || '').trim()
+        if (!name) {
+          errors.push(`Row ${rowNum}: Name is required`)
+          skipped++
+          continue
+        }
+
+        const price = parseFloat(row.price ?? row.Price ?? row.retail_price ?? 0)
+        if (isNaN(price) || price < 0) {
+          errors.push(`Row ${rowNum}: Invalid price for "${name}"`)
+          skipped++
+          continue
+        }
+
+        const cost = parseFloat(row.cost ?? row.Cost ?? row.base_cost ?? 0) || 0
+        const stock = parseInt(row.stock ?? row.Stock ?? row.initial_stock ?? 0, 10) || 0
+        const barcode = String(row.barcode ?? row.Barcode ?? '').trim() || null
+        const catName = String(row.category ?? row.Category ?? '').trim()
+
+        let categoryId: string | null = null
+        if (catName) {
+          const found = existingCats.find(c => c.name.toLowerCase() === catName.toLowerCase())
+          if (found) {
+            categoryId = found.id
+          } else {
+            const catId = uuid()
+            db.prepare(`INSERT INTO categories (id, name) VALUES (?, ?)`).run(catId, catName)
+            existingCats.push({ id: catId, name: catName })
+            categoryId = catId
+          }
+        }
+
+        const id = uuid()
+        db.prepare(`
+          INSERT INTO products (id, name, barcode, category_id,
+            base_price, retail_price, wholesale_price, base_cost, track_inventory)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        `).run(id, name, barcode, categoryId, price, price, price, cost)
+
+        db.prepare(`INSERT INTO inventory (id, product_id, quantity) VALUES (?, ?, ?)`)
+          .run(uuid(), id, stock)
+
+        created++
+      }
+    })
+
+    try {
+      tx()
+      scheduleAutoSync()
+      return { success: true, created, skipped, errors }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
   // SAVE IMAGE
   ipcMain.handle(IPC.PRODUCTS.SAVE_IMAGE, (_, productId: string, dataUrl: string) => {
     try {

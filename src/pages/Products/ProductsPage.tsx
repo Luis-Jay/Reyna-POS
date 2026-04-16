@@ -1,6 +1,6 @@
 import { Navigate, useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
-import { Plus, Tag, Type, Barcode, DollarSign, LayoutGrid } from 'lucide-react'
+import { Plus, Tag, Type, Barcode, DollarSign, LayoutGrid, Upload } from 'lucide-react'
 
 export default function ProductsPage() {
   const navigate = useNavigate()
@@ -30,6 +30,10 @@ export default function ProductsPage() {
       <button onClick={() => navigate('/products/categories')}
         className="rounded-full bg-white/12 px-3 py-2 text-xs font-medium text-white flex items-center gap-1 transition hover:bg-white/20">
         <LayoutGrid size={14} /> Categories
+      </button>
+      <button onClick={() => navigate('/products/import')}
+        className="rounded-full bg-white/12 px-3 py-2 text-xs font-medium text-white flex items-center gap-1 transition hover:bg-white/20">
+        <Upload size={14} /> Import
       </button>
     </div>
   )

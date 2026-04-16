@@ -470,6 +470,46 @@ export default function AnalyticsPage() {
           ))}
         </div>
 
+        <div className="grid grid-cols-2 gap-4">
+          {/* Top 10 Creditors */}
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <p className="font-semibold text-gray-800 mb-1">Top 10 Creditors</p>
+            <p className="text-xs text-gray-400 mb-3">Debtors with the highest outstanding balance</p>
+            {topDebtors.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">No outstanding balances</p>
+            ) : topDebtors.map((d, i) => (
+              <div key={d.id} className="flex items-center gap-3 mb-2.5">
+                <span className="text-xs text-gray-400 font-bold w-4">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{d.name}</p>
+                  {d.phone && <p className="text-xs text-gray-400 truncate">{d.phone}</p>}
+                </div>
+                <p className="text-sm font-bold text-red-500 shrink-0">₱{Number(d.balance).toLocaleString()}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Top 10 Slow Movers */}
+          <div className="bg-white rounded-xl p-4 shadow-sm">
+            <p className="font-semibold text-gray-800 mb-1">Top 10 Slow Movers</p>
+            <p className="text-xs text-gray-400 mb-3">Products with the least sales in the selected period</p>
+            {slowMoving.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">No products found</p>
+            ) : slowMoving.map((p, i) => (
+              <div key={p.id} className="flex items-center gap-3 mb-2.5">
+                <span className="text-xs text-gray-400 font-bold w-4">{i + 1}</span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>
+                  <p className="text-xs text-gray-400">{p.period_sold} sold this period</p>
+                </div>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${
+                  p.period_sold === 0 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'
+                }`}>{p.period_sold === 0 ? 'No sales' : `${p.period_sold} sold`}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <div className="bg-white rounded-xl p-4 shadow-sm">
           <p className="font-semibold text-gray-800 mb-3">Inventory Valuation</p>
           <div className="grid grid-cols-2 gap-4">

@@ -17,6 +17,7 @@ export default function DebtorDetailPage() {
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
   const [phone, setPhone] = useState('')
+  const [creditLimit, setCreditLimit] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [followUpDate, setFollowUpDate] = useState('')
   const [savingProfile, setSavingProfile] = useState(false)
@@ -33,6 +34,7 @@ export default function DebtorDetailPage() {
     setDebtor(d)
     setTransactions(txs)
     setPhone(d?.phone || '')
+    setCreditLimit(d?.credit_limit ? String(d.credit_limit) : '')
     setDueDate(d?.due_date || '')
     setFollowUpDate(d?.follow_up_date || '')
   }
@@ -60,6 +62,7 @@ export default function DebtorDetailPage() {
     try {
       await window.api.debtors.update(id!, {
         phone,
+        credit_limit: parseFloat(creditLimit) || 0,
         due_date: dueDate || null,
         follow_up_date: followUpDate || null,
       })
@@ -122,6 +125,22 @@ export default function DebtorDetailPage() {
         <div className="bg-white p-6 text-center border-b">
           <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">Total Outstanding Debt</p>
           <p className="text-4xl font-bold text-red-500">₱{debtor.balance.toFixed(2)}</p>
+          {(debtor as any).credit_limit > 0 && (
+            <div className="mt-2 mx-auto max-w-xs">
+              <div className="flex justify-between text-xs text-gray-400 mb-1">
+                <span>Credit used</span>
+                <span className={debtor.balance >= (debtor as any).credit_limit ? 'text-red-500 font-semibold' : ''}>
+                  ₱{debtor.balance.toFixed(2)} / ₱{(debtor as any).credit_limit.toFixed(2)}
+                </span>
+              </div>
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${debtor.balance >= (debtor as any).credit_limit ? 'bg-red-500' : 'bg-orange-400'}`}
+                  style={{ width: `${Math.min(100, (debtor.balance / (debtor as any).credit_limit) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
           <div className="flex justify-center gap-8 mt-3">
             <div className="text-center">
               <p className="text-xs text-gray-400 uppercase">Total Credit</p>
@@ -153,13 +172,24 @@ export default function DebtorDetailPage() {
               )}
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-4">
               <label className="block">
                 <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Phone</span>
                 <input
                   value={phone}
                   onChange={e => setPhone(e.target.value)}
                   placeholder="+639123456789"
+                  className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Credit Limit (₱)</span>
+                <input
+                  value={creditLimit}
+                  onChange={e => setCreditLimit(e.target.value)}
+                  type="number"
+                  min="0"
+                  placeholder="0 = no limit"
                   className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
                 />
               </label>

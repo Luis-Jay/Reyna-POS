@@ -245,6 +245,63 @@ export function registerOrderHandlers() {
     return { success: true }
   })
 
+  // PARTIAL REFUND — refund selected items at specified quantities
+  ipcMain.handle(IPC.ORDERS.PARTIAL_REFUND, (_, orderId: string, refundItems: Array<{ item_id: string; qty: number; amount: number }>) => {
+    const db = getDb()
+    const order: any = db.prepare(`SELECT * FROM orders WHERE id = ?`).get(orderId)
+    if (!order) return { success: false, error: 'Order not found.' }
+    if (order.status === 'void') return { success: false, error: 'Order is already voided.' }
+
+    const allItems: any[] = db.prepare(`SELECT * FROM order_items WHERE order_id = ?`).all(orderId)
+
+    // Determine if this is a full refund (all items at full qty)
+    const isFullRefund = refundItems.length === allItems.length &&
+      refundItems.every(ri => {
+        const orig = allItems.find((i: any) => i.id === ri.item_id)
+        return orig && ri.qty >= orig.quantity
+      })
+
+    const refundTotal = refundItems.reduce((s, ri) => s + ri.amount, 0)
+
+    db.transaction(() => {
+      // Restore inventory for each refunded item
+      for (const ri of refundItems) {
+        const item = allItems.find((i: any) => i.id === ri.item_id)
+        if (!item || item.is_custom || !item.product_id) continue
+        db.prepare(`UPDATE inventory SET quantity = quantity + ?, updated_at = datetime('now') WHERE product_id = ?`)
+          .run(ri.qty, item.product_id)
+        db.prepare(`INSERT INTO stock_movements (id, product_id, type, quantity, reference_id, note) VALUES (?, ?, 'return', ?, ?, ?)`)
+          .run(uuid(), item.product_id, ri.qty, orderId, isFullRefund ? 'Full refund' : 'Partial refund')
+        db.prepare(`UPDATE products SET monthly_sold = MAX(0, monthly_sold - ?) WHERE id = ?`)
+          .run(ri.qty, item.product_id)
+      }
+
+      if (isFullRefund) {
+        db.prepare(`UPDATE orders SET status = 'void', updated_at = datetime('now') WHERE id = ?`).run(orderId)
+        if (order.is_credit && order.debtor_id) {
+          db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_credit = MAX(0, total_credit - ?) WHERE id = ?`)
+            .run(order.total, order.total, order.debtor_id)
+          db.prepare(`INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note) VALUES (?, ?, 'note', 0, 0, ?, 'Order fully refunded/voided')`)
+            .run(uuid(), order.debtor_id, orderId)
+        }
+      } else {
+        // Partial — append a note, reverse partial debtor balance if credit
+        const noteAppend = `Partial refund ₱${refundTotal.toFixed(2)} (${refundItems.length} item${refundItems.length > 1 ? 's' : ''})`
+        db.prepare(`UPDATE orders SET note = COALESCE(NULLIF(note,'') || ' | ', '') || ?, updated_at = datetime('now') WHERE id = ?`)
+          .run(noteAppend, orderId)
+        if (order.is_credit && order.debtor_id) {
+          db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_credit = MAX(0, total_credit - ?) WHERE id = ?`)
+            .run(refundTotal, refundTotal, order.debtor_id)
+          db.prepare(`INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note) VALUES (?, ?, 'note', 0, 0, ?, ?)`)
+            .run(uuid(), order.debtor_id, orderId, `Partial refund: ₱${refundTotal.toFixed(2)}`)
+        }
+      }
+    })()
+
+    scheduleAutoSync()
+    return { success: true, is_full: isFullRefund, refund_total: refundTotal }
+  })
+
   ipcMain.handle(IPC.ORDERS.GET_PENDING, () => {
     return getDb().prepare(`
       SELECT o.*, COUNT(oi.id) as item_count

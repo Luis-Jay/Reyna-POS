@@ -12,6 +12,7 @@ export const IPC = {
     BULK_BARCODES:  'products:bulkBarcodes',
     BULK_COSTS:     'products:bulkCosts',
     SAVE_IMAGE:     'products:saveImage',
+    IMPORT_BATCH:   'products:importBatch',
   },
   CATEGORIES: {
     GET_ALL:        'categories:getAll',
@@ -36,6 +37,7 @@ export const IPC = {
     UPDATE_STATUS:            'orders:updateStatus',
     EXCLUDE_SALES:            'orders:excludeSales',
     REFUND:                   'orders:refund',
+    PARTIAL_REFUND:           'orders:partialRefund',
     SAVE_CART:                'orders:saveCart',
     GET_SAVED:                'orders:getSaved',
     DELETE_SAVED:             'orders:deleteSaved',
