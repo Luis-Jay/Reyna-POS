@@ -63,6 +63,7 @@ const api = {
   // ─── Inventory ─────────────────────────────────────────────────────────────
   inventory: {
     getAll:       (filter?: string)        => ipcRenderer.invoke(IPC.INVENTORY.GET_ALL, filter),
+    getReport:    ()                       => ipcRenderer.invoke(IPC.INVENTORY.GET_REPORT),
     addStock:     (productId: string, qty: number, note?: string) =>
                     ipcRenderer.invoke(IPC.INVENTORY.ADD_STOCK, productId, qty, note),
     setStock:     (productId: string, qty: number, note?: string) =>

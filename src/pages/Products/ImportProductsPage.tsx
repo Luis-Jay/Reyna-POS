@@ -5,11 +5,19 @@ import * as XLSX from 'xlsx'
 import TopBar from '../../components/layout/TopBar'
 import { Download, Upload, CheckCircle, AlertCircle, X, FileText } from 'lucide-react'
 
-const TEMPLATE_HEADERS = ['name', 'price', 'cost', 'barcode', 'category', 'stock']
+const TEMPLATE_HEADERS = [
+  'name', 'price', 'wholesale_price', 'cost', 'barcode', 'category', 'stock',
+  'description', 'allow_fractions', 'track_inventory', 'variation_group',
+  'tier1_min_qty', 'tier1_price', 'tier1_label',
+  'tier2_min_qty', 'tier2_price', 'tier2_label',
+  'tier3_min_qty', 'tier3_price', 'tier3_label',
+]
+
 const TEMPLATE_EXAMPLE = [
-  ['Coca-Cola 1L', '35', '22', '4902102132060', 'Beverages', '100'],
-  ['Lays Original', '30', '18', '', 'Snacks', '50'],
-  ['White Rice 1kg', '55', '40', '', 'Grocery', '200'],
+  ['Coca-Cola 1L',    '35', '30', '22', '4902102132060', 'Beverages', '100', '',            'no',  'yes', '',        '',  '',   '',           '',   '',   '',           '',   '',   ''],
+  ['Lays Original',  '30', '25', '18', '',               'Snacks',    '50',  '',            'no',  'yes', '',        '5', '28', 'Bulk',       '10', '25', 'Wholesale',  '',   '',   ''],
+  ['White Rice 1kg', '55', '45', '40', '',               'Grocery',   '200', 'Sold per kg', 'yes', 'yes', '',        '',  '',   '',           '',   '',   '',           '',   '',   ''],
+  ['T-Shirt',        '250','200','150','',               'Apparel',   '0',   '',            'no',  'yes', 'Size',    '5', '230','Bulk',       '',   '',   '',           '',   '',   ''],
 ]
 
 function downloadTemplate() {
@@ -53,6 +61,19 @@ function parseFile(file: File): Promise<any[]> {
       reject(new Error('Unsupported file type. Use .csv or .xlsx'))
     }
   })
+}
+
+function tierSummary(row: any): string {
+  const parts: string[] = []
+  for (let t = 1; t <= 3; t++) {
+    const qty = row[`tier${t}_min_qty`]
+    const price = row[`tier${t}_price`]
+    if (qty !== '' && qty !== null && qty !== undefined && price !== '' && price !== null && price !== undefined) {
+      const label = row[`tier${t}_label`] ? ` (${row[`tier${t}_label`]})` : ''
+      parts.push(`${qty}+→₱${price}${label}`)
+    }
+  }
+  return parts.length ? parts.join(', ') : '—'
 }
 
 type ImportResult = { success: boolean; created?: number; skipped?: number; errors?: string[]; error?: string }
@@ -109,27 +130,28 @@ export default function ImportProductsPage() {
     if (fileRef.current) fileRef.current.value = ''
   }
 
-  const getCellValue = (row: any, primaryKey: string, fallbackKey: string, emptyValue: any = '—') => {
-    const primary = row[primaryKey]
-    if (primary !== null && primary !== undefined && primary !== '') return primary
-    const fallback = row[fallbackKey]
-    if (fallback !== null && fallback !== undefined && fallback !== '') return fallback
-    return emptyValue
+  const get = (row: any, key: string, fallback: any = '—') => {
+    const v = row[key]
+    return (v !== null && v !== undefined && v !== '') ? v : fallback
   }
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       <TopBar title="Import Products" back="/products" />
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 max-w-2xl mx-auto w-full">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 max-w-3xl mx-auto w-full">
 
         {/* Step 1 — Download template */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Step 1</p>
           <p className="text-sm font-medium text-gray-700 mb-3">Download the template and fill it in</p>
-          <div className="text-xs text-gray-500 mb-3 space-y-0.5">
-            <p>Columns: <span className="font-mono bg-gray-100 px-1 rounded">name</span> · <span className="font-mono bg-gray-100 px-1 rounded">price</span> · <span className="font-mono bg-gray-100 px-1 rounded">cost</span> · <span className="font-mono bg-gray-100 px-1 rounded">barcode</span> · <span className="font-mono bg-gray-100 px-1 rounded">category</span> · <span className="font-mono bg-gray-100 px-1 rounded">stock</span></p>
-            <p className="text-gray-400">Only <strong>name</strong> and <strong>price</strong> are required. New categories are created automatically.</p>
+          <div className="text-xs text-gray-500 mb-3 space-y-1.5">
+            <p><span className="font-semibold text-gray-600">Required:</span> <span className="font-mono bg-gray-100 px-1 rounded">name</span> · <span className="font-mono bg-gray-100 px-1 rounded">price</span></p>
+            <p><span className="font-semibold text-gray-600">Pricing:</span> <span className="font-mono bg-gray-100 px-1 rounded">wholesale_price</span> · <span className="font-mono bg-gray-100 px-1 rounded">cost</span></p>
+            <p><span className="font-semibold text-gray-600">Basic:</span> <span className="font-mono bg-gray-100 px-1 rounded">barcode</span> · <span className="font-mono bg-gray-100 px-1 rounded">category</span> · <span className="font-mono bg-gray-100 px-1 rounded">stock</span> · <span className="font-mono bg-gray-100 px-1 rounded">description</span></p>
+            <p><span className="font-semibold text-gray-600">Options:</span> <span className="font-mono bg-gray-100 px-1 rounded">allow_fractions</span> (yes/no) · <span className="font-mono bg-gray-100 px-1 rounded">track_inventory</span> (yes/no) · <span className="font-mono bg-gray-100 px-1 rounded">variation_group</span></p>
+            <p><span className="font-semibold text-gray-600">Price Tiers:</span> <span className="font-mono bg-gray-100 px-1 rounded">tier1_min_qty</span> · <span className="font-mono bg-gray-100 px-1 rounded">tier1_price</span> · <span className="font-mono bg-gray-100 px-1 rounded">tier1_label</span> (up to 3 tiers)</p>
+            <p className="text-gray-400">New categories and variation groups are created automatically.</p>
           </div>
           <button
             onClick={downloadTemplate}
@@ -193,27 +215,41 @@ export default function ImportProductsPage() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-gray-100">
-                    {TEMPLATE_HEADERS.map(h => (
-                      <th key={h} className="text-left text-gray-400 font-medium py-1.5 pr-3 capitalize">{h}</th>
-                    ))}
+                    <th className="text-left text-gray-400 font-medium py-1.5 pr-3">Name</th>
+                    <th className="text-left text-gray-400 font-medium py-1.5 pr-3">Price</th>
+                    <th className="text-left text-gray-400 font-medium py-1.5 pr-3">Wholesale</th>
+                    <th className="text-left text-gray-400 font-medium py-1.5 pr-3">Cost</th>
+                    <th className="text-left text-gray-400 font-medium py-1.5 pr-3">Category</th>
+                    <th className="text-left text-gray-400 font-medium py-1.5 pr-3">Stock</th>
+                    <th className="text-left text-gray-400 font-medium py-1.5 pr-3">Weight?</th>
+                    <th className="text-left text-gray-400 font-medium py-1.5 pr-3">Variation</th>
+                    <th className="text-left text-gray-400 font-medium py-1.5 pr-3">Price Tiers</th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.slice(0, 20).map((row, i) => (
                     <tr key={i} className="border-b border-gray-50 last:border-0">
                       <td className="py-1.5 pr-3 text-gray-800 font-medium">
-                        {getCellValue(row, 'name', 'Name', <span className="text-red-400">—</span>)}
+                        {get(row, 'name', <span className="text-red-400">—</span>)}
                       </td>
-                      <td className="py-1.5 pr-3 text-gray-600">₱{getCellValue(row, 'price', 'Price')}</td>
+                      <td className="py-1.5 pr-3 text-gray-600">
+                        {get(row, 'price', '') !== '—' ? `₱${get(row, 'price')}` : '—'}
+                      </td>
                       <td className="py-1.5 pr-3 text-gray-500">
-                        {(() => {
-                          const cost = getCellValue(row, 'cost', 'Cost', '')
-                          return cost === '' ? '—' : `₱${cost}`
-                        })()}
+                        {get(row, 'wholesale_price', '') !== '—' ? `₱${get(row, 'wholesale_price')}` : '—'}
                       </td>
-                      <td className="py-1.5 pr-3 text-gray-400 font-mono">{getCellValue(row, 'barcode', 'Barcode')}</td>
-                      <td className="py-1.5 pr-3 text-gray-600">{getCellValue(row, 'category', 'Category')}</td>
-                      <td className="py-1.5 pr-3 text-gray-600">{getCellValue(row, 'stock', 'Stock', 0)}</td>
+                      <td className="py-1.5 pr-3 text-gray-500">
+                        {get(row, 'cost', '') !== '—' ? `₱${get(row, 'cost')}` : '—'}
+                      </td>
+                      <td className="py-1.5 pr-3 text-gray-600">{get(row, 'category')}</td>
+                      <td className="py-1.5 pr-3 text-gray-600">{get(row, 'stock', 0)}</td>
+                      <td className="py-1.5 pr-3 text-gray-500">
+                        {['yes', '1', 'true'].includes(String(get(row, 'allow_fractions', 'no')).toLowerCase())
+                          ? <span className="text-emerald-600 font-medium">Yes</span>
+                          : 'No'}
+                      </td>
+                      <td className="py-1.5 pr-3 text-gray-600">{get(row, 'variation_group')}</td>
+                      <td className="py-1.5 pr-3 text-gray-400 font-mono">{tierSummary(row)}</td>
                     </tr>
                   ))}
                 </tbody>

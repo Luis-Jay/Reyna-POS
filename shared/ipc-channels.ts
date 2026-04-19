@@ -46,6 +46,7 @@ export const IPC = {
   },
   INVENTORY: {
     GET_ALL:        'inventory:getAll',
+    GET_REPORT:     'inventory:getReport',
     ADD_STOCK:      'inventory:addStock',
     SET_STOCK:      'inventory:setStock',
     GET_MOVEMENTS:  'inventory:getMovements',

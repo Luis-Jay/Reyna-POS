@@ -12,6 +12,28 @@ function getStatus(qty: number, threshold: number): string {
 }
 
 export function registerInventoryHandlers() {
+  ipcMain.handle(IPC.INVENTORY.GET_REPORT, () => {
+    const db = getDb()
+    const rows: any[] = db.prepare(`
+      SELECT
+        p.barcode,
+        p.name        AS product_name,
+        c.name        AS category_name,
+        i.quantity,
+        p.base_cost,
+        p.retail_price,
+        p.wholesale_price,
+        i.low_threshold,
+        p.description
+      FROM inventory i
+      JOIN products p ON i.product_id = p.id
+      LEFT JOIN categories c ON p.category_id = c.id
+      WHERE p.deleted_at IS NULL AND p.is_active = 1
+      ORDER BY c.name ASC, p.name ASC
+    `).all()
+    return rows
+  })
+
   ipcMain.handle(IPC.INVENTORY.GET_ALL, (_, filter?: string) => {
     const db = getDb()
     let query = `

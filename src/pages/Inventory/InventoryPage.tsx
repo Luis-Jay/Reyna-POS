@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
 import { InventoryItem } from '../../types'
-import { Plus } from 'lucide-react'
+import { Plus, FileText } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
 
 const FILTERS = ['Fast Moving', 'Low Stock', 'Out of Stock', 'Critical', 'All']
@@ -9,6 +10,7 @@ const FILTERS = ['Fast Moving', 'Low Stock', 'Out of Stock', 'Critical', 'All']
 type EditMode = 'add' | 'set'
 
 export default function InventoryPage() {
+  const navigate = useNavigate()
   const [items, setItems] = useState<InventoryItem[]>([])
   const [filter, setFilter] = useState('Fast Moving')
   const [search, setSearch] = useState('')
@@ -67,7 +69,14 @@ export default function InventoryPage() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
-      <TopBar title="Inventory Management" back="/" />
+      <TopBar title="Inventory Management" back="/" actions={
+        <button
+          onClick={() => navigate('/inventory/report')}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white/20 text-white rounded-lg hover:bg-white/30"
+        >
+          <FileText size={13} /> View Report
+        </button>
+      } />
 
       {/* Status cards */}
       <div className="grid grid-cols-4 gap-3 p-4">

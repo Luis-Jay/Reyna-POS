@@ -45,6 +45,7 @@ exports.IPC = {
     },
     INVENTORY: {
         GET_ALL: 'inventory:getAll',
+        GET_REPORT: 'inventory:getReport',
         ADD_STOCK: 'inventory:addStock',
         GET_MOVEMENTS: 'inventory:getMovements',
         SET_THRESHOLD: 'inventory:setThreshold',

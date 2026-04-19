@@ -206,15 +206,21 @@ export function registerProductHandlers() {
     const existingCats: { id: string; name: string }[] = db.prepare(
       `SELECT id, name FROM categories WHERE deleted_at IS NULL`
     ).all() as any[]
+    const existingGroups: { id: string; name: string }[] = db.prepare(
+      `SELECT id, name FROM variation_groups WHERE deleted_at IS NULL`
+    ).all() as any[]
 
     let created = 0
     let skipped = 0
     const errors: string[] = []
 
+    const isTruthy = (v: any) => ['yes', '1', 'true'].includes(String(v ?? '').toLowerCase().trim())
+    const isFalsy  = (v: any) => ['no',  '0', 'false'].includes(String(v ?? '').toLowerCase().trim())
+
     const tx = db.transaction(() => {
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]
-        const rowNum = i + 2 // row 1 is header
+        const rowNum = i + 2
 
         const name = String(row.name || row.Name || '').trim()
         if (!name) {
@@ -223,18 +229,25 @@ export function registerProductHandlers() {
           continue
         }
 
-        const price = parseFloat(row.price ?? row.Price ?? row.retail_price ?? 0)
-        if (isNaN(price) || price < 0) {
+        const retailPrice = parseFloat(row.price ?? row.retail_price ?? row.Price ?? 0)
+        if (isNaN(retailPrice) || retailPrice < 0) {
           errors.push(`Row ${rowNum}: Invalid price for "${name}"`)
           skipped++
           continue
         }
 
+        const wholesaleRaw = parseFloat(row.wholesale_price ?? '')
+        const wholesalePrice = isNaN(wholesaleRaw) ? retailPrice : wholesaleRaw
         const cost = parseFloat(row.cost ?? row.Cost ?? row.base_cost ?? 0) || 0
         const stock = parseInt(row.stock ?? row.Stock ?? row.initial_stock ?? 0, 10) || 0
         const barcode = String(row.barcode ?? row.Barcode ?? '').trim() || null
+        const description = String(row.description ?? '').trim() || null
         const catName = String(row.category ?? row.Category ?? '').trim()
+        const allowFractions = isTruthy(row.allow_fractions) ? 1 : 0
+        const trackInventory = isFalsy(row.track_inventory) ? 0 : 1
+        const variationGroupName = String(row.variation_group ?? '').trim()
 
+        // Category
         let categoryId: string | null = null
         if (catName) {
           const found = existingCats.find(c => c.name.toLowerCase() === catName.toLowerCase())
@@ -248,12 +261,50 @@ export function registerProductHandlers() {
           }
         }
 
+        // Variation group
+        let variationGroupId: string | null = null
+        let hasVariations = 0
+        if (variationGroupName) {
+          const found = existingGroups.find(g => g.name.toLowerCase() === variationGroupName.toLowerCase())
+          if (found) {
+            variationGroupId = found.id
+          } else {
+            const gid = uuid()
+            db.prepare(`INSERT INTO variation_groups (id, name) VALUES (?, ?)`).run(gid, variationGroupName)
+            existingGroups.push({ id: gid, name: variationGroupName })
+            variationGroupId = gid
+          }
+          hasVariations = 1
+        }
+
+        // Price tiers (up to 3)
+        const tiers: { min_qty: number; price: number; label: string | null }[] = []
+        for (let t = 1; t <= 3; t++) {
+          const minQty = parseFloat(row[`tier${t}_min_qty`] ?? '')
+          const tierPrice = parseFloat(row[`tier${t}_price`] ?? '')
+          if (!isNaN(minQty) && !isNaN(tierPrice) && minQty > 0) {
+            tiers.push({
+              min_qty: minQty,
+              price: tierPrice,
+              label: String(row[`tier${t}_label`] ?? '').trim() || null,
+            })
+          }
+        }
+
         const id = uuid()
         db.prepare(`
-          INSERT INTO products (id, name, barcode, category_id,
-            base_price, retail_price, wholesale_price, base_cost, track_inventory)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-        `).run(id, name, barcode, categoryId, price, price, price, cost)
+          INSERT INTO products (id, name, description, barcode, category_id,
+            base_price, retail_price, wholesale_price, base_cost,
+            allow_fractions, track_inventory, has_variations, variation_group_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(id, name, description, barcode, categoryId,
+               retailPrice, retailPrice, wholesalePrice, cost,
+               allowFractions, trackInventory, hasVariations, variationGroupId)
+
+        for (const tier of tiers) {
+          db.prepare(`INSERT INTO product_price_tiers (id, product_id, min_qty, price, label) VALUES (?, ?, ?, ?, ?)`)
+            .run(uuid(), id, tier.min_qty, tier.price, tier.label)
+        }
 
         db.prepare(`INSERT INTO inventory (id, product_id, quantity) VALUES (?, ?, ?)`)
           .run(uuid(), id, stock)

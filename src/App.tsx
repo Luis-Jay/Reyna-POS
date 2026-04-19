@@ -13,6 +13,7 @@ import BulkEditPricesPage from './pages/Products/BulkEditPricesPage'
 import CategoriesPage from './pages/Products/CategoriesPage'
 import ImportProductsPage from './pages/Products/ImportProductsPage'
 import InventoryPage from './pages/Inventory/InventoryPage'
+import InventoryReportPage from './pages/Inventory/InventoryReportPage'
 import DebtorsPage from './pages/Debtors/DebtorsPage'
 import DebtorDetailPage from './pages/Debtors/DebtorDetailPage'
 import AnalyticsPage from './pages/Analytics/AnalyticsPage'
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="/products/categories" element={<RequireAdmin><CategoriesPage /></RequireAdmin>} />
         <Route path="/products/import" element={<RequireAdmin><ImportProductsPage /></RequireAdmin>} />
         <Route path="/inventory" element={<RequireAdmin><InventoryPage /></RequireAdmin>} />
+        <Route path="/inventory/report" element={<RequireAdmin><InventoryReportPage /></RequireAdmin>} />
         <Route path="/debtors" element={<RequireAuth><DebtorsPage /></RequireAuth>} />
         <Route path="/debtors/:id" element={<RequireAuth><DebtorDetailPage /></RequireAuth>} />
         <Route path="/analytics" element={<RequireAdmin><AnalyticsPage /></RequireAdmin>} />
