@@ -58,6 +58,8 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
   const [refundQtys, setRefundQtys] = useState<Record<string, string>>({})
   const [refundChecked, setRefundChecked] = useState<Record<string, boolean>>({})
   const [refunding, setRefunding] = useState(false)
+  const [refundConfirming, setRefundConfirming] = useState(false)
+  const [refundError, setRefundError] = useState('')
 
   const loadItems = async () => {
     if (expanded) { setExpanded(false); return }
@@ -89,13 +91,18 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
     return sum + qty * unitPrice
   }, 0)
 
-  const handleProcessRefund = async () => {
-    if (selectedItems.length === 0) { alert('Select at least one item to refund.'); return }
-    const isFullRefund = selectedItems.length === items.length &&
-      selectedItems.every(i => parseFloat(refundQtys[i.id] || '0') >= i.quantity)
-    const label = isFullRefund ? 'fully void' : 'partially refund'
-    if (!confirm(`${label.charAt(0).toUpperCase() + label.slice(1)} Order #${order.order_number} for ₱${refundTotal.toFixed(2)}? This will restore inventory and cannot be undone.`)) return
+  const isFullRefund = selectedItems.length === items.length &&
+    selectedItems.every(i => parseFloat(refundQtys[i.id] || '0') >= i.quantity)
+
+  const handleProcessRefund = () => {
+    if (selectedItems.length === 0) { setRefundError('Select at least one item to refund.'); return }
+    setRefundError('')
+    setRefundConfirming(true)
+  }
+
+  const handleConfirmRefund = async () => {
     setRefunding(true)
+    setRefundError('')
     try {
       const refundItems = selectedItems.map(item => {
         const qty = Math.min(parseFloat(refundQtys[item.id] || '0') || 0, item.quantity)
@@ -104,9 +111,17 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
       }).filter(ri => ri.qty > 0)
 
       const res = await window.api.orders.partialRefund(order.id, refundItems)
-      if (!res.success) { alert(res.error || 'Refund failed.'); return }
+      if (!res.success) {
+        setRefundError(res.error || 'Refund failed.')
+        setRefundConfirming(false)
+        return
+      }
       setShowRefundModal(false)
+      setRefundConfirming(false)
       onRefund()
+    } catch (e: any) {
+      setRefundError(e?.message || 'Refund failed.')
+      setRefundConfirming(false)
     } finally {
       setRefunding(false)
     }
@@ -201,26 +216,55 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
             </div>
 
             <div className="px-5 py-3 border-t bg-gray-50 rounded-b-2xl">
-              <div className="flex justify-between items-center mb-3">
-                <div className="text-sm text-gray-600">
-                  <span className="font-semibold text-gray-800">{selectedItems.length}</span> item{selectedItems.length !== 1 ? 's' : ''} selected
+              {refundError && (
+                <p className="text-xs text-red-500 mb-2 text-center">{refundError}</p>
+              )}
+
+              {refundConfirming ? (
+                /* Confirmation step — no native dialog */
+                <div>
+                  <p className="text-sm text-center text-gray-700 mb-3">
+                    {isFullRefund ? 'Fully void' : 'Partially refund'} Order #{order.order_number} for{' '}
+                    <span className="font-bold text-red-500">₱{refundTotal.toFixed(2)}</span>?
+                    <br /><span className="text-xs text-gray-400">This will restore inventory and cannot be undone.</span>
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setRefundConfirming(false)}
+                      disabled={refunding}
+                      className="py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 font-medium hover:bg-gray-50 disabled:opacity-50"
+                    >Go Back</button>
+                    <button
+                      onClick={handleConfirmRefund}
+                      disabled={refunding}
+                      className="py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 disabled:opacity-50"
+                    >{refunding ? 'Processing...' : 'Confirm Refund'}</button>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-xs text-gray-400">Refund Amount</p>
-                  <p className="text-lg font-bold text-red-500">₱{refundTotal.toFixed(2)}</p>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setShowRefundModal(false)}
-                  className="py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 font-medium hover:bg-gray-50"
-                >Cancel</button>
-                <button
-                  onClick={handleProcessRefund}
-                  disabled={refunding || selectedItems.length === 0}
-                  className="py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 disabled:opacity-50"
-                >{refunding ? 'Processing...' : 'Process Refund'}</button>
-              </div>
+              ) : (
+                <>
+                  <div className="flex justify-between items-center mb-3">
+                    <div className="text-sm text-gray-600">
+                      <span className="font-semibold text-gray-800">{selectedItems.length}</span> item{selectedItems.length !== 1 ? 's' : ''} selected
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-gray-400">Refund Amount</p>
+                      <p className="text-lg font-bold text-red-500">₱{refundTotal.toFixed(2)}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => { setShowRefundModal(false); setRefundError('') }}
+                      className="py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 font-medium hover:bg-gray-50"
+                    >Cancel</button>
+                    <button
+                      onClick={handleProcessRefund}
+                      disabled={selectedItems.length === 0}
+                      className="py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 disabled:opacity-50"
+                    >Process Refund</button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

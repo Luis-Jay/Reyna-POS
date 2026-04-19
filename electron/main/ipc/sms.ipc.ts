@@ -6,6 +6,7 @@ import { IPC } from '../../../shared/ipc-channels'
 
 const SUPABASE_URL = 'https://rzhjfsgjkbvcspfncyku.supabase.co'
 const SUPABASE_FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ6aGpmc2dqa2J2Y3NwZm5jeWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyODI4ODQsImV4cCI6MjA5MDg1ODg4NH0.gw-mgJWF3yoCRlQIW6IVcrHbiVvqcNSO2i8yzis1aDM'
 
 export function registerSmsHandlers() {
   // Send an SMS via the edge function (checks credits, sends, deducts)
@@ -17,7 +18,7 @@ export function registerSmsHandlers() {
       const res = await axios.post(
         `${SUPABASE_FUNCTIONS_URL}/send-sms`,
         { phone, message },
-        { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+        { headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY }, timeout: 15000 }
       )
       // Cache updated credit balance locally
       if (res.data?.credits_remaining !== undefined) {
@@ -44,7 +45,7 @@ export function registerSmsHandlers() {
     try {
       const res = await axios.get(
         `${SUPABASE_FUNCTIONS_URL}/send-sms`,
-        { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 }
+        { headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_ANON_KEY }, timeout: 10000 }
       )
       const credits = res.data?.credits ?? 0
       // Cache locally

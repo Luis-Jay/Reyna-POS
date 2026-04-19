@@ -3,7 +3,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 const SUPABASE_URL         = Deno.env.get('SUPABASE_URL') ?? ''
 const SUPABASE_SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 const SEMAPHORE_API_KEY    = Deno.env.get('SEMAPHORE_API_KEY') ?? ''
-const SEMAPHORE_SENDER     = Deno.env.get('SEMAPHORE_SENDER_NAME') ?? 'REYNA'
+const SEMAPHORE_SENDER     = Deno.env.get('SEMAPHORE_SENDER_NAME') ?? ''
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -62,11 +62,12 @@ Deno.serve(async (req) => {
         apikey: SEMAPHORE_API_KEY,
         number: phone,
         message,
-        sendername: SEMAPHORE_SENDER,
+        ...(SEMAPHORE_SENDER ? { sendername: SEMAPHORE_SENDER } : {}),
       }),
     })
 
     const semaphoreData = await semaphoreRes.json().catch(() => null)
+    console.log('Semaphore status:', semaphoreRes.status, 'response:', JSON.stringify(semaphoreData))
     const success = semaphoreRes.ok
 
     // Log the send attempt
@@ -85,7 +86,7 @@ Deno.serve(async (req) => {
         .from('businesses')
         .update({ sms_credits: updated.sms_credits + 1 })
         .eq('id', business.id)
-      return json({ error: 'SMS delivery failed. Credit refunded.' }, 502)
+      return json({ error: `SMS delivery failed (${semaphoreRes.status}): ${JSON.stringify(semaphoreData)}. Credit refunded.` }, 502)
     }
 
     return json({ success: true, credits_remaining: updated.sms_credits })

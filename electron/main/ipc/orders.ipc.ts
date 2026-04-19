@@ -219,7 +219,7 @@ export function registerOrderHandlers() {
 
     db.transaction(() => {
       // Mark order as void
-      db.prepare(`UPDATE orders SET status = 'void', updated_at = datetime('now') WHERE id = ?`).run(id)
+      db.prepare(`UPDATE orders SET status = 'void' WHERE id = ?`).run(id)
 
       // Restore inventory
       for (const item of items) {
@@ -277,7 +277,7 @@ export function registerOrderHandlers() {
       }
 
       if (isFullRefund) {
-        db.prepare(`UPDATE orders SET status = 'void', updated_at = datetime('now') WHERE id = ?`).run(orderId)
+        db.prepare(`UPDATE orders SET status = 'void' WHERE id = ?`).run(orderId)
         if (order.is_credit && order.debtor_id) {
           db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_credit = MAX(0, total_credit - ?) WHERE id = ?`)
             .run(order.total, order.total, order.debtor_id)
@@ -287,7 +287,7 @@ export function registerOrderHandlers() {
       } else {
         // Partial — append a note, reverse partial debtor balance if credit
         const noteAppend = `Partial refund ₱${refundTotal.toFixed(2)} (${refundItems.length} item${refundItems.length > 1 ? 's' : ''})`
-        db.prepare(`UPDATE orders SET note = COALESCE(NULLIF(note,'') || ' | ', '') || ?, updated_at = datetime('now') WHERE id = ?`)
+        db.prepare(`UPDATE orders SET note = COALESCE(NULLIF(note,'') || ' | ', '') || ? WHERE id = ?`)
           .run(noteAppend, orderId)
         if (order.is_credit && order.debtor_id) {
           db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_credit = MAX(0, total_credit - ?) WHERE id = ?`)

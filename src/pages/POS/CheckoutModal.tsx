@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X, Tag, User, Star, CreditCard } from 'lucide-react'
+import JsBarcode from 'jsbarcode'
 import { useCartStore } from '../../stores/cart.store'
 import { useAuthStore } from '../../stores/auth.store'
 import { formatCurrency } from '../../utils/format'
@@ -58,6 +59,7 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
   const [completedOrder, setCompletedOrder] = useState<any>(null)
   const [printError, setPrintError] = useState('')
   const [printing, setPrinting] = useState(false)
+  const [storeSettings, setStoreSettings] = useState<Record<string, string>>({})
 
   // Loyalty
   const [loyaltyEnabled, setLoyaltyEnabled] = useState(false)
@@ -69,6 +71,7 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
 
   useEffect(() => {
     window.api.settings.getAll().then((s: any) => {
+      setStoreSettings(s)
       setLoyaltyEnabled(s['loyalty_enabled'] === 'true')
       setLoyaltyRate(parseFloat(s['loyalty_rate'] || '1'))
       setVatEnabled(s['vat_enabled'] === 'true')
@@ -410,37 +413,22 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
       {/* Receipt Preview */}
       {showReceiptPreview && completedOrder && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="px-6 pt-5 pb-3 border-b text-center">
               <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2">
                 <span className="text-2xl">✓</span>
               </div>
-              <h3 className="text-lg font-bold text-gray-800">Sale Complete</h3>
-              <p className="text-sm text-gray-500">Order #{completedOrder.order_number}</p>
+              <h3 className="text-lg font-bold text-gray-800">Receipt Preview</h3>
+              <p className="text-sm text-gray-500">Confirm this is what will print</p>
             </div>
-            <div className="px-6 py-4 space-y-1 max-h-48 overflow-y-auto text-sm">
-              {completedOrder.items?.map((item: any, i: number) => (
-                <div key={i} className="flex justify-between text-gray-700">
-                  <span className="truncate mr-2">{item.name} × {item.quantity}</span>
-                  <span className="shrink-0 font-medium">₱{(item.subtotal || 0).toFixed(2)}</span>
-                </div>
-              ))}
-              {vatEnabled && vatAmount > 0 && (
-                <div className="flex justify-between text-gray-500 pt-1 border-t mt-1">
-                  <span>VAT ({vatRate}%)</span>
-                  <span>₱{vatAmount.toFixed(2)}</span>
-                </div>
-              )}
-              <div className="flex justify-between font-bold text-gray-800 pt-2 border-t">
-                <span>Total</span>
-                <span>₱{(completedOrder.total || 0).toFixed(2)}</span>
-              </div>
-              {!isCredit && (
-                <div className="flex justify-between text-green-600 font-medium">
-                  <span>Change</span>
-                  <span>₱{(completedOrder.change_amount || 0).toFixed(2)}</span>
-                </div>
-              )}
+            <div className="px-6 py-5 bg-[#f3f4f6]">
+              <ReceiptPreviewSheet
+                order={completedOrder}
+                cashierName={user?.name || 'Cashier'}
+                storeSettings={storeSettings}
+                vatEnabled={vatEnabled}
+                vatRate={vatRate}
+              />
             </div>
             {printError && (
               <p className="px-6 pb-2 text-xs text-red-500 text-center">{printError}</p>
@@ -498,4 +486,168 @@ function SplitInput({ label, value, onChange }: { label: string; value: string; 
       />
     </div>
   )
+}
+
+function ReceiptPreviewSheet({
+  order,
+  cashierName,
+  storeSettings,
+  vatEnabled,
+  vatRate,
+}: {
+  order: any
+  cashierName: string
+  storeSettings: Record<string, string>
+  vatEnabled: boolean
+  vatRate: number
+}) {
+  const barcodeRef = useRef<SVGSVGElement>(null)
+  const createdAt = new Date(order.created_at || Date.now()).toLocaleString('en-PH', {
+    timeZone: 'Asia/Manila',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+
+  useEffect(() => {
+    const svg = barcodeRef.current
+    if (!svg || !order?.order_number) return
+    try {
+      JsBarcode(svg, order.order_number, {
+        format: 'CODE128',
+        displayValue: false,
+        background: '#ffffff',
+        lineColor: '#111111',
+        width: 1.5,
+        height: 44,
+        margin: 0,
+      })
+    } catch {
+      svg.innerHTML = ''
+    }
+  }, [order?.order_number])
+
+  const payments = Array.isArray(order?.payment_breakdown) ? order.payment_breakdown : []
+  const subtotal = Number(order?.subtotal || order?.total || 0)
+  const discount = Number(order?.discount || 0)
+  const total = Number(order?.total || 0)
+  // vatAmount = total - (subtotal after discount); must account for discount in the formula
+  const vatAmount = vatEnabled ? Math.max(0, total - (subtotal - discount)) : 0
+  const hasBreakdown = discount > 0 || vatAmount > 0
+
+  return (
+    <div className="mx-auto w-full max-w-[320px] rounded-[24px] bg-white px-6 py-7 font-sans text-[#111] shadow-lg">
+      <div className="text-center">
+        <p className="text-[20px] font-black uppercase tracking-tight">{storeSettings['store_name'] || 'SUPERMARKET'}</p>
+        {storeSettings['store_address'] && <p className="mt-1 text-[11px] leading-4">{storeSettings['store_address']}</p>}
+        {storeSettings['store_phone'] && <p className="mt-1 text-[11px] leading-4">Tel.: {storeSettings['store_phone']}</p>}
+        {storeSettings['store_tin'] && <p className="mt-1 text-[11px] leading-4">TIN: {storeSettings['store_tin']}</p>}
+      </div>
+
+      <Divider />
+
+      <div className="space-y-1 text-[12px]">
+        <ReceiptInfoRow label="Cashier:" value={cashierName} />
+        <ReceiptInfoRow label="Receipt #:" value={order?.order_number || 'N/A'} />
+        <ReceiptInfoRow label="Date:" value={createdAt} />
+        {order?.customer_name && <ReceiptInfoRow label="Customer:" value={order.customer_name} />}
+      </div>
+
+      <Divider />
+
+      <div className="grid grid-cols-[1fr_40px_72px] gap-2 text-[12px] font-medium">
+        <span>Name</span>
+        <span className="text-center">Qty</span>
+        <span className="text-right">Price</span>
+      </div>
+
+      <div className="mt-4 space-y-2 text-[12px]">
+        {(order?.items || []).map((item: any, index: number) => (
+          <div key={index} className="grid grid-cols-[1fr_40px_72px] gap-2 items-start">
+            <span className="leading-4">{item.name}</span>
+            <span className="text-center">{Number(item.quantity || 0) % 1 === 0 ? item.quantity : Number(item.quantity || 0).toFixed(2)}</span>
+            <span className="text-right">{formatCurrency(item.subtotal || 0).replace('₱', '₱')}</span>
+          </div>
+        ))}
+      </div>
+
+      <Divider />
+
+      <div className="space-y-1 text-[12px]">
+        {hasBreakdown && (
+          <div className="flex justify-between">
+            <span>Subtotal</span>
+            <span>{formatCurrency(subtotal)}</span>
+          </div>
+        )}
+        {discount > 0 && (
+          <div className="flex justify-between text-green-700">
+            <span>Discount</span>
+            <span>- {formatCurrency(discount)}</span>
+          </div>
+        )}
+        {vatAmount > 0 && (
+          <div className="flex justify-between">
+            <span>VAT ({vatRate}%)</span>
+            <span>{formatCurrency(vatAmount)}</span>
+          </div>
+        )}
+        <div className="flex items-baseline justify-between text-[17px] font-black">
+          <span>{hasBreakdown ? 'Total' : 'Sub Total'}</span>
+          <span>{formatCurrency(total)}</span>
+        </div>
+        {payments.length > 0 ? payments.map((entry: any, index: number) => (
+          <div key={index} className="flex justify-between uppercase">
+            <span>{entry.method === 'gcash' ? 'GCASH' : entry.method === 'card' ? 'CARD' : 'CASH'}</span>
+            <span>{formatCurrency(entry.amount || 0)}</span>
+          </div>
+        )) : (
+          !order?.is_credit && (
+            <div className="flex justify-between uppercase">
+              <span>Cash</span>
+              <span>{formatCurrency(order?.payment_amount || 0)}</span>
+            </div>
+          )
+        )}
+        {!order?.is_credit && Number(order?.change_amount || 0) > 0 && (
+          <div className="flex justify-between uppercase">
+            <span>Change</span>
+            <span>{formatCurrency(order.change_amount || 0)}</span>
+          </div>
+        )}
+        {order?.is_credit && (
+          <div className="flex justify-between uppercase">
+            <span>Payment</span>
+            <span>Charge to Account</span>
+          </div>
+        )}
+      </div>
+
+      <div className="mx-auto my-5 w-40 border-t border-dotted border-[#777]" />
+
+      <div className="flex justify-center">
+        <svg ref={barcodeRef} className="max-w-full" />
+      </div>
+
+      <div className="mt-4 text-center">
+        <p className="text-[17px] font-black uppercase">Thank You!</p>
+        <p className="text-[12px]">{storeSettings['receipt_footer'] || 'Glad to see you again!'}</p>
+      </div>
+    </div>
+  )
+}
+
+function ReceiptInfoRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-start justify-between gap-3">
+      <span>{label}</span>
+      <span className="text-right">{value}</span>
+    </div>
+  )
+}
+
+function Divider() {
+  return <div className="my-4 border-t border-dotted border-[#777]" />
 }

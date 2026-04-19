@@ -312,8 +312,19 @@ export default function SettingsPage() {
             </div>
             <div className="py-3">
               <label className="block text-sm font-medium text-gray-700 mb-1">TIN (Tax Identification Number)</label>
-              <input value={settings['store_tin'] || ''} onChange={e => set('store_tin', e.target.value)}
+              <input
+                value={settings['store_tin'] || ''}
+                onChange={e => {
+                  // Strip non-digits, limit to 12 digits, auto-insert dashes: 000-000-000-000
+                  const digits = e.target.value.replace(/\D/g, '').slice(0, 12)
+                  const formatted = digits
+                    .replace(/^(\d{3})(\d)/, '$1-$2')
+                    .replace(/^(\d{3}-\d{3})(\d)/, '$1-$2')
+                    .replace(/^(\d{3}-\d{3}-\d{3})(\d)/, '$1-$2')
+                  set('store_tin', formatted)
+                }}
                 placeholder="000-000-000-000"
+                maxLength={15}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
               <p className="mt-1 text-xs text-gray-500">Printed on official receipts.</p>
             </div>

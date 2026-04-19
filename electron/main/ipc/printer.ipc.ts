@@ -36,17 +36,33 @@ function getPrinterSettings() {
   }
 }
 
+async function listSystemPrinters() {
+  const win = BrowserWindow.getFocusedWindow() || BrowserWindow.getAllWindows()[0]
+  if (!win) return []
+  try {
+    return await win.webContents.getPrintersAsync()
+  } catch {
+    return []
+  }
+}
+
+async function resolvePrinterInterface(printerInterface: string) {
+  if (printerInterface.startsWith('system:')) return printerInterface
+  if (printerInterface) return printerInterface
+
+  const printers = await listSystemPrinters()
+  const defaultPrinter = printers.find((printer: any) => printer.isDefault)
+  if (defaultPrinter?.name) return `system:${defaultPrinter.name}`
+  if (printers.length === 1 && printers[0]?.name) return `system:${printers[0].name}`
+
+  return ''
+}
+
 export function registerPrinterHandlers() {
   ipcMain.handle(IPC.PRINTER.GET_STATUS, () => printerStatus)
 
   ipcMain.handle(IPC.PRINTER.LIST_PRINTERS, async () => {
-    const win = BrowserWindow.getFocusedWindow()
-    if (!win) return []
-    try {
-      return await win.webContents.getPrintersAsync()
-    } catch {
-      return []
-    }
+    return await listSystemPrinters()
   })
 
   ipcMain.handle(IPC.PRINTER.SET_CONFIG, (_, config: any) => {
@@ -65,7 +81,8 @@ export function registerPrinterHandlers() {
 
   ipcMain.handle(IPC.PRINTER.PRINT_RECEIPT, async (_, order: any) => {
     const { thermalEnabled, storeName, storeAddress, storePhone, storeTin, receiptFooter, printerInterface } = getPrinterSettings()
-    const preferSystemPrinter = printerInterface.startsWith('system:')
+    const effectivePrinterInterface = await resolvePrinterInterface(printerInterface)
+    const preferSystemPrinter = effectivePrinterInterface.startsWith('system:')
 
     if (thermalEnabled && !preferSystemPrinter) {
       try {
@@ -78,7 +95,7 @@ export function registerPrinterHandlers() {
       } catch (err: any) {
         const fallbackResult = await printHtmlReceipt(order, {
           storeName, storeAddress, storePhone, storeTin, receiptFooter,
-        }, printerInterface)
+        }, effectivePrinterInterface)
 
         if (fallbackResult.success) {
           printerStatus.connected = true
@@ -100,9 +117,9 @@ export function registerPrinterHandlers() {
 
     const result = await printHtmlReceipt(order, {
       storeName, storeAddress, storePhone, storeTin, receiptFooter,
-    }, printerInterface)
+    }, effectivePrinterInterface)
 
-    const systemDevice = printerInterface.startsWith('system:') ? printerInterface.replace('system:', '') : 'system-dialog'
+    const systemDevice = effectivePrinterInterface.startsWith('system:') ? effectivePrinterInterface.replace('system:', '') : 'system-dialog'
     if (!result.success) {
       printerStatus.connected = false
       printerStatus.error = result.error || 'Print failed'
@@ -121,7 +138,8 @@ export function registerPrinterHandlers() {
   ipcMain.handle(IPC.PRINTER.TEST_PAGE, async () => {
     try {
       const { thermalEnabled, printerInterface } = getPrinterSettings()
-      const preferSystemPrinter = printerInterface.startsWith('system:')
+      const effectivePrinterInterface = await resolvePrinterInterface(printerInterface)
+      const preferSystemPrinter = effectivePrinterInterface.startsWith('system:')
       if (thermalEnabled && !preferSystemPrinter) {
         const testSettings = getPrinterSettings()
         await printThermal({ test: true }, { storeName: testSettings.storeName, storeAddress: testSettings.storeAddress, storePhone: testSettings.storePhone, storeTin: testSettings.storeTin, receiptFooter: testSettings.receiptFooter })
@@ -136,7 +154,7 @@ export function registerPrinterHandlers() {
           storePhone: testSettings.storePhone,
           storeTin: testSettings.storeTin,
           receiptFooter: testSettings.receiptFooter,
-        }, printerInterface)
+        }, effectivePrinterInterface)
         if (!result.success) throw new Error(result.error || 'Print failed')
         printerStatus.connected = true
         printerStatus.type = 'system'
@@ -240,8 +258,21 @@ function buildReceiptHtml(
     }
   }
 
-  const discountRow = !order?.test && Number(order?.discount || 0) > 0
-    ? `<div class="summary-row"><span>Discount</span><span>- ${escapeHtml(formatPeso(order.discount))}</span></div>`
+  const orderDiscount = Number(order?.discount || 0)
+  const orderSubtotal = Number(order?.subtotal || order?.total || 0)
+  const orderTotal = Number(order?.total || 0)
+  // Derive VAT from the difference: total = (subtotal - discount) + vat
+  const impliedVat = Math.max(0, orderTotal - (orderSubtotal - orderDiscount))
+  const hasBreakdown = orderDiscount > 0 || impliedVat > 0.005
+
+  const discountRow = !order?.test && orderDiscount > 0
+    ? `<div class="summary-row"><span>Discount</span><span>- ${escapeHtml(formatPeso(orderDiscount))}</span></div>`
+    : ''
+  const subtotalRow = !order?.test && hasBreakdown
+    ? `<div class="summary-row"><span>Subtotal</span><span>${escapeHtml(formatPeso(orderSubtotal))}</span></div>`
+    : ''
+  const vatRow = !order?.test && impliedVat > 0.005
+    ? `<div class="summary-row"><span>VAT</span><span>${escapeHtml(formatPeso(impliedVat))}</span></div>`
     : ''
 
   const noteRow = order?.note
@@ -289,8 +320,10 @@ function buildReceiptHtml(
       <tbody>${itemsHtml}</tbody>
     </table>
     <div class="divider"></div>
+    ${subtotalRow}
     ${discountRow}
-    <div class="summary-row subtotal"><span>Sub Total</span><span>${escapeHtml(formatPeso(order?.total))}</span></div>
+    ${vatRow}
+    <div class="summary-row subtotal"><span>${hasBreakdown ? 'Total' : 'Sub Total'}</span><span>${escapeHtml(formatPeso(order?.total))}</span></div>
     ${paymentRows}
     ${noteRow}
     <div class="short-divider"></div>
@@ -310,62 +343,63 @@ function buildReceiptHtml(
         color: #000;
         font-family: Arial, Helvetica, sans-serif;
         font-size: 12px;
-        line-height: 1.4;
+        line-height: 1.35;
       }
       .receipt {
-        width: 76mm;
+        width: 72mm;
         max-width: 100%;
         margin: 0 auto;
-        padding: 10px 8px 20px;
+        padding: 8px 6px 18px;
       }
       .center { text-align: center; }
       .store-name {
-        font-size: 20px;
+        font-size: 18px;
         font-weight: 900;
-        text-decoration: underline;
-        letter-spacing: 0.02em;
-        margin-bottom: 2px;
+        text-transform: uppercase;
+        letter-spacing: 0.01em;
+        margin-bottom: 3px;
       }
-      .store-info { font-size: 11px; line-height: 1.6; }
+      .store-info { font-size: 11px; line-height: 1.45; }
       .divider {
         border: none;
         border-top: 1px dotted #777;
-        margin: 7px 0;
+        margin: 10px 0;
       }
       .short-divider {
         border: none;
         border-top: 1px dotted #777;
-        width: 55%;
-        margin: 8px auto;
+        width: 60%;
+        margin: 12px auto 10px;
       }
       .info-row {
         display: flex;
         justify-content: space-between;
         font-size: 12px;
-        margin: 1px 0;
+        margin: 2px 0;
+        gap: 10px;
       }
-      table { width: 100%; border-collapse: collapse; margin: 3px 0; }
-      th, td { padding: 2px 0; vertical-align: top; font-size: 12px; }
+      table { width: 100%; border-collapse: collapse; margin: 8px 0 10px; }
+      th, td { padding: 4px 0; vertical-align: top; font-size: 12px; }
       th { font-weight: 700; }
       .name-col { text-align: left; }
-      .qty-col  { text-align: center; width: 32px; }
+      .qty-col  { text-align: center; width: 40px; }
       .price-col { text-align: right; width: 70px; white-space: nowrap; }
       .summary-row {
         display: flex;
         justify-content: space-between;
-        margin: 2px 0;
+        margin: 3px 0;
         font-size: 12px;
       }
       .summary-row.subtotal {
-        font-size: 15px;
-        font-weight: 700;
-        margin: 4px 0 3px;
+        font-size: 18px;
+        font-weight: 900;
+        margin: 6px 0 5px;
       }
       .barcode-wrap { text-align: center; margin: 4px 0 2px; }
       .barcode-wrap svg { max-width: 100%; }
       .barcode-text { font-family: monospace; font-size: 13px; letter-spacing: 0.1em; margin: 6px 0; }
-      .thank-you { font-size: 15px; font-weight: 700; letter-spacing: 0.05em; margin-top: 4px; }
-      .footer-msg { font-size: 11px; margin-top: 2px; }
+      .thank-you { font-size: 18px; font-weight: 900; letter-spacing: 0.03em; margin-top: 6px; text-transform: uppercase; }
+      .footer-msg { font-size: 12px; margin-top: 3px; }
       .section-gap { margin: 16px 0; }
       .note { font-size: 11px; margin-top: 4px; }
       @page { margin: 4mm; size: auto; }
@@ -494,11 +528,22 @@ async function printThermal(order: any, store: { storeName: string; storeAddress
       printer.text(divider)
 
       // ── Totals ─────────────────────────────────────────────────────────────
-      if (Number(order.discount || 0) > 0) {
-        printer.text(rowLine('Discount', `- ${formatPeso(order.discount)}`, colWidth))
+      const tDiscount = Number(order.discount || 0)
+      const tSubtotal = Number(order.subtotal || order.total || 0)
+      const tTotal = Number(order.total || 0)
+      const tVat = Math.max(0, tTotal - (tSubtotal - tDiscount))
+      const tHasBreakdown = tDiscount > 0 || tVat > 0.005
+      if (tHasBreakdown) {
+        printer.text(rowLine('Subtotal', formatPeso(tSubtotal), colWidth))
+      }
+      if (tDiscount > 0) {
+        printer.text(rowLine('Discount', `- ${formatPeso(tDiscount)}`, colWidth))
+      }
+      if (tVat > 0.005) {
+        printer.text(rowLine('VAT', formatPeso(tVat), colWidth))
       }
       printer.style(true, false, false)
-      printer.text(rowLine('Sub Total', formatPeso(order.total), colWidth))
+      printer.text(rowLine(tHasBreakdown ? 'Total' : 'Sub Total', formatPeso(tTotal), colWidth))
       printer.style(false, false, false)
 
       // ── Payments ──────────────────────────────────────────────────────────
