@@ -64,8 +64,8 @@ const api = {
   inventory: {
     getAll:       (filter?: string)        => ipcRenderer.invoke(IPC.INVENTORY.GET_ALL, filter),
     getReport:    ()                       => ipcRenderer.invoke(IPC.INVENTORY.GET_REPORT),
-    addStock:     (productId: string, qty: number, note?: string) =>
-                    ipcRenderer.invoke(IPC.INVENTORY.ADD_STOCK, productId, qty, note),
+    addStock:     (productId: string, qty: number, note?: string, pricing?: any) =>
+                    ipcRenderer.invoke(IPC.INVENTORY.ADD_STOCK, productId, qty, note, pricing),
     setStock:     (productId: string, qty: number, note?: string) =>
                     ipcRenderer.invoke(IPC.INVENTORY.SET_STOCK, productId, qty, note),
     getMovements: (productId: string)      => ipcRenderer.invoke(IPC.INVENTORY.GET_MOVEMENTS, productId),

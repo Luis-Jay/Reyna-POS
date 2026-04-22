@@ -5,6 +5,7 @@ import { v4 as uuid } from 'uuid'
 import { getCurrentProductImagesDir, getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
+import { addStockBatch } from '../services/stock-batches.service'
 
 export function registerProductHandlers() {
   // GET ALL with optional filters
@@ -89,6 +90,13 @@ export function registerProductHandlers() {
       // Init inventory record
       db.prepare(`INSERT INTO inventory (id, product_id, quantity) VALUES (?, ?, ?)`)
         .run(uuid(), id, data.initial_stock || 0)
+      addStockBatch(db, id, {
+        quantity: data.initial_stock || 0,
+        unitCost: data.base_cost || 0,
+        retailPrice: data.retail_price ?? data.base_price ?? 0,
+        wholesalePrice: data.wholesale_price ?? data.retail_price ?? data.base_price ?? 0,
+        note: 'Initial stock',
+      })
     })
     tx()
     scheduleAutoSync()
@@ -308,6 +316,13 @@ export function registerProductHandlers() {
 
         db.prepare(`INSERT INTO inventory (id, product_id, quantity) VALUES (?, ?, ?)`)
           .run(uuid(), id, stock)
+        addStockBatch(db, id, {
+          quantity: stock,
+          unitCost: cost,
+          retailPrice,
+          wholesalePrice,
+          note: 'Imported stock',
+        })
 
         created++
       }

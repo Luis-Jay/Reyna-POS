@@ -158,7 +158,10 @@ export interface InventoryItem {
   product_image?: string
   image_path?: string
   barcode?: string | null
+  base_price?: number
   base_cost?: number
+  retail_price?: number
+  wholesale_price?: number
   quantity: number
   low_threshold: number
   monthly_sold: number

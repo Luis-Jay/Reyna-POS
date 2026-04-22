@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
+import { consumeStockBatches, restoreStockBatch } from '../services/stock-batches.service'
 
 function mapOrder(order: any) {
   if (!order) return order
@@ -78,6 +79,7 @@ export function registerOrderHandlers() {
               INSERT INTO stock_movements (id, product_id, type, quantity, reference_id)
               VALUES (?, ?, 'sale', ?, ?)
             `).run(uuid(), item.product_id, -item.quantity, orderId)
+            consumeStockBatches(db, item.product_id, item.quantity)
           }
           db.prepare(`UPDATE products SET monthly_sold = monthly_sold + ? WHERE id = ?`)
             .run(item.quantity, item.product_id)
@@ -228,6 +230,7 @@ export function registerOrderHandlers() {
           .run(item.quantity, item.product_id)
         db.prepare(`INSERT INTO stock_movements (id, product_id, type, quantity, reference_id, note) VALUES (?, ?, 'return', ?, ?, 'Refund')`)
           .run(uuid(), item.product_id, item.quantity, id)
+        restoreStockBatch(db, item.product_id, item.quantity, item.price, item.cost || 0, 'Refund')
         db.prepare(`UPDATE products SET monthly_sold = MAX(0, monthly_sold - ?) WHERE id = ?`)
           .run(item.quantity, item.product_id)
       }
@@ -272,6 +275,7 @@ export function registerOrderHandlers() {
           .run(ri.qty, item.product_id)
         db.prepare(`INSERT INTO stock_movements (id, product_id, type, quantity, reference_id, note) VALUES (?, ?, 'return', ?, ?, ?)`)
           .run(uuid(), item.product_id, ri.qty, orderId, isFullRefund ? 'Full refund' : 'Partial refund')
+        restoreStockBatch(db, item.product_id, ri.qty, item.price, item.cost || 0, isFullRefund ? 'Full refund' : 'Partial refund')
         db.prepare(`UPDATE products SET monthly_sold = MAX(0, monthly_sold - ?) WHERE id = ?`)
           .run(ri.qty, item.product_id)
       }

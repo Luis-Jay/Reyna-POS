@@ -14,6 +14,8 @@ interface OrderForm {
   product_name: string
   barcode: string | null
   base_cost: number
+  retail_price: number
+  wholesale_price: number
 }
 
 interface PendingOrder {
@@ -46,9 +48,12 @@ export default function InventoryPage() {
   const [vendorName, setVendorName] = useState('')
   const [orderQty, setOrderQty] = useState('1')
   const [orderCost, setOrderCost] = useState('')
+  const [orderRetailPrice, setOrderRetailPrice] = useState('')
+  const [orderWholesalePrice, setOrderWholesalePrice] = useState('')
   const [orderExpected, setOrderExpected] = useState('')
   const [orderNotes, setOrderNotes] = useState('')
   const [placingOrder, setPlacingOrder] = useState(false)
+  const [batchPricingAvailable, setBatchPricingAvailable] = useState(false)
 
   // Pending orders sheet
   const [showPending, setShowPending] = useState(false)
@@ -130,6 +135,14 @@ export default function InventoryPage() {
   }
 
   useEffect(() => { load() }, [filter, search])
+  useEffect(() => {
+    Promise.all([
+      window.api.activation.getStatus(),
+      window.api.settings.getAll(),
+    ]).then(([activation, settings]: any[]) => {
+      setBatchPricingAvailable(activation?.activated === true && settings?.batch_pricing_enabled === 'true')
+    }).catch(() => setBatchPricingAvailable(false))
+  }, [])
 
   const openEdit = (productId: string) => {
     setEditingId(productId)
@@ -157,10 +170,14 @@ export default function InventoryPage() {
       product_name: item.product_name,
       barcode: item.barcode ?? null,
       base_cost: item.base_cost ?? 0,
+      retail_price: item.retail_price ?? item.base_price ?? 0,
+      wholesale_price: item.wholesale_price ?? item.retail_price ?? item.base_price ?? 0,
     })
     setVendorName('')
     setOrderQty('1')
     setOrderCost(String(item.base_cost ?? 0))
+    setOrderRetailPrice(String(item.retail_price ?? item.base_price ?? 0))
+    setOrderWholesalePrice(String(item.wholesale_price ?? item.retail_price ?? item.base_price ?? 0))
     setOrderExpected('')
     setOrderNotes('')
   }
@@ -174,6 +191,8 @@ export default function InventoryPage() {
         vendor_name: vendorName || null,
         quantity: parseFloat(orderQty) || 0,
         unit_cost: parseFloat(orderCost) || 0,
+        retail_price: batchPricingAvailable ? parseFloat(orderRetailPrice) || 0 : null,
+        wholesale_price: batchPricingAvailable ? parseFloat(orderWholesalePrice) || 0 : null,
         expected_at: orderExpected || null,
         notes: orderNotes || null,
       })
@@ -358,7 +377,7 @@ export default function InventoryPage() {
       {/* ── Place Order Modal ── */}
       {orderForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b border-gray-100">
               <div>
                 <p className="text-xs font-semibold text-blue-500 uppercase tracking-wide">Add Order</p>
@@ -388,6 +407,48 @@ export default function InventoryPage() {
                   <label className="text-xs font-medium text-gray-500 block mb-1">Unit Cost (₱)</label>
                   <input type="number" min="0" step="0.01" value={orderCost} onChange={e => setOrderCost(e.target.value)}
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                </div>
+              </div>
+
+              <div className={`rounded-xl border p-3 ${batchPricingAvailable ? 'border-emerald-100 bg-emerald-50/60' : 'border-amber-100 bg-amber-50/70'}`}>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wide text-gray-700">Batch Price Management</p>
+                    <p className="text-xs text-gray-500">
+                      {batchPricingAvailable
+                        ? 'This price becomes active after older stock is sold out.'
+                        : 'Pro feature. Enable Reyna Pro and Batch Price Management in Settings.'}
+                    </p>
+                  </div>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${batchPricingAvailable ? 'bg-emerald-600 text-white' : 'bg-amber-200 text-amber-800'}`}>
+                    {batchPricingAvailable ? 'PRO ON' : 'PRO'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 block mb-1">New Retail Price (₱)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={orderRetailPrice}
+                      onChange={e => setOrderRetailPrice(e.target.value)}
+                      disabled={!batchPricingAvailable}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:bg-white/60 disabled:text-gray-400"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 block mb-1">New Wholesale (₱)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={orderWholesalePrice}
+                      onChange={e => setOrderWholesalePrice(e.target.value)}
+                      disabled={!batchPricingAvailable}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:bg-white/60 disabled:text-gray-400"
+                    />
+                  </div>
                 </div>
               </div>
 

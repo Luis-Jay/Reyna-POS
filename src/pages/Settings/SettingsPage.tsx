@@ -368,6 +368,7 @@ export default function SettingsPage() {
           <Section title="Feature Controls">
             <SectionInner label="Inventory & Profit">
               <Select setting="inventory_enabled" label="Enable Inventory, Profit & Cost Tracking" options={yesNo} />
+              <Select setting="batch_pricing_enabled" label="Batch Price Management (Pro)" options={noYes} />
             </SectionInner>
             <SectionInner label="Cashier Permissions">
               <Select setting="cashier_manage_debtors" label="Allow Cashier to Manage Debtors" options={noYes} />

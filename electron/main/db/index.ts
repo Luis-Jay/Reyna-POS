@@ -272,7 +272,7 @@ INSERT OR IGNORE INTO users (id, name, pin, role) VALUES ('admin-001', 'Admin', 
 INSERT OR IGNORE INTO categories (id, name, sort_order) VALUES ('cat-candy','Candy',1),('cat-chichirya','Chichirya',2),('cat-cigs','Cigarettes',3),('cat-foods','Foods',4),('cat-laundry','Laundry',5),('cat-morning','Morning items',6),('cat-seasoning','Seasoning',7);
 INSERT OR IGNORE INTO variation_groups (id, name) VALUES ('vg-size','Size'),('vg-drinks','Drinks');
 INSERT OR IGNORE INTO variation_options (id, group_id, name, price, cost, sort_order) VALUES ('vo-small','vg-size','Small',35,25,1),('vo-medium','vg-size','Medium',45,35,2),('vo-large','vg-size','Large',55,45,3),('vo-swakto','vg-drinks','Swakto',0,0,1),('vo-mismo','vg-drinks','Mismo',0,0,2),('vo-litrog','vg-drinks','Litro - Glass',0,0,3),('vo-litrop','vg-drinks','Litro - Plastic',0,0,4),('vo-1p5l','vg-drinks','1.5 L',0,0,5),('vo-1p75l','vg-drinks','1.75 L',0,0,6);
-INSERT OR IGNORE INTO settings (key, value) VALUES ('store_name','Reyna Store'),('thermal_enabled','false'),('paper_size','58mm'),('printer_interface',''),('inventory_enabled','true'),('cashier_manage_debtors','false'),('buyer_page_enabled','true'),('oos_blocking','true'),('sound_alerts','true'),('store_closed','false'),('ai_image_recognition','false'),('cloud_sync_url',''),('cloud_sync_enabled','false');
+INSERT OR IGNORE INTO settings (key, value) VALUES ('store_name','Reyna Store'),('thermal_enabled','false'),('paper_size','58mm'),('printer_interface',''),('inventory_enabled','true'),('cashier_manage_debtors','false'),('buyer_page_enabled','true'),('oos_blocking','true'),('sound_alerts','true'),('store_closed','false'),('ai_image_recognition','false'),('cloud_sync_url',''),('cloud_sync_enabled','false'),('batch_pricing_enabled','false');
     `,
   },
   {
@@ -469,6 +469,61 @@ CREATE TABLE IF NOT EXISTS product_orders (
     `,
   },
   {
+    name: '018_stock_batches.sql',
+    sql: `
+CREATE TABLE IF NOT EXISTS stock_batches (
+  id                 TEXT PRIMARY KEY,
+  product_id         TEXT NOT NULL REFERENCES products(id),
+  initial_quantity   REAL NOT NULL DEFAULT 0,
+  remaining_quantity REAL NOT NULL DEFAULT 0,
+  unit_cost          REAL NOT NULL DEFAULT 0,
+  retail_price       REAL NOT NULL DEFAULT 0,
+  wholesale_price    REAL,
+  source_order_id    TEXT REFERENCES product_orders(id),
+  note               TEXT,
+  received_at        TEXT NOT NULL DEFAULT (datetime('now')),
+  created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_stock_batches_product
+ON stock_batches(product_id, remaining_quantity, received_at);
+
+INSERT INTO stock_batches (
+  id, product_id, initial_quantity, remaining_quantity,
+  unit_cost, retail_price, wholesale_price, note, received_at, created_at
+)
+SELECT
+  lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+  lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+  lower(hex(randomblob(6))),
+  i.product_id,
+  i.quantity,
+  i.quantity,
+  p.base_cost,
+  p.retail_price,
+  COALESCE(p.wholesale_price, p.retail_price),
+  'Opening stock batch',
+  COALESCE(i.updated_at, datetime('now')),
+  datetime('now')
+FROM inventory i
+JOIN products p ON p.id = i.product_id
+WHERE i.quantity > 0
+  AND NOT EXISTS (
+    SELECT 1 FROM stock_batches sb WHERE sb.product_id = i.product_id
+  );
+
+INSERT OR IGNORE INTO settings (key, value)
+VALUES ('batch_pricing_enabled','false');
+    `,
+  },
+  {
+    name: '019_product_order_batch_prices.sql',
+    sql: `
+ALTER TABLE product_orders ADD COLUMN retail_price REAL;
+ALTER TABLE product_orders ADD COLUMN wholesale_price REAL;
+    `,
+  },
+  {
     name: '007_customer_views.sql',
     sql: `
 DROP VIEW IF EXISTS customers;
@@ -549,6 +604,13 @@ function runMigrations(database: Database.Database) {
     }
     if (migrationName === '014_debtor_credit_limit.sql') {
       return hasColumn('debtors', 'credit_limit')
+    }
+    if (migrationName === '018_stock_batches.sql') {
+      const table = database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'stock_batches'`).get()
+      return !!table
+    }
+    if (migrationName === '019_product_order_batch_prices.sql') {
+      return hasColumn('product_orders', 'retail_price') && hasColumn('product_orders', 'wholesale_price')
     }
     return false
   }

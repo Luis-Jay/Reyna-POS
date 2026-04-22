@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
+import { addStockBatch, consumeStockBatches } from '../services/stock-batches.service'
 
 function getStatus(qty: number, threshold: number): string {
   if (qty <= 0) return 'out'
@@ -38,7 +39,8 @@ export function registerInventoryHandlers() {
     const db = getDb()
     let query = `
       SELECT i.*, p.name as product_name, p.image_path, p.monthly_sold,
-             p.track_inventory, p.is_active, p.base_price, p.base_cost, p.barcode
+             p.track_inventory, p.is_active, p.base_price, p.retail_price,
+             p.wholesale_price, p.base_cost, p.barcode
       FROM inventory i
       JOIN products p ON i.product_id = p.id
       WHERE p.deleted_at IS NULL AND p.is_active = 1 AND p.track_inventory = 1
@@ -64,7 +66,7 @@ export function registerInventoryHandlers() {
     }))
   })
 
-  ipcMain.handle(IPC.INVENTORY.ADD_STOCK, (_, productId: string, qty: number, note?: string) => {
+  ipcMain.handle(IPC.INVENTORY.ADD_STOCK, (_, productId: string, qty: number, note?: string, pricing?: any) => {
     const db = getDb()
     const tx = db.transaction(() => {
       const inv: any = db.prepare(`SELECT * FROM inventory WHERE product_id = ?`).get(productId)
@@ -79,6 +81,13 @@ export function registerInventoryHandlers() {
         INSERT INTO stock_movements (id, product_id, type, quantity, note)
         VALUES (?, ?, 'restock', ?, ?)
       `).run(uuid(), productId, qty, note || null)
+      addStockBatch(db, productId, {
+        quantity: qty,
+        unitCost: pricing?.unit_cost,
+        retailPrice: pricing?.retail_price,
+        wholesalePrice: pricing?.wholesale_price,
+        note: note || 'Manual stock add',
+      })
     })
     tx()
     scheduleAutoSync()
@@ -102,6 +111,14 @@ export function registerInventoryHandlers() {
         INSERT INTO stock_movements (id, product_id, type, quantity, note)
         VALUES (?, ?, ?, ?, ?)
       `).run(uuid(), productId, diff >= 0 ? 'restock' : 'adjustment', Math.abs(diff), note || `Set to ${qty}`)
+      if (diff > 0) {
+        addStockBatch(db, productId, {
+          quantity: diff,
+          note: note || `Set stock to ${qty}`,
+        })
+      } else if (diff < 0) {
+        consumeStockBatches(db, productId, Math.abs(diff))
+      }
     })
     tx()
     scheduleAutoSync()

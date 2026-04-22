@@ -5,6 +5,7 @@ import { BarChart2, Package, Users, Tag, CreditCard, CheckCircle, Loader, Sparkl
 const FEATURES = [
   { icon: Users,         text: 'Send SMS reminders to debtors using saved contact numbers' },
   { icon: BarChart2,     text: 'Auto-generate reports like trial balance, income statement, and profit and loss' },
+  { icon: Package,       text: 'Batch price management that switches to the next stock price after old inventory sells out' },
   { icon: Package,       text: 'Unlock future premium business insights and advanced reporting tools' },
   { icon: Tag,           text: 'Keep setup and core POS access free from payment prompts at the start' },
   { icon: CreditCard,    text: 'Manage billing separately only when you want Pro-only features' },
