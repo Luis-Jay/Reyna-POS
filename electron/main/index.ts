@@ -21,6 +21,7 @@ import { registerShiftHandlers } from './ipc/shifts.ipc'
 import { registerPriceTierHandlers } from './ipc/pricetiers.ipc'
 import { registerLoyaltyHandlers } from './ipc/loyalty.ipc'
 import { registerSmsHandlers } from './ipc/sms.ipc'
+import { registerProductOrderHandlers } from './ipc/product-orders.ipc'
 import { BarcodeService } from './services/barcode.service'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
@@ -158,6 +159,7 @@ app.whenReady().then(() => {
   registerPriceTierHandlers()
   registerLoyaltyHandlers()
   registerSmsHandlers()
+  registerProductOrderHandlers()
   startAutoSync()
   initRealtime(() => scheduleAutoSync('realtime', 500))
 

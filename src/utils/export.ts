@@ -25,10 +25,13 @@ export function exportToPdf(title: string, htmlContent: string) {
         th { background: #f3f4f6; text-align: left; padding: 6px 10px; font-size: 11px; border-bottom: 2px solid #e5e7eb; }
         td { padding: 5px 10px; border-bottom: 1px solid #e5e7eb; font-size: 11px; }
         .section-title { font-size: 14px; font-weight: bold; margin: 16px 0 6px; }
-        @media print { body { padding: 0; } }
+        .print-btn { display:inline-flex; align-items:center; gap:6px; margin-bottom:16px; padding:8px 18px; background:#1a8eff; color:#fff; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer; }
+        .print-btn:hover { background:#0077e6; }
+        @media print { .print-btn { display: none; } body { padding: 0; } }
       </style>
     </head>
     <body>
+      <button class="print-btn" onclick="window.print()">🖨 Print / Save as PDF</button>
       <h1>${title}</h1>
       <p class="subtitle">Generated on ${new Date().toLocaleString('en-PH')}</p>
       ${htmlContent}
@@ -36,5 +39,4 @@ export function exportToPdf(title: string, htmlContent: string) {
     </html>
   `)
   win.document.close()
-  setTimeout(() => { win.print(); win.close() }, 400)
 }

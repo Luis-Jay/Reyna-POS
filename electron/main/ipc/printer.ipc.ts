@@ -447,6 +447,8 @@ async function printHtmlContent(html: string, printerInterface: string) {
 
   try {
     await printWindow.loadURL(`file://${tmpFile}`)
+    // Give scripts (JsBarcode) time to finish rendering before printing
+    await new Promise(resolve => setTimeout(resolve, 350))
     await new Promise<void>((resolve, reject) => {
       printWindow.webContents.print({
         silent: !!deviceName,   // silent only when a specific printer is selected
@@ -487,6 +489,7 @@ async function printThermal(order: any, store: { storeName: string; storeAddress
     const divider = '.'.repeat(colWidth)
 
     printer = new Printer(device)
+    await printer.init()
 
     // ── Header ────────────────────────────────────────────────────────────────
     printer.align('CT').style(true, false, false).size(1, 1).text(storeName)

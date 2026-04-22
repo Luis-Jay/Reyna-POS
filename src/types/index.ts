@@ -157,6 +157,8 @@ export interface InventoryItem {
   product_name: string
   product_image?: string
   image_path?: string
+  barcode?: string | null
+  base_cost?: number
   quantity: number
   low_threshold: number
   monthly_sold: number

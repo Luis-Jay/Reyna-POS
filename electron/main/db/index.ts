@@ -451,6 +451,24 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('vat_rate','12');
     `,
   },
   {
+    name: '017_product_orders.sql',
+    sql: `
+CREATE TABLE IF NOT EXISTS product_orders (
+  id           TEXT PRIMARY KEY,
+  product_id   TEXT NOT NULL REFERENCES products(id),
+  vendor_name  TEXT,
+  quantity      REAL NOT NULL DEFAULT 0,
+  unit_cost     REAL NOT NULL DEFAULT 0,
+  status       TEXT NOT NULL DEFAULT 'pending'
+               CHECK(status IN ('pending','received','cancelled')),
+  expected_at  TEXT,
+  notes        TEXT,
+  received_at  TEXT,
+  created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+    `,
+  },
+  {
     name: '007_customer_views.sql',
     sql: `
 DROP VIEW IF EXISTS customers;

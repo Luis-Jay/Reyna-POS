@@ -241,27 +241,84 @@ export default function AnalyticsPage() {
   }
 
   const handlePdfExport = () => {
-    const rows = (arr: any[], cols: string[]) =>
-      `<table><thead><tr>${cols.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>` +
-      arr.map(r => `<tr>${cols.map(c => `<td>${r[c] ?? ''}</td>`).join('')}</tr>`).join('') +
+    const p = (v: number) => `₱${v.toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+    const tbl = (headers: string[], rowsData: (string | number)[][]) =>
+      `<table><thead><tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>` +
+      rowsData.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('') +
       `</tbody></table>`
 
+    const peakHour = fullHourly.reduce((m, h) => h.count > m.count ? h : m, { hour: 0, count: 0 })
+    const fmtHour = (h: number) => `${h === 0 ? 12 : h > 12 ? h - 12 : h}:00 ${h < 12 ? 'AM' : 'PM'}`
+
     const html = `
-      <div class="section-title">Summary — ${filterLabel}</div>
-      ${rows([{
-        'Total Sales': `₱${(report?.total_sales ?? 0).toLocaleString()}`,
-        'Expenses': `₱${(report?.total_expenses ?? 0).toLocaleString()}`,
-        'Gross Profit': `₱${(report?.net_profit ?? 0).toLocaleString()}`,
-        'Net Income': `₱${(report?.net_income ?? 0).toLocaleString()}`,
-        'Orders': report?.order_count ?? 0,
-      }], ['Total Sales', 'Expenses', 'Gross Profit', 'Net Income', 'Orders'])}
-      <div class="section-title">Cashflow</div>
-      ${rows(cashflow.map(d => ({
-        Date: d.date,
-        Sales: `₱${d.sales.toLocaleString()}`,
-        Expenses: `₱${d.expenses.toLocaleString()}`,
-        'Net Income': `₱${d.net_income.toLocaleString()}`,
-      })), ['Date', 'Sales', 'Expenses', 'Net Income'])}
+      <style>
+        .kpi-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:12px; }
+        .kpi { background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 14px; }
+        .kpi-label { font-size:10px; color:#6b7280; margin-bottom:2px; }
+        .kpi-value { font-size:16px; font-weight:700; color:#111; }
+        .kpi-value.green { color:#16a34a; }
+        .kpi-value.red   { color:#dc2626; }
+        .kpi-value.blue  { color:#2563eb; }
+        .bar-row { display:flex; align-items:center; gap:8px; margin:4px 0; }
+        .bar-bg  { flex:1; height:10px; background:#f3f4f6; border-radius:4px; overflow:hidden; }
+        .bar-fill{ height:100%; background:#3b82f6; border-radius:4px; }
+      </style>
+
+      <div class="section-title">Performance Summary — ${filterLabel}</div>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-label">Total Sales</div><div class="kpi-value blue">${p(report?.total_sales ?? 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Gross Profit</div><div class="kpi-value green">${p(report?.net_profit ?? 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Total Expenses</div><div class="kpi-value red">${p(report?.total_expenses ?? 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Net Income</div><div class="kpi-value green">${p(report?.net_income ?? 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Orders</div><div class="kpi-value">${report?.order_count ?? 0}</div></div>
+        <div class="kpi"><div class="kpi-label">Avg. Sale</div><div class="kpi-value">${p(report?.avg_sale ?? 0)}</div></div>
+      </div>
+
+      <div class="section-title">Debt Overview</div>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-label">Outstanding Debt</div><div class="kpi-value red">${p(report?.debt_outstanding ?? 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">New Debt Added</div><div class="kpi-value">${p(report?.debt_added ?? 0)}</div></div>
+        <div class="kpi"><div class="kpi-label">Payments Received</div><div class="kpi-value green">${p(report?.debt_paid ?? 0)}</div></div>
+      </div>
+
+      <div class="section-title">Cashflow by Day</div>
+      ${tbl(['Date', 'Sales', 'Expenses', 'Net Income'],
+        cashflow.map(d => [d.date, p(d.sales), p(d.expenses), p(d.net_income)]))}
+
+      <div class="section-title">Top Products</div>
+      ${tbl(['#', 'Product', 'Qty Sold', 'Revenue'],
+        topProducts.slice(0, 10).map((prod, i) => [i + 1, prod.name, prod.total_qty, p(prod.total_revenue)]))}
+
+      <div class="section-title">Category Performance</div>
+      ${tbl(['Category', 'Revenue', 'Share'],
+        categories.map(c => [c.category_name, p(c.total), `${c.pct}%`]))}
+
+      <div class="section-title">Payment Breakdown</div>
+      ${tbl(['Date', 'Cash', 'GCash', 'Card', 'Other'],
+        paymentBreakdown.map(d => [d.date, p(d.cash ?? 0), p(d.gcash ?? 0), p(d.card ?? 0), p(d.other ?? 0)]))}
+
+      <div class="section-title">Top Creditors (Outstanding Balance)</div>
+      ${topDebtors.length === 0
+        ? '<p style="color:#9ca3af;font-size:12px">No outstanding balances</p>'
+        : tbl(['#', 'Name', 'Phone', 'Balance'],
+            topDebtors.map((d, i) => [i + 1, d.name, d.phone ?? '', p(Number(d.balance))]))}
+
+      <div class="section-title">Slow Moving Products</div>
+      ${slowMoving.length === 0
+        ? '<p style="color:#9ca3af;font-size:12px">No data</p>'
+        : tbl(['#', 'Product', 'Sold This Period', 'Monthly Avg'],
+            slowMoving.slice(0, 10).map((prod, i) => [i + 1, prod.name, prod.period_sold, prod.monthly_sold ?? 0]))}
+
+      <div class="section-title">Busiest Hour</div>
+      <p style="font-size:13px;margin:4px 0 10px">Peak: <strong>${fmtHour(peakHour.hour)}</strong> with <strong>${peakHour.count} sales</strong></p>
+      ${tbl(['Hour', 'Sales Count'],
+        fullHourly.filter(h => h.count > 0).map(h => [fmtHour(h.hour), h.count]))}
+
+      <div class="section-title">Inventory Valuation</div>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-label">Potential Revenue (at Selling Price)</div><div class="kpi-value green">${p(valuation.potential_revenue)}</div></div>
+        <div class="kpi"><div class="kpi-label">Total Inventory Cost</div><div class="kpi-value blue">${p(valuation.total_cost)}</div></div>
+      </div>
     `
     exportToPdf(`Analytics Report — ${filterLabel}`, html)
   }

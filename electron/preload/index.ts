@@ -204,6 +204,15 @@ const api = {
     delete:     (accountId: string)                        => ipcRenderer.invoke(IPC.LOYALTY.DELETE, accountId),
   },
 
+  // ─── Product Orders ───────────────────────────────────────────────────────
+  productOrders: {
+    getAll:     ()            => ipcRenderer.invoke(IPC.PRODUCT_ORDERS.GET_ALL),
+    getPending: ()            => ipcRenderer.invoke(IPC.PRODUCT_ORDERS.GET_PENDING),
+    create:     (data: any)   => ipcRenderer.invoke(IPC.PRODUCT_ORDERS.CREATE, data),
+    receive:    (id: string)  => ipcRenderer.invoke(IPC.PRODUCT_ORDERS.RECEIVE, id),
+    cancel:     (id: string)  => ipcRenderer.invoke(IPC.PRODUCT_ORDERS.CANCEL, id),
+  },
+
   // ─── Push events (main → renderer) ─────────────────────────────────────────
   on: {
     barcodeScanned: (cb: (code: string) => void) => {

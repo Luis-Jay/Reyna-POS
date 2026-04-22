@@ -152,6 +152,13 @@ export const IPC = {
     GET_HISTORY:   'loyalty:getHistory',
     DELETE:        'loyalty:delete',
   },
+  PRODUCT_ORDERS: {
+    GET_ALL:     'productOrders:getAll',
+    GET_PENDING: 'productOrders:getPending',
+    CREATE:      'productOrders:create',
+    RECEIVE:     'productOrders:receive',
+    CANCEL:      'productOrders:cancel',
+  },
   // Push events: main → renderer
   PUSH: {
     BARCODE_SCANNED:'push:barcodeScanned',

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import TopBar from '../../components/layout/TopBar'
 import { Order } from '../../types'
 import { formatDate } from '../../utils/format'
-import { FileText, RotateCcw, X } from 'lucide-react'
+import { FileText, RotateCcw, X, Printer } from 'lucide-react'
 
 const DATE_FILTERS = ['Today (Manila Time)', 'Yesterday', 'This Week', 'This Month', 'All Time']
 
@@ -159,6 +159,14 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
         <button onClick={loadItems} className="flex items-center gap-1 text-[#1a8eff] text-xs hover:underline">
           <FileText size={12} /> {expanded ? 'Hide' : 'Receipt'}
         </button>
+        {expanded && (
+          <button
+            onClick={() => window.api.printer.printReceipt({ ...order, items })}
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 hover:underline"
+          >
+            <Printer size={12} /> Print
+          </button>
+        )}
         {order.status === 'completed' && (
           <button onClick={openRefundModal}
             className="flex items-center gap-1 text-xs text-red-500 hover:text-red-700 hover:underline">

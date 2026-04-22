@@ -452,6 +452,13 @@ export default function SettingsPage() {
                       <div>
                         <p className="text-sm font-medium text-gray-800">{u.name}</p>
                         <p className="text-xs text-gray-400 capitalize">{u.role} {!u.is_active ? '· Inactive' : ''}</p>
+                        {u.role !== 'admin' && (() => {
+                          const perms = userPerms[u.id] || {}
+                          const enabled = PERMISSION_LABELS.filter(p => perms[p.key]).map(p => p.label)
+                          return enabled.length > 0
+                            ? <p className="text-xs text-[#1a8eff] mt-0.5">{enabled.length}/{PERMISSION_LABELS.length} features enabled</p>
+                            : <p className="text-xs text-gray-300 mt-0.5">No extra access</p>
+                        })()}
                       </div>
                     </div>
                     <div className="flex items-center gap-2">

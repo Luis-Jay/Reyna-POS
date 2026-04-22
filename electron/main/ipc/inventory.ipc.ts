@@ -38,7 +38,7 @@ export function registerInventoryHandlers() {
     const db = getDb()
     let query = `
       SELECT i.*, p.name as product_name, p.image_path, p.monthly_sold,
-             p.track_inventory, p.is_active, p.base_price, p.base_cost
+             p.track_inventory, p.is_active, p.base_price, p.base_cost, p.barcode
       FROM inventory i
       JOIN products p ON i.product_id = p.id
       WHERE p.deleted_at IS NULL AND p.is_active = 1 AND p.track_inventory = 1
