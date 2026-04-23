@@ -58,6 +58,25 @@ async function resolvePrinterInterface(printerInterface: string) {
   return ''
 }
 
+export async function printOrder(order: any): Promise<{ success: boolean; error?: string }> {
+  const { thermalEnabled, storeName, storeAddress, storePhone, storeTin, receiptFooter, printerInterface } = getPrinterSettings()
+  const effectivePrinterInterface = await resolvePrinterInterface(printerInterface)
+  const preferSystemPrinter = effectivePrinterInterface.startsWith('system:')
+
+  if (thermalEnabled && !preferSystemPrinter) {
+    try {
+      await printThermal(order, { storeName, storeAddress, storePhone, storeTin, receiptFooter })
+      return { success: true }
+    } catch {
+      const result = await printHtmlReceipt(order, { storeName, storeAddress, storePhone, storeTin, receiptFooter }, effectivePrinterInterface)
+      return result.success ? { success: true } : { success: false, error: result.error }
+    }
+  }
+
+  const result = await printHtmlReceipt(order, { storeName, storeAddress, storePhone, storeTin, receiptFooter }, effectivePrinterInterface)
+  return result.success ? { success: true } : { success: false, error: result.error }
+}
+
 export function registerPrinterHandlers() {
   ipcMain.handle(IPC.PRINTER.GET_STATUS, () => printerStatus)
 
@@ -222,11 +241,34 @@ function getCashierName(userId?: string) {
 }
 
 
+function getReceiptLayout(paperSize: string) {
+  const is80mm = paperSize === '80mm'
+
+  return {
+    paperWidthMm: is80mm ? 80 : 58,
+    contentWidthMm: is80mm ? 72 : 50,
+    horizontalPaddingMm: is80mm ? 4 : 3,
+    bodyFontPx: is80mm ? 13 : 12,
+    infoFontPx: is80mm ? 12 : 11,
+    storeNamePx: is80mm ? 21 : 18,
+    totalPx: is80mm ? 20 : 17,
+    qtyColPx: is80mm ? 44 : 34,
+    priceColPx: is80mm ? 80 : 62,
+    barcodeHeight: is80mm ? 52 : 46,
+    barcodeWidth: is80mm ? 1.7 : 1.3,
+    barcodeFontPx: is80mm ? 11 : 10,
+    shortDividerWidth: is80mm ? '46mm' : '34mm',
+    footerGapMm: is80mm ? 6 : 5,
+  }
+}
+
 function buildReceiptHtml(
   order: any,
-  store: { storeName: string; storeAddress: string; storePhone: string; storeTin: string; receiptFooter: string }
+  store: { storeName: string; storeAddress: string; storePhone: string; storeTin: string; receiptFooter: string },
+  paperSize: string
 ) {
   const { storeName, storeAddress, storePhone, storeTin, receiptFooter } = store
+  const layout = getReceiptLayout(paperSize)
   const createdAt = formatDateTime(order?.created_at)
   const cashierName = getCashierName(order?.user_id)
   const payments = Array.isArray(order?.payment_breakdown) ? order.payment_breakdown : []
@@ -292,8 +334,8 @@ function buildReceiptHtml(
     <script>
       try {
         JsBarcode("#rcpt-barcode", ${JSON.stringify(order?.order_number || '')}, {
-          format: "CODE128", width: 1.5, height: 48,
-          displayValue: true, fontSize: 11, margin: 4,
+          format: "CODE128", width: ${layout.barcodeWidth}, height: ${layout.barcodeHeight},
+          displayValue: true, fontSize: ${layout.barcodeFontPx}, margin: 0,
           lineColor: "#000", background: "#fff"
         });
       } catch(e) {}
@@ -339,73 +381,152 @@ function buildReceiptHtml(
     <meta charset="utf-8" />
     <title>Receipt</title>
     <style>
-      :root { color-scheme: light; }
+      :root {
+        color-scheme: light;
+        --paper-width: ${layout.paperWidthMm}mm;
+        --content-width: ${layout.contentWidthMm}mm;
+        --side-pad: ${layout.horizontalPaddingMm}mm;
+        --body-font: ${layout.bodyFontPx}px;
+        --info-font: ${layout.infoFontPx}px;
+        --store-name-font: ${layout.storeNamePx}px;
+        --total-font: ${layout.totalPx}px;
+        --qty-col-width: ${layout.qtyColPx}px;
+        --price-col-width: ${layout.priceColPx}px;
+        --short-divider-width: ${layout.shortDividerWidth};
+        --footer-gap: ${layout.footerGapMm}mm;
+      }
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        width: var(--paper-width);
+        background: #fff;
+      }
       body {
         background: #fff;
         color: #000;
         font-family: Arial, Helvetica, sans-serif;
-        font-size: 12px;
-        line-height: 1.35;
+        font-size: var(--body-font);
+        line-height: 1.32;
+        display: flex;
+        justify-content: center;
       }
       .receipt {
-        width: 72mm;
-        max-width: 100%;
+        width: var(--content-width);
         margin: 0 auto;
-        padding: 8px 6px 18px;
+        padding: 4mm var(--side-pad) var(--footer-gap);
       }
       .center { text-align: center; }
       .store-name {
-        font-size: 18px;
+        font-size: var(--store-name-font);
         font-weight: 900;
         text-transform: uppercase;
-        letter-spacing: 0.01em;
-        margin-bottom: 3px;
+        letter-spacing: 0;
+        line-height: 1.1;
+        margin-bottom: 2px;
+        word-break: break-word;
       }
-      .store-info { font-size: 11px; line-height: 1.45; }
+      .store-info {
+        font-size: var(--info-font);
+        line-height: 1.35;
+        margin-top: 2px;
+        word-break: break-word;
+      }
       .divider {
         border: none;
         border-top: 1px dotted #777;
-        margin: 10px 0;
+        margin: 10px 0 9px;
       }
       .short-divider {
         border: none;
         border-top: 1px dotted #777;
-        width: 60%;
+        width: var(--short-divider-width);
+        max-width: 70%;
         margin: 12px auto 10px;
       }
       .info-row {
         display: flex;
         justify-content: space-between;
-        font-size: 12px;
-        margin: 2px 0;
+        align-items: flex-start;
+        font-size: var(--body-font);
+        margin: 3px 0;
         gap: 10px;
       }
-      table { width: 100%; border-collapse: collapse; margin: 8px 0 10px; }
-      th, td { padding: 4px 0; vertical-align: top; font-size: 12px; }
+      .info-row span:first-child { flex: 0 0 auto; }
+      .info-row span:last-child {
+        flex: 1 1 auto;
+        text-align: right;
+        word-break: break-word;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        margin: 8px 0 10px;
+      }
+      th, td {
+        padding: 4px 0;
+        vertical-align: top;
+        font-size: var(--body-font);
+      }
       th { font-weight: 700; }
-      .name-col { text-align: left; }
-      .qty-col  { text-align: center; width: 40px; }
-      .price-col { text-align: right; width: 70px; white-space: nowrap; }
+      .name-col {
+        text-align: left;
+        padding-right: 8px;
+        word-break: break-word;
+      }
+      .qty-col  { text-align: center; width: var(--qty-col-width); }
+      .price-col { text-align: right; width: var(--price-col-width); white-space: nowrap; }
       .summary-row {
         display: flex;
         justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
         margin: 3px 0;
-        font-size: 12px;
+        font-size: var(--body-font);
       }
+      .summary-row span:first-child { flex: 1 1 auto; }
+      .summary-row span:last-child { flex: 0 0 auto; text-align: right; white-space: nowrap; }
       .summary-row.subtotal {
-        font-size: 18px;
+        font-size: var(--total-font);
         font-weight: 900;
         margin: 6px 0 5px;
       }
-      .barcode-wrap { text-align: center; margin: 4px 0 2px; }
-      .barcode-wrap svg { max-width: 100%; }
-      .barcode-text { font-family: monospace; font-size: 13px; letter-spacing: 0.1em; margin: 6px 0; }
-      .thank-you { font-size: 18px; font-weight: 900; letter-spacing: 0.03em; margin-top: 6px; text-transform: uppercase; }
-      .footer-msg { font-size: 12px; margin-top: 3px; }
+      .barcode-wrap {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        margin: 4px 0 2px;
+        overflow: hidden;
+      }
+      .barcode-wrap svg {
+        display: block;
+        max-width: 100%;
+        height: auto;
+      }
+      .barcode-text {
+        font-family: monospace;
+        font-size: var(--body-font);
+        letter-spacing: 0.08em;
+        margin: 6px 0;
+      }
+      .thank-you {
+        font-size: var(--total-font);
+        font-weight: 900;
+        letter-spacing: 0.02em;
+        margin-top: 6px;
+        text-transform: uppercase;
+      }
+      .footer-msg { font-size: var(--body-font); margin-top: 3px; }
       .section-gap { margin: 16px 0; }
-      .note { font-size: 11px; margin-top: 4px; }
-      @page { margin: 4mm; size: auto; }
+      .note {
+        font-size: var(--info-font);
+        margin-top: 5px;
+        word-break: break-word;
+      }
+      @page {
+        size: var(--paper-width) auto;
+        margin: 0;
+      }
     </style>
   </head>
   <body>
@@ -431,15 +552,15 @@ async function printHtmlReceipt(
   store: { storeName: string; storeAddress: string; storePhone: string; storeTin: string; receiptFooter: string },
   printerInterface: string
 ) {
-  const html = buildReceiptHtml(order, store)
+  const { paperSize } = getPrinterSettings()
+  const html = buildReceiptHtml(order, store, paperSize)
   return printHtmlContent(html, printerInterface)
 }
 
 async function printHtmlContent(html: string, printerInterface: string) {
   const { paperSize } = getPrinterSettings()
   const paperWidthMm  = paperSize === '80mm' ? 80 : 58
-  // Convert mm → px at 96 dpi (1 mm = 3.7795 px) with a small extra margin
-  const windowWidthPx = Math.round(paperWidthMm * 3.7795) + 16
+  const windowWidthPx = Math.round(paperWidthMm * 3.7795) + 4
 
   const tmpFile = path.join(os.tmpdir(), `reyna_receipt_${Date.now()}.html`)
   fs.writeFileSync(tmpFile, html, 'utf-8')
@@ -463,12 +584,12 @@ async function printHtmlContent(html: string, printerInterface: string) {
         silent: !!deviceName,
         printBackground: true,
         deviceName,
-        // Match paper dimensions exactly so content isn't clipped or scaled
         pageSize: {
-          width:  paperWidthMm * 1000,   // microns
-          height: 2000 * 1000,           // 2000 mm — continuous feed
+          width:  paperWidthMm * 1000,
+          height: 2000 * 1000,
         },
-        margins: { marginType: 'custom', top: 0, bottom: 0, left: 4, right: 4 },
+        margins: { marginType: 'none' },
+        scaleFactor: 100,
       }, (success, error) => {
         if (success) resolve()
         else reject(new Error(error || 'Print failed'))
