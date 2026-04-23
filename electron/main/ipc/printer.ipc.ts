@@ -111,7 +111,10 @@ export function registerPrinterHandlers() {
         printerStatus.connected = false
         printerStatus.type = 'escpos-usb'
         printerStatus.error = err.message
-        return { success: false, error: err.message }
+        return {
+          success: false,
+          error: 'Thermal USB printer unavailable and no system printer is configured. Please go to Settings → Printer and select a printer.',
+        }
       }
     }
 
@@ -433,12 +436,18 @@ async function printHtmlReceipt(
 }
 
 async function printHtmlContent(html: string, printerInterface: string) {
-  // Write to a temp file so the renderer can load scripts (data: URLs have size limits)
+  const { paperSize } = getPrinterSettings()
+  const paperWidthMm  = paperSize === '80mm' ? 80 : 58
+  // Convert mm → px at 96 dpi (1 mm = 3.7795 px) with a small extra margin
+  const windowWidthPx = Math.round(paperWidthMm * 3.7795) + 16
+
   const tmpFile = path.join(os.tmpdir(), `reyna_receipt_${Date.now()}.html`)
   fs.writeFileSync(tmpFile, html, 'utf-8')
 
   const printWindow = new BrowserWindow({
     show: false,
+    width: windowWidthPx,
+    height: 2400,             // tall enough for any receipt length
     webPreferences: { sandbox: false, nodeIntegration: false },
   })
 
@@ -447,13 +456,19 @@ async function printHtmlContent(html: string, printerInterface: string) {
 
   try {
     await printWindow.loadURL(`file://${tmpFile}`)
-    // Give scripts (JsBarcode) time to finish rendering before printing
-    await new Promise(resolve => setTimeout(resolve, 350))
+    // Wait for JsBarcode and layout to finish before capturing the print job
+    await new Promise(resolve => setTimeout(resolve, 500))
     await new Promise<void>((resolve, reject) => {
       printWindow.webContents.print({
-        silent: !!deviceName,   // silent only when a specific printer is selected
+        silent: !!deviceName,
         printBackground: true,
         deviceName,
+        // Match paper dimensions exactly so content isn't clipped or scaled
+        pageSize: {
+          width:  paperWidthMm * 1000,   // microns
+          height: 2000 * 1000,           // 2000 mm — continuous feed
+        },
+        margins: { marginType: 'custom', top: 0, bottom: 0, left: 4, right: 4 },
       }, (success, error) => {
         if (success) resolve()
         else reject(new Error(error || 'Print failed'))
@@ -473,7 +488,9 @@ async function printThermal(order: any, store: { storeName: string; storeAddress
   let device: any = null
   let printer: any = null
   try {
-    const USB = require('@node-escpos/usb-adapter').default
+    const usbMod = require('@node-escpos/usb-adapter')
+    const USB = usbMod?.default ?? usbMod
+    if (typeof USB !== 'function') throw new Error('USB thermal printer driver not available')
     const { Printer } = require('@node-escpos/core')
 
     device = new USB()

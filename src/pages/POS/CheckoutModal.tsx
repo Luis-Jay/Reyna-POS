@@ -413,15 +413,15 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
       {/* Receipt Preview */}
       {showReceiptPreview && completedOrder && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-            <div className="px-6 pt-5 pb-3 border-b text-center">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md flex flex-col max-h-[90vh]">
+            <div className="px-6 pt-5 pb-3 border-b text-center shrink-0">
               <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-2">
                 <span className="text-2xl">✓</span>
               </div>
               <h3 className="text-lg font-bold text-gray-800">Receipt Preview</h3>
               <p className="text-sm text-gray-500">Confirm this is what will print</p>
             </div>
-            <div className="px-6 py-5 bg-[#f3f4f6]">
+            <div className="px-6 py-5 bg-[#f3f4f6] overflow-y-auto">
               <ReceiptPreviewSheet
                 order={completedOrder}
                 cashierName={user?.name || 'Cashier'}
@@ -431,9 +431,9 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
               />
             </div>
             {printError && (
-              <p className="px-6 pb-2 text-xs text-red-500 text-center">{printError}</p>
+              <p className="px-6 pb-2 text-xs text-red-500 text-center shrink-0">{printError}</p>
             )}
-            <div className="px-6 pb-6 grid grid-cols-2 gap-3 pt-2">
+            <div className="px-6 pb-6 grid grid-cols-2 gap-3 pt-2 shrink-0 border-t border-gray-100 bg-white">
               <button
                 onClick={() => { setShowReceiptPreview(false); setPrintError(''); onComplete() }}
                 className="py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold hover:bg-gray-50"
