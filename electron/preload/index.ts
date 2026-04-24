@@ -51,13 +51,14 @@ const api = {
     getById:      (id: string)             => ipcRenderer.invoke(IPC.ORDERS.GET_BY_ID, id),
     updateStatus: (id: string, status: string) => ipcRenderer.invoke(IPC.ORDERS.UPDATE_STATUS, id, status),
     refund:       (id: string)                 => ipcRenderer.invoke(IPC.ORDERS.REFUND, id),
-    partialRefund:(id: string, items: any[])   => ipcRenderer.invoke(IPC.ORDERS.PARTIAL_REFUND, id, items),
+    partialRefund:(id: string, items: any[], action?: 'refund' | 'damage') => ipcRenderer.invoke(IPC.ORDERS.PARTIAL_REFUND, id, items, action),
     excludeSales: (id: string, exclude: boolean) => ipcRenderer.invoke(IPC.ORDERS.EXCLUDE_SALES, id, exclude),
     saveCart:     (data: any)              => ipcRenderer.invoke(IPC.ORDERS.SAVE_CART, data),
     getSaved:     ()                       => ipcRenderer.invoke(IPC.ORDERS.GET_SAVED),
     deleteSaved:  (id: string)             => ipcRenderer.invoke(IPC.ORDERS.DELETE_SAVED, id),
     getPending:           ()        => ipcRenderer.invoke(IPC.ORDERS.GET_PENDING),
     getCashierSalesToday: ()        => ipcRenderer.invoke(IPC.ORDERS.GET_CASHIER_SALES_TODAY),
+    getReturnEvents:      (filters?: any)  => ipcRenderer.invoke(IPC.ORDERS.GET_RETURN_EVENTS, filters),
   },
 
   // ─── Inventory ─────────────────────────────────────────────────────────────
@@ -100,6 +101,12 @@ const api = {
     getTopDebtors:        ()               => ipcRenderer.invoke(IPC.ANALYTICS.GET_TOP_DEBTORS),
     getSlowMoving:        (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_SLOW_MOVING, periodOrRange),
     getPaymentBreakdown:  (days: number)   => ipcRenderer.invoke(IPC.ANALYTICS.GET_PAYMENT_BREAKDOWN, days),
+    getExpenseReport:     (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_EXPENSE_REPORT, periodOrRange),
+    getPaymentsReport:    (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_PAYMENTS_REPORT, periodOrRange),
+    getCustomerReport:    (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_CUSTOMER_REPORT, periodOrRange),
+    getReturnReport:      (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_RETURN_REPORT, periodOrRange),
+    getZReading:          (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_Z_READING, periodOrRange),
+    getESales:            (periodOrRange: any) => ipcRenderer.invoke(IPC.ANALYTICS.GET_E_SALES, periodOrRange),
   },
 
   // ─── Price Tiers (Wholesale) ───────────────────────────────────────────────
@@ -157,6 +164,11 @@ const api = {
     setConfig:     (config: any)          => ipcRenderer.invoke(IPC.PRINTER.SET_CONFIG, config),
     openDrawer:    ()                     => ipcRenderer.invoke(IPC.PRINTER.OPEN_DRAWER),
     listPrinters:  ()                     => ipcRenderer.invoke(IPC.PRINTER.LIST_PRINTERS),
+  },
+
+  documents: {
+    savePdf:   (options: any)             => ipcRenderer.invoke(IPC.DOCUMENTS.SAVE_PDF, options),
+    printHtml: (options: any)             => ipcRenderer.invoke(IPC.DOCUMENTS.PRINT_HTML, options),
   },
 
   // ─── Sync ──────────────────────────────────────────────────────────────────

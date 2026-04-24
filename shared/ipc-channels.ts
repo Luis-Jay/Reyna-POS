@@ -43,6 +43,7 @@ export const IPC = {
     DELETE_SAVED:             'orders:deleteSaved',
     GET_PENDING:              'orders:getPending',
     GET_CASHIER_SALES_TODAY:  'orders:getCashierSalesToday',
+    GET_RETURN_EVENTS:        'orders:getReturnEvents',
   },
   INVENTORY: {
     GET_ALL:        'inventory:getAll',
@@ -74,6 +75,12 @@ export const IPC = {
     GET_TOP_DEBTORS:'analytics:getTopDebtors',
     GET_SLOW_MOVING:'analytics:getSlowMoving',
     GET_PAYMENT_BREAKDOWN: 'analytics:getPaymentBreakdown',
+    GET_EXPENSE_REPORT: 'analytics:getExpenseReport',
+    GET_PAYMENTS_REPORT: 'analytics:getPaymentsReport',
+    GET_CUSTOMER_REPORT: 'analytics:getCustomerReport',
+    GET_RETURN_REPORT: 'analytics:getReturnReport',
+    GET_Z_READING: 'analytics:getZReading',
+    GET_E_SALES: 'analytics:getESales',
   },
   PRICE_TIERS: {
     GET:    'priceTiers:get',
@@ -119,6 +126,10 @@ export const IPC = {
     SET_CONFIG:     'printer:setConfig',
     OPEN_DRAWER:    'printer:openDrawer',
     LIST_PRINTERS:  'printer:listPrinters',
+  },
+  DOCUMENTS: {
+    SAVE_PDF:       'documents:savePdf',
+    PRINT_HTML:     'documents:printHtml',
   },
   SYNC: {
     GET_STATUS:     'sync:getStatus',

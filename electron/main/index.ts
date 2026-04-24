@@ -22,6 +22,7 @@ import { registerPriceTierHandlers } from './ipc/pricetiers.ipc'
 import { registerLoyaltyHandlers } from './ipc/loyalty.ipc'
 import { registerSmsHandlers } from './ipc/sms.ipc'
 import { registerProductOrderHandlers } from './ipc/product-orders.ipc'
+import { registerDocumentHandlers } from './ipc/documents.ipc'
 import { initPrintRelay } from './print-relay'
 import { BarcodeService } from './services/barcode.service'
 
@@ -152,6 +153,7 @@ app.whenReady().then(() => {
   registerSettingsHandlers()
   registerAuthHandlers()
   registerPrinterHandlers()
+  registerDocumentHandlers()
   registerSyncHandlers()
   registerBackupHandlers()
   registerActivationHandlers()

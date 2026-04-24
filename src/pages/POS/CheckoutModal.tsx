@@ -553,49 +553,153 @@ function ReceiptPreviewSheet({
   const subtotal = Number(order?.subtotal || order?.total || 0)
   const discount = Number(order?.discount || 0)
   const total = Number(order?.total || 0)
+  const paperSize = storeSettings['paper_size'] || '58mm'
   // vatAmount = total - (subtotal after discount); must account for discount in the formula
   const vatAmount = vatEnabled ? Math.max(0, total - (subtotal - discount)) : 0
   const hasBreakdown = discount > 0 || vatAmount > 0
 
+  if (paperSize === '80mm') {
+    return (
+      <div className="mx-auto w-full max-w-[320px] rounded-[24px] bg-white px-6 py-7 font-sans text-[#111] shadow-lg">
+        <div className="text-center">
+          <p className="text-[20px] font-black uppercase tracking-tight">{storeSettings['store_name'] || 'SUPERMARKET'}</p>
+          {storeSettings['store_address'] && <p className="mt-1 text-[11px] leading-4">{storeSettings['store_address']}</p>}
+          {storeSettings['store_phone'] && <p className="mt-1 text-[11px] leading-4">Tel.: {storeSettings['store_phone']}</p>}
+          {storeSettings['store_tin'] && <p className="mt-1 text-[11px] leading-4">TIN: {storeSettings['store_tin']}</p>}
+        </div>
+
+        <Divider />
+
+        <div className="space-y-1 text-[12px]">
+          <ReceiptInfoRow label="Cashier:" value={cashierName} />
+          <ReceiptInfoRow label="Receipt #:" value={order?.order_number || 'N/A'} />
+          <ReceiptInfoRow label="Date:" value={createdAt} />
+          {order?.customer_name && <ReceiptInfoRow label="Customer:" value={order.customer_name} />}
+        </div>
+
+        <Divider />
+
+        <div className="grid grid-cols-[1fr_40px_72px] gap-2 text-[12px] font-medium">
+          <span>Name</span>
+          <span className="text-center">Qty</span>
+          <span className="text-right">Price</span>
+        </div>
+
+        <div className="mt-4 space-y-2 text-[12px]">
+          {(order?.items || []).map((item: any, index: number) => (
+            <div key={index} className="grid grid-cols-[1fr_40px_72px] gap-2 items-start">
+              <span className="leading-4">{item.name}</span>
+              <span className="text-center">{Number(item.quantity || 0) % 1 === 0 ? item.quantity : Number(item.quantity || 0).toFixed(2)}</span>
+              <span className="text-right">{formatCurrency(item.subtotal || 0).replace('₱', '₱')}</span>
+            </div>
+          ))}
+        </div>
+
+        <Divider />
+
+        <div className="space-y-1 text-[12px]">
+          {hasBreakdown && (
+            <div className="flex justify-between">
+              <span>Subtotal</span>
+              <span>{formatCurrency(subtotal)}</span>
+            </div>
+          )}
+          {discount > 0 && (
+            <div className="flex justify-between text-green-700">
+              <span>Discount</span>
+              <span>- {formatCurrency(discount)}</span>
+            </div>
+          )}
+          {vatAmount > 0 && (
+            <div className="flex justify-between">
+              <span>VAT ({vatRate}%)</span>
+              <span>{formatCurrency(vatAmount)}</span>
+            </div>
+          )}
+          <div className="flex items-baseline justify-between text-[17px] font-black">
+            <span>{hasBreakdown ? 'Total' : 'Sub Total'}</span>
+            <span>{formatCurrency(total)}</span>
+          </div>
+          {payments.length > 0 ? payments.map((entry: any, index: number) => (
+            <div key={index} className="flex justify-between uppercase">
+              <span>{entry.method === 'gcash' ? 'GCASH' : entry.method === 'card' ? 'CARD' : 'CASH'}</span>
+              <span>{formatCurrency(entry.amount || 0)}</span>
+            </div>
+          )) : (
+            !order?.is_credit && (
+              <div className="flex justify-between uppercase">
+                <span>Cash</span>
+                <span>{formatCurrency(order?.payment_amount || 0)}</span>
+              </div>
+            )
+          )}
+          {!order?.is_credit && Number(order?.change_amount || 0) > 0 && (
+            <div className="flex justify-between uppercase">
+              <span>Change</span>
+              <span>{formatCurrency(order.change_amount || 0)}</span>
+            </div>
+          )}
+          {order?.is_credit && (
+            <div className="flex justify-between uppercase">
+              <span>Payment</span>
+              <span>Charge to Account</span>
+            </div>
+          )}
+        </div>
+
+        <div className="mx-auto my-5 w-40 border-t border-dotted border-[#777]" />
+
+        <div className="flex justify-center">
+          <svg ref={barcodeRef} className="max-w-full" />
+        </div>
+
+        <div className="mt-4 text-center">
+          <p className="text-[17px] font-black uppercase">Thank You!</p>
+          <p className="text-[12px]">{storeSettings['receipt_footer'] || 'Glad to see you again!'}</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="mx-auto w-full max-w-[320px] rounded-[24px] bg-white px-6 py-7 font-sans text-[#111] shadow-lg">
+    <div className="mx-auto w-full max-w-[240px] rounded-[20px] bg-white px-3 py-4 font-sans text-[#111] shadow-lg">
       <div className="text-center">
-        <p className="text-[20px] font-black uppercase tracking-tight">{storeSettings['store_name'] || 'SUPERMARKET'}</p>
-        {storeSettings['store_address'] && <p className="mt-1 text-[11px] leading-4">{storeSettings['store_address']}</p>}
-        {storeSettings['store_phone'] && <p className="mt-1 text-[11px] leading-4">Tel.: {storeSettings['store_phone']}</p>}
-        {storeSettings['store_tin'] && <p className="mt-1 text-[11px] leading-4">TIN: {storeSettings['store_tin']}</p>}
+        <p className="text-[15px] font-black uppercase leading-tight tracking-tight">{storeSettings['store_name'] || 'SUPERMARKET'}</p>
+        {storeSettings['store_address'] && <p className="mt-1 text-[10px] leading-3.5">{storeSettings['store_address']}</p>}
+        {storeSettings['store_phone'] && <p className="mt-1 text-[10px] leading-3.5">Tel.: {storeSettings['store_phone']}</p>}
+        {storeSettings['store_tin'] && <p className="mt-1 text-[10px] leading-3.5">TIN: {storeSettings['store_tin']}</p>}
       </div>
 
-      <Divider />
+      <Divider compact />
 
-      <div className="space-y-1 text-[12px]">
+      <div className="space-y-1 text-[10.5px]">
         <ReceiptInfoRow label="Cashier:" value={cashierName} />
         <ReceiptInfoRow label="Receipt #:" value={order?.order_number || 'N/A'} />
         <ReceiptInfoRow label="Date:" value={createdAt} />
         {order?.customer_name && <ReceiptInfoRow label="Customer:" value={order.customer_name} />}
       </div>
 
-      <Divider />
+      <Divider compact />
 
-      <div className="grid grid-cols-[1fr_40px_72px] gap-2 text-[12px] font-medium">
+      <div className="grid grid-cols-[1fr_28px_54px] gap-1.5 text-[10.5px] font-medium">
         <span>Name</span>
         <span className="text-center">Qty</span>
         <span className="text-right">Price</span>
       </div>
 
-      <div className="mt-4 space-y-2 text-[12px]">
+      <div className="mt-3 space-y-1.5 text-[10.5px]">
         {(order?.items || []).map((item: any, index: number) => (
-          <div key={index} className="grid grid-cols-[1fr_40px_72px] gap-2 items-start">
-            <span className="leading-4">{item.name}</span>
+          <div key={index} className="grid grid-cols-[1fr_28px_54px] gap-1.5 items-start">
+            <span className="leading-3.5">{item.name}</span>
             <span className="text-center">{Number(item.quantity || 0) % 1 === 0 ? item.quantity : Number(item.quantity || 0).toFixed(2)}</span>
             <span className="text-right">{formatCurrency(item.subtotal || 0).replace('₱', '₱')}</span>
           </div>
         ))}
       </div>
 
-      <Divider />
+      <Divider compact />
 
-      <div className="space-y-1 text-[12px]">
+      <div className="space-y-1 text-[10.5px]">
         {hasBreakdown && (
           <div className="flex justify-between">
             <span>Subtotal</span>
@@ -614,7 +718,7 @@ function ReceiptPreviewSheet({
             <span>{formatCurrency(vatAmount)}</span>
           </div>
         )}
-        <div className="flex items-baseline justify-between text-[17px] font-black">
+        <div className="flex items-baseline justify-between text-[16px] font-black">
           <span>{hasBreakdown ? 'Total' : 'Sub Total'}</span>
           <span>{formatCurrency(total)}</span>
         </div>
@@ -645,15 +749,15 @@ function ReceiptPreviewSheet({
         )}
       </div>
 
-      <div className="mx-auto my-5 w-40 border-t border-dotted border-[#777]" />
+      <div className="mx-auto my-4 w-28 border-t border-dotted border-[#777]" />
 
       <div className="flex justify-center">
         <svg ref={barcodeRef} className="max-w-full" />
       </div>
 
-      <div className="mt-4 text-center">
-        <p className="text-[17px] font-black uppercase">Thank You!</p>
-        <p className="text-[12px]">{storeSettings['receipt_footer'] || 'Glad to see you again!'}</p>
+      <div className="mt-3 text-center">
+        <p className="text-[15px] font-black uppercase">Thank You!</p>
+        <p className="text-[10px]">{storeSettings['receipt_footer'] || 'Glad to see you again!'}</p>
       </div>
     </div>
   )
@@ -668,6 +772,6 @@ function ReceiptInfoRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function Divider() {
-  return <div className="my-4 border-t border-dotted border-[#777]" />
+function Divider({ compact = false }: { compact?: boolean }) {
+  return <div className={`${compact ? 'my-3' : 'my-4'} border-t border-dotted border-[#777]`} />
 }

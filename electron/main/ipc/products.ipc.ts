@@ -5,7 +5,7 @@ import { v4 as uuid } from 'uuid'
 import { getCurrentProductImagesDir, getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
-import { addStockBatch } from '../services/stock-batches.service'
+import { addStockBatch, applyBatchPricing } from '../services/stock-batches.service'
 
 export function registerProductHandlers() {
   // GET ALL with optional filters
@@ -25,37 +25,40 @@ export function registerProductHandlers() {
     if (filters?.letter)   { query += ` AND UPPER(SUBSTR(p.name,1,1)) = ?`; params.push(filters.letter.toUpperCase()) }
     if (filters?.search)   { query += ` AND (p.name LIKE ? OR p.barcode = ?)`; params.push(`%${filters.search}%`, filters.search) }
     query += ` ORDER BY p.sort_order, p.name`
-    return db.prepare(query).all(...params)
+    const rows = db.prepare(query).all(...params) as any[]
+    return rows.map(row => applyBatchPricing(db, row))
   })
 
   // GET BY ID
   ipcMain.handle(IPC.PRODUCTS.GET_BY_ID, (_, id: string) => {
     const db = getDb()
-    return db.prepare(`
+    const row = db.prepare(`
       SELECT p.*, c.name as category_name, i.quantity as stock
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN inventory i ON i.product_id = p.id
       WHERE p.id = ? AND p.deleted_at IS NULL
-    `).get(id)
+    `).get(id) as any
+    return row ? applyBatchPricing(db, row) : row
   })
 
   // GET BY BARCODE
   ipcMain.handle(IPC.PRODUCTS.GET_BY_BARCODE, (_, barcode: string) => {
     const db = getDb()
-    return db.prepare(`
+    const row = db.prepare(`
       SELECT p.*, c.name as category_name, i.quantity as stock
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN inventory i ON i.product_id = p.id
       WHERE p.barcode = ? AND p.deleted_at IS NULL
-    `).get(barcode)
+    `).get(barcode) as any
+    return row ? applyBatchPricing(db, row) : row
   })
 
   // SEARCH
   ipcMain.handle(IPC.PRODUCTS.SEARCH, (_, q: string) => {
     const db = getDb()
-    return db.prepare(`
+    const rows = db.prepare(`
       SELECT p.*, c.name as category_name, i.quantity as stock
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
@@ -63,7 +66,8 @@ export function registerProductHandlers() {
       WHERE p.deleted_at IS NULL AND p.is_active = 1
         AND (LOWER(p.name) LIKE LOWER(?) OR p.barcode = ?)
       ORDER BY p.sort_order, p.name LIMIT 20
-    `).all(`%${q}%`, q)
+    `).all(`%${q}%`, q) as any[]
+    return rows.map(row => applyBatchPricing(db, row))
   })
 
   // CREATE

@@ -246,20 +246,289 @@ function getReceiptLayout(paperSize: string) {
 
   return {
     paperWidthMm: is80mm ? 80 : 58,
-    contentWidthMm: is80mm ? 72 : 50,
-    horizontalPaddingMm: is80mm ? 4 : 3,
-    bodyFontPx: is80mm ? 13 : 12,
-    infoFontPx: is80mm ? 12 : 11,
-    storeNamePx: is80mm ? 21 : 18,
+    contentWidthMm: is80mm ? 72 : 48,
+    horizontalPaddingMm: is80mm ? 4 : 2.2,
+    bodyFontPx: is80mm ? 13 : 10.5,
+    infoFontPx: is80mm ? 12 : 10,
+    storeNamePx: is80mm ? 21 : 15,
     totalPx: is80mm ? 20 : 17,
-    qtyColPx: is80mm ? 44 : 34,
-    priceColPx: is80mm ? 80 : 62,
-    barcodeHeight: is80mm ? 52 : 46,
-    barcodeWidth: is80mm ? 1.7 : 1.3,
-    barcodeFontPx: is80mm ? 11 : 10,
-    shortDividerWidth: is80mm ? '46mm' : '34mm',
+    qtyColPx: is80mm ? 44 : 28,
+    priceColPx: is80mm ? 80 : 50,
+    barcodeHeight: is80mm ? 52 : 34,
+    barcodeWidth: is80mm ? 1.7 : 1.02,
+    barcodeFontPx: is80mm ? 11 : 8,
+    shortDividerWidth: is80mm ? '46mm' : '28mm',
     footerGapMm: is80mm ? 6 : 5,
   }
+}
+
+function buildBarcodeHtml(order: any, layout: ReturnType<typeof getReceiptLayout>, compact = false) {
+  const orderNumber = escapeHtml(order?.order_number || '')
+  if (!orderNumber || order?.test) return ''
+
+  if (_jsBarcodeScript) {
+    return `
+      <div class="barcode-wrap${compact ? ' compact' : ''}">
+        <svg id="rcpt-barcode"></svg>
+      </div>
+      <script>${_jsBarcodeScript}</script>
+      <script>
+        try {
+          JsBarcode("#rcpt-barcode", ${JSON.stringify(order?.order_number || '')}, {
+            format: "CODE128",
+            width: ${layout.barcodeWidth},
+            height: ${layout.barcodeHeight},
+            displayValue: true,
+            fontSize: ${layout.barcodeFontPx},
+            margin: 0,
+            lineColor: "#000",
+            background: "#fff"
+          });
+        } catch(e) {}
+      </script>
+    `
+  }
+
+  return `<div class="center barcode-text">${orderNumber}</div>`
+}
+
+function buildReceiptHtml58(
+  order: any,
+  store: { storeName: string; storeAddress: string; storePhone: string; storeTin: string; receiptFooter: string },
+  layout: ReturnType<typeof getReceiptLayout>
+) {
+  const { storeName, storeAddress, storePhone, storeTin, receiptFooter } = store
+  const createdAt = formatDateTime(order?.created_at)
+  const cashierName = getCashierName(order?.user_id)
+  const payments = Array.isArray(order?.payment_breakdown) ? order.payment_breakdown : []
+  const orderDiscount = Number(order?.discount || 0)
+  const orderSubtotal = Number(order?.subtotal || order?.total || 0)
+  const orderTotal = Number(order?.total || 0)
+  const impliedVat = Math.max(0, orderTotal - (orderSubtotal - orderDiscount))
+  const hasBreakdown = orderDiscount > 0 || impliedVat > 0.005
+
+  const itemsHtml = (order?.items || []).map((item: any) => `
+    <tr>
+      <td class="name-col">${escapeHtml(item.name)}</td>
+      <td class="qty-col">${escapeHtml(formatQty(item.quantity))}</td>
+      <td class="price-col">${escapeHtml(formatPeso(item.subtotal))}</td>
+    </tr>
+  `).join('')
+
+  let paymentRows = ''
+  if (!order?.test) {
+    if (order?.is_credit) {
+      paymentRows = `<div class="summary-row"><span>Payment</span><span>Charge to Account</span></div>`
+    } else if (payments.length > 0) {
+      paymentRows = payments.map((entry: any) => {
+        const label = entry.method === 'gcash' ? 'GCASH' : entry.method === 'card' ? 'CARD' : 'CASH'
+        return `<div class="summary-row"><span>${escapeHtml(label)}</span><span>${escapeHtml(formatPeso(entry.amount))}</span></div>`
+      }).join('')
+      if (order?.change_amount != null) {
+        paymentRows += `<div class="summary-row"><span>CHANGE</span><span>${escapeHtml(formatPeso(order.change_amount))}</span></div>`
+      }
+    } else if (order?.payment_amount != null) {
+      paymentRows = `<div class="summary-row"><span>CASH</span><span>${escapeHtml(formatPeso(order.payment_amount))}</span></div>`
+      if (order?.change_amount != null) {
+        paymentRows += `<div class="summary-row"><span>CHANGE</span><span>${escapeHtml(formatPeso(order.change_amount))}</span></div>`
+      }
+    }
+  }
+
+  const barcodeHtml = buildBarcodeHtml(order, layout, true)
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Receipt</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --paper-width: ${layout.paperWidthMm}mm;
+        --content-width: ${layout.contentWidthMm}mm;
+        --body-font: ${layout.bodyFontPx}px;
+        --info-font: ${layout.infoFontPx}px;
+        --store-name-font: ${layout.storeNamePx}px;
+        --total-font: ${layout.totalPx}px;
+        --qty-col-width: ${layout.qtyColPx}px;
+        --price-col-width: ${layout.priceColPx}px;
+      }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body {
+        width: var(--paper-width);
+        background: #fff;
+      }
+      body {
+        color: #000;
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: var(--body-font);
+        line-height: 1.25;
+        display: flex;
+        justify-content: center;
+      }
+      .receipt {
+        width: var(--content-width);
+        margin: 0 auto;
+        padding: 2.4mm 0 4.5mm;
+      }
+      .center { text-align: center; }
+      .store-name {
+        font-size: var(--store-name-font);
+        font-weight: 900;
+        text-transform: uppercase;
+        line-height: 1.05;
+        letter-spacing: -0.01em;
+      }
+      .store-info {
+        margin-top: 2px;
+        font-size: var(--info-font);
+        line-height: 1.2;
+      }
+      .divider {
+        border: none;
+        border-top: 1px dotted #8a8a8a;
+        margin: 7px 0;
+      }
+      .info-row, .summary-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 6px;
+        margin: 2px 0;
+        font-size: var(--body-font);
+      }
+      .info-row span:first-child, .summary-row span:first-child {
+        flex: 0 0 auto;
+      }
+      .info-row span:last-child, .summary-row span:last-child {
+        flex: 1 1 auto;
+        text-align: right;
+        white-space: nowrap;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        margin: 6px 0;
+      }
+      th, td {
+        padding: 2px 0;
+        vertical-align: top;
+        font-size: var(--body-font);
+      }
+      th {
+        font-weight: 700;
+      }
+      .name-col {
+        text-align: left;
+        padding-right: 5px;
+        word-break: break-word;
+      }
+      .qty-col {
+        width: var(--qty-col-width);
+        text-align: center;
+      }
+      .price-col {
+        width: var(--price-col-width);
+        text-align: right;
+        white-space: nowrap;
+      }
+      .summary-row.total {
+        margin-top: 4px;
+        font-size: var(--total-font);
+        font-weight: 900;
+      }
+      .short-divider {
+        border: none;
+        border-top: 1px dotted #8a8a8a;
+        width: 28mm;
+        margin: 8px auto 6px;
+      }
+      .barcode-wrap.compact {
+        display: flex;
+        justify-content: center;
+        width: 100%;
+        overflow: hidden;
+        margin: 2px 0 0;
+      }
+      .barcode-wrap.compact svg {
+        display: block;
+        max-width: 100%;
+        height: auto;
+      }
+      .barcode-text {
+        font-family: monospace;
+        font-size: 9px;
+        letter-spacing: 0.05em;
+        margin-top: 4px;
+      }
+      .thank-you {
+        margin-top: 6px;
+        font-size: 16px;
+        font-weight: 900;
+        text-transform: uppercase;
+        letter-spacing: 0.01em;
+      }
+      .footer-msg {
+        margin-top: 2px;
+        font-size: 10px;
+      }
+      .note {
+        margin-top: 4px;
+        font-size: 9.5px;
+      }
+      @page {
+        size: var(--paper-width) auto;
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="receipt">
+      <div class="center">
+        <div class="store-name">${escapeHtml(storeName)}</div>
+        ${storeAddress ? `<div class="store-info">${escapeHtml(storeAddress)}</div>` : ''}
+        ${storePhone ? `<div class="store-info">Tel.: ${escapeHtml(storePhone)}</div>` : ''}
+        ${storeTin ? `<div class="store-info">TIN: ${escapeHtml(storeTin)}</div>` : ''}
+      </div>
+      ${order?.test ? `
+        <div class="divider"></div>
+        <p class="center">Test page printed successfully.</p>
+        <p class="center store-info">${escapeHtml(createdAt)}</p>
+      ` : `
+        <div class="divider"></div>
+        <div class="info-row"><span>Cashier:</span><span>${escapeHtml(cashierName)}</span></div>
+        <div class="info-row"><span>Receipt #:</span><span>${escapeHtml(order?.order_number || 'N/A')}</span></div>
+        <div class="info-row"><span>Date:</span><span>${escapeHtml(createdAt)}</span></div>
+        ${order?.customer_name ? `<div class="info-row"><span>Customer:</span><span>${escapeHtml(order.customer_name)}</span></div>` : ''}
+        <div class="divider"></div>
+        <table>
+          <thead>
+            <tr>
+              <th class="name-col">Name</th>
+              <th class="qty-col">Qty</th>
+              <th class="price-col">Price</th>
+            </tr>
+          </thead>
+          <tbody>${itemsHtml}</tbody>
+        </table>
+        <div class="divider"></div>
+        ${hasBreakdown ? `<div class="summary-row"><span>Subtotal</span><span>${escapeHtml(formatPeso(orderSubtotal))}</span></div>` : ''}
+        ${orderDiscount > 0 ? `<div class="summary-row"><span>Discount</span><span>- ${escapeHtml(formatPeso(orderDiscount))}</span></div>` : ''}
+        ${impliedVat > 0.005 ? `<div class="summary-row"><span>VAT</span><span>${escapeHtml(formatPeso(impliedVat))}</span></div>` : ''}
+        <div class="summary-row total"><span>${hasBreakdown ? 'Total' : 'Sub Total'}</span><span>${escapeHtml(formatPeso(orderTotal))}</span></div>
+        ${paymentRows}
+        ${order?.note ? `<p class="note"><strong>Note:</strong> ${escapeHtml(order.note)}</p>` : ''}
+        <div class="short-divider"></div>
+        ${barcodeHtml}
+      `}
+      <div class="center">
+        <div class="thank-you">THANK YOU!</div>
+        <div class="footer-msg">${escapeHtml(receiptFooter)}</div>
+      </div>
+    </div>
+  </body>
+</html>`
 }
 
 function buildReceiptHtml(
@@ -267,8 +536,12 @@ function buildReceiptHtml(
   store: { storeName: string; storeAddress: string; storePhone: string; storeTin: string; receiptFooter: string },
   paperSize: string
 ) {
-  const { storeName, storeAddress, storePhone, storeTin, receiptFooter } = store
   const layout = getReceiptLayout(paperSize)
+  if (paperSize === '58mm') {
+    return buildReceiptHtml58(order, store, layout)
+  }
+
+  const { storeName, storeAddress, storePhone, storeTin, receiptFooter } = store
   const createdAt = formatDateTime(order?.created_at)
   const cashierName = getCashierName(order?.user_id)
   const payments = Array.isArray(order?.payment_breakdown) ? order.payment_breakdown : []
@@ -326,21 +599,7 @@ function buildReceiptHtml(
 
   // ── Barcode script ──────────────────────────────────────────────────────────
   const orderNumber = escapeHtml(order?.order_number || '')
-  const barcodeHtml = (_jsBarcodeScript && orderNumber && !order?.test) ? `
-    <div class="barcode-wrap">
-      <svg id="rcpt-barcode"></svg>
-    </div>
-    <script>${_jsBarcodeScript}</script>
-    <script>
-      try {
-        JsBarcode("#rcpt-barcode", ${JSON.stringify(order?.order_number || '')}, {
-          format: "CODE128", width: ${layout.barcodeWidth}, height: ${layout.barcodeHeight},
-          displayValue: true, fontSize: ${layout.barcodeFontPx}, margin: 0,
-          lineColor: "#000", background: "#fff"
-        });
-      } catch(e) {}
-    </script>
-  ` : (orderNumber && !order?.test ? `<div class="center barcode-text">${orderNumber}</div>` : '')
+  const barcodeHtml = buildBarcodeHtml(order, layout)
 
   // ── Main body ───────────────────────────────────────────────────────────────
   const bodyHtml = order?.test ? `

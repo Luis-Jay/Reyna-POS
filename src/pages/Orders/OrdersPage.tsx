@@ -60,6 +60,7 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
   const [refunding, setRefunding] = useState(false)
   const [refundConfirming, setRefundConfirming] = useState(false)
   const [refundError, setRefundError] = useState('')
+  const [refundAction, setRefundAction] = useState<'refund' | 'damage'>('refund')
 
   const loadItems = async () => {
     if (expanded) { setExpanded(false); return }
@@ -81,6 +82,7 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
     }
     setRefundQtys(qtys)
     setRefundChecked(checked)
+    setRefundAction('refund')
     setShowRefundModal(true)
   }
 
@@ -110,7 +112,7 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
         return { item_id: item.id, product_id: item.product_id ?? null, quantity, subtotal: quantity * unitPrice }
       }).filter(ri => ri.quantity > 0)
 
-      const res = await window.api.orders.partialRefund(order.id, refundItems)
+      const res = await window.api.orders.partialRefund(order.id, refundItems, refundAction)
       if (!res.success) {
         setRefundError(res.error || 'Refund failed.')
         setRefundConfirming(false)
@@ -228,13 +230,37 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
                 <p className="text-xs text-red-500 mb-2 text-center">{refundError}</p>
               )}
 
+              {!refundConfirming && (
+                <div className="mb-3 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setRefundAction('refund')}
+                    className={`rounded-xl px-3 py-2 text-sm font-semibold ${refundAction === 'refund' ? 'bg-red-500 text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    Refund / Return
+                  </button>
+                  <button
+                    onClick={() => setRefundAction('damage')}
+                    className={`rounded-xl px-3 py-2 text-sm font-semibold ${refundAction === 'damage' ? 'bg-amber-500 text-white' : 'border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    Damaged Item
+                  </button>
+                </div>
+              )}
+
               {refundConfirming ? (
                 /* Confirmation step — no native dialog */
                 <div>
                   <p className="text-sm text-center text-gray-700 mb-3">
-                    {isFullRefund ? 'Fully void' : 'Partially refund'} Order #{order.order_number} for{' '}
-                    <span className="font-bold text-red-500">₱{refundTotal.toFixed(2)}</span>?
-                    <br /><span className="text-xs text-gray-400">This will restore inventory and cannot be undone.</span>
+                    {refundAction === 'damage'
+                      ? `Log damaged items from Order #${order.order_number}`
+                      : `${isFullRefund ? 'Fully void' : 'Partially refund'} Order #${order.order_number} for `}
+                    {refundAction === 'refund' ? (
+                      <span className="font-bold text-red-500">₱{refundTotal.toFixed(2)}</span>
+                    ) : (
+                      <span className="font-bold text-amber-500"> worth ₱{refundTotal.toFixed(2)}</span>
+                    )}
+                    ?
+                    <br /><span className="text-xs text-gray-400">{refundAction === 'damage' ? 'Damaged items stay out of sellable inventory and are logged separately from refunds.' : 'This will restore inventory and cannot be undone.'}</span>
                   </p>
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -245,8 +271,8 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
                     <button
                       onClick={handleConfirmRefund}
                       disabled={refunding}
-                      className="py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 disabled:opacity-50"
-                    >{refunding ? 'Processing...' : 'Confirm Refund'}</button>
+                      className={`py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-50 ${refundAction === 'damage' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-red-500 hover:bg-red-600'}`}
+                    >{refunding ? 'Processing...' : refundAction === 'damage' ? 'Confirm Damage Log' : 'Confirm Refund'}</button>
                   </div>
                 </div>
               ) : (
@@ -256,8 +282,8 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
                       <span className="font-semibold text-gray-800">{selectedItems.length}</span> item{selectedItems.length !== 1 ? 's' : ''} selected
                     </div>
                     <div className="text-right">
-                      <p className="text-xs text-gray-400">Refund Amount</p>
-                      <p className="text-lg font-bold text-red-500">₱{refundTotal.toFixed(2)}</p>
+                      <p className="text-xs text-gray-400">{refundAction === 'damage' ? 'Damage Value' : 'Refund Amount'}</p>
+                      <p className={`text-lg font-bold ${refundAction === 'damage' ? 'text-amber-500' : 'text-red-500'}`}>₱{refundTotal.toFixed(2)}</p>
                     </div>
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -268,8 +294,8 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
                     <button
                       onClick={handleProcessRefund}
                       disabled={selectedItems.length === 0}
-                      className="py-2.5 rounded-xl bg-red-500 text-white text-sm font-semibold hover:bg-red-600 disabled:opacity-50"
-                    >Process Refund</button>
+                      className={`py-2.5 rounded-xl text-white text-sm font-semibold disabled:opacity-50 ${refundAction === 'damage' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-red-500 hover:bg-red-600'}`}
+                    >{refundAction === 'damage' ? 'Log Damaged Item' : 'Process Refund'}</button>
                   </div>
                 </>
               )}

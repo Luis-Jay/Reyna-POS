@@ -524,6 +524,31 @@ ALTER TABLE product_orders ADD COLUMN wholesale_price REAL;
     `,
   },
   {
+    name: '020_return_events.sql',
+    sql: `
+CREATE TABLE IF NOT EXISTS return_events (
+  id            TEXT PRIMARY KEY,
+  order_id      TEXT NOT NULL REFERENCES orders(id),
+  order_item_id TEXT REFERENCES order_items(id),
+  product_id    TEXT REFERENCES products(id),
+  item_name     TEXT NOT NULL,
+  event_type    TEXT NOT NULL CHECK(event_type IN ('refund','damage')),
+  quantity      REAL NOT NULL DEFAULT 0,
+  amount        REAL NOT NULL DEFAULT 0,
+  cost_amount   REAL NOT NULL DEFAULT 0,
+  note          TEXT,
+  user_id       TEXT REFERENCES users(id),
+  created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_return_events_order
+ON return_events(order_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_return_events_type_date
+ON return_events(event_type, created_at DESC);
+    `,
+  },
+  {
     name: '007_customer_views.sql',
     sql: `
 DROP VIEW IF EXISTS customers;
@@ -611,6 +636,10 @@ function runMigrations(database: Database.Database) {
     }
     if (migrationName === '019_product_order_batch_prices.sql') {
       return hasColumn('product_orders', 'retail_price') && hasColumn('product_orders', 'wholesale_price')
+    }
+    if (migrationName === '020_return_events.sql') {
+      const table = database.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'return_events'`).get()
+      return !!table
     }
     return false
   }

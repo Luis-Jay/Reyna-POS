@@ -18,6 +18,36 @@ function getProductPricing(db: Database.Database, productId: string) {
   `).get(productId) as { base_cost: number; retail_price: number; wholesale_price: number | null } | undefined
 }
 
+export function getActiveBatchPricing(db: Database.Database, productId: string) {
+  if (!isBatchPricingEnabled(db)) return null
+
+  return db.prepare(`
+    SELECT unit_cost, retail_price, wholesale_price
+    FROM stock_batches
+    WHERE product_id = ? AND remaining_quantity > 0
+    ORDER BY datetime(received_at) ASC, datetime(created_at) ASC, rowid ASC
+    LIMIT 1
+  `).get(productId) as { unit_cost: number; retail_price: number; wholesale_price: number | null } | undefined
+}
+
+export function applyBatchPricing<T extends { id?: string; product_id?: string; base_cost?: number; retail_price?: number; wholesale_price?: number | null; base_price?: number }>(
+  db: Database.Database,
+  product: T,
+) {
+  const productId = product?.id || product?.product_id
+  if (!productId) return product
+  const batch = getActiveBatchPricing(db, productId)
+  if (!batch) return product
+
+  return {
+    ...product,
+    base_cost: batch.unit_cost,
+    base_price: batch.retail_price,
+    retail_price: batch.retail_price,
+    wholesale_price: batch.wholesale_price ?? batch.retail_price,
+  }
+}
+
 function isBatchPricingEnabled(db: Database.Database) {
   const setting = db.prepare(`SELECT value FROM settings WHERE key = 'batch_pricing_enabled'`).get() as { value?: string } | undefined
   const activated = db.prepare(`SELECT value FROM settings WHERE key = 'activated'`).get() as { value?: string } | undefined
@@ -33,13 +63,7 @@ function isBatchPricingEnabled(db: Database.Database) {
 function updateProductPriceFromActiveBatch(db: Database.Database, productId: string) {
   if (!isBatchPricingEnabled(db)) return
 
-  const batch = db.prepare(`
-    SELECT unit_cost, retail_price, wholesale_price
-    FROM stock_batches
-    WHERE product_id = ? AND remaining_quantity > 0
-    ORDER BY datetime(received_at) ASC, datetime(created_at) ASC, rowid ASC
-    LIMIT 1
-  `).get(productId) as { unit_cost: number; retail_price: number; wholesale_price: number | null } | undefined
+  const batch = getActiveBatchPricing(db, productId)
 
   if (!batch) return
 

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
-import { Printer, FileSpreadsheet } from 'lucide-react'
-import { exportToExcel } from '../../utils/export'
+import { Printer, FileSpreadsheet, FileDown } from 'lucide-react'
+import { exportToExcel, exportToPdf } from '../../utils/export'
 
 interface ReportRow {
   barcode: string | null
@@ -103,23 +103,14 @@ export default function InventoryReportPage() {
       </table>
     `
 
-    const win = window.open('', '_blank')
-    if (!win) return
-    win.document.write(`
-      <!DOCTYPE html><html><head>
-      <title>Total Inventory Report</title>
-      <style>
-        body { font-family: Arial, sans-serif; font-size: 11px; color: #111; padding: 24px; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-        th { background: #1a1a1a; color: #fff; text-align: left; padding: 6px 8px; font-size: 10px; }
-        td { padding: 5px 8px; border-bottom: 1px solid #e5e7eb; font-size: 10px; }
-        tr:nth-child(even) td { background: #f9fafb; }
-        @media print { body { padding: 0; } }
-      </style>
-      </head><body>${html}</body></html>
-    `)
-    win.document.close()
-    setTimeout(() => { win.print(); win.close() }, 400)
+    void window.api.documents.printHtml({
+      title: 'Inventory Report',
+      html: `
+        <section style="padding:18mm 16mm;background:#fff;color:#111;">
+          ${html}
+        </section>
+      `,
+    })
   }
 
   const handleExcel = () => {
@@ -137,6 +128,44 @@ export default function InventoryReportPage() {
     }], `Inventory_Report_${new Date().toISOString().slice(0, 10)}`)
   }
 
+  const handlePdf = async () => {
+    const tableRows = rows.map(r => `
+      <tr>
+        <td>${r.barcode ?? '—'}</td>
+        <td>${r.product_name}</td>
+        <td>${r.category_name ?? '—'}</td>
+        <td style="text-align:right">${r.quantity}</td>
+        <td style="text-align:right">₱${r.base_cost.toFixed(2)}</td>
+        <td style="text-align:right">₱${r.retail_price.toFixed(2)}</td>
+        <td style="text-align:right">₱${r.wholesale_price.toFixed(2)}</td>
+      </tr>
+    `).join('')
+
+    await exportToPdf(`Inventory Report ${new Date().toISOString().slice(0, 10)}`, `
+      <section style="padding:18mm 16mm;background:#fff;color:#111;">
+        <div style="text-align:center;margin-bottom:16px;">
+          <h1 style="margin:0;font-size:24px;">${settings.store_name ?? 'Store'}</h1>
+          <p style="margin:8px 0 0;color:#475569;">Inventory Report</p>
+          <p style="margin:6px 0 0;color:#64748b;font-size:12px;">Printed at ${printedAt}</p>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead>
+            <tr>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Product Code</th>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Description</th>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Category</th>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Qty</th>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Cost</th>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Retail</th>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Wholesale</th>
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </section>
+    `)
+  }
+
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       <TopBar title="Inventory Report" back="/inventory" />
@@ -152,6 +181,13 @@ export default function InventoryReportPage() {
               className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
             >
               <FileSpreadsheet size={14} /> Export Excel
+            </button>
+            <button
+              onClick={() => { void handlePdf() }}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-rose-500 text-white rounded-lg hover:bg-rose-600 disabled:opacity-50"
+            >
+              <FileDown size={14} /> Export PDF
             </button>
             <button
               onClick={handlePrint}

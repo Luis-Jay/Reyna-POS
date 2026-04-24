@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
-import { addStockBatch, consumeStockBatches } from '../services/stock-batches.service'
+import { addStockBatch, applyBatchPricing, consumeStockBatches } from '../services/stock-batches.service'
 
 function getStatus(qty: number, threshold: number): string {
   if (qty <= 0) return 'out'
@@ -17,6 +17,7 @@ export function registerInventoryHandlers() {
     const db = getDb()
     const rows: any[] = db.prepare(`
       SELECT
+        p.id as product_id,
         p.barcode,
         p.name        AS product_name,
         c.name        AS category_name,
@@ -32,7 +33,7 @@ export function registerInventoryHandlers() {
       WHERE p.deleted_at IS NULL AND p.is_active = 1
       ORDER BY c.name ASC, p.name ASC
     `).all()
-    return rows
+    return rows.map(row => applyBatchPricing(db, row))
   })
 
   ipcMain.handle(IPC.INVENTORY.GET_ALL, (_, filter?: string) => {
@@ -61,7 +62,7 @@ export function registerInventoryHandlers() {
 
     const rows: any[] = db.prepare(query).all(...params)
     return rows.map(r => ({
-      ...r,
+      ...applyBatchPricing(db, r),
       status: getStatus(r.quantity, r.low_threshold),
     }))
   })

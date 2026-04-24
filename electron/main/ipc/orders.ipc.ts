@@ -39,6 +39,39 @@ function isOrderNumberConflictError(err: unknown) {
   return err instanceof Error && err.message.includes('UNIQUE constraint failed: orders.order_number')
 }
 
+function logReturnEvent(db: ReturnType<typeof getDb>, payload: {
+  orderId: string
+  orderItemId?: string
+  productId?: string
+  itemName: string
+  eventType: 'refund' | 'damage'
+  quantity: number
+  amount: number
+  costAmount: number
+  note?: string
+  userId?: string | null
+}) {
+  db.prepare(`
+    INSERT INTO return_events (
+      id, order_id, order_item_id, product_id, item_name,
+      event_type, quantity, amount, cost_amount, note, user_id
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    uuid(),
+    payload.orderId,
+    payload.orderItemId || null,
+    payload.productId || null,
+    payload.itemName,
+    payload.eventType,
+    payload.quantity,
+    payload.amount,
+    payload.costAmount,
+    payload.note || null,
+    payload.userId || null,
+  )
+}
+
 export function registerOrderHandlers() {
   // CREATE ORDER (main checkout flow)
   ipcMain.handle(IPC.ORDERS.CREATE, (_, orderData: any) => {
@@ -233,6 +266,18 @@ export function registerOrderHandlers() {
         restoreStockBatch(db, item.product_id, item.quantity, item.price, item.cost || 0, 'Refund')
         db.prepare(`UPDATE products SET monthly_sold = MAX(0, monthly_sold - ?) WHERE id = ?`)
           .run(item.quantity, item.product_id)
+        logReturnEvent(db, {
+          orderId: id,
+          orderItemId: item.id,
+          productId: item.product_id,
+          itemName: item.name,
+          eventType: 'refund',
+          quantity: item.quantity,
+          amount: item.subtotal || (item.price * item.quantity),
+          costAmount: (item.cost || 0) * item.quantity,
+          note: 'Full refund',
+          userId: order.user_id || null,
+        })
       }
 
       // Reverse debtor balance if credit order
@@ -249,7 +294,7 @@ export function registerOrderHandlers() {
   })
 
   // PARTIAL REFUND — refund selected items at specified quantities
-  ipcMain.handle(IPC.ORDERS.PARTIAL_REFUND, (_, orderId: string, refundItems: Array<{ item_id: string; qty: number; amount: number }>) => {
+  ipcMain.handle(IPC.ORDERS.PARTIAL_REFUND, (_, orderId: string, refundItems: Array<{ item_id: string; qty: number; amount: number }>, action: 'refund' | 'damage' = 'refund') => {
     const db = getDb()
     const order: any = db.prepare(`SELECT * FROM orders WHERE id = ?`).get(orderId)
     if (!order) return { success: false, error: 'Order not found.' }
@@ -271,16 +316,36 @@ export function registerOrderHandlers() {
       for (const ri of refundItems) {
         const item = allItems.find((i: any) => i.id === ri.item_id)
         if (!item || item.is_custom || !item.product_id) continue
-        db.prepare(`UPDATE inventory SET quantity = quantity + ?, updated_at = datetime('now') WHERE product_id = ?`)
-          .run(ri.qty, item.product_id)
-        db.prepare(`INSERT INTO stock_movements (id, product_id, type, quantity, reference_id, note) VALUES (?, ?, 'return', ?, ?, ?)`)
-          .run(uuid(), item.product_id, ri.qty, orderId, isFullRefund ? 'Full refund' : 'Partial refund')
-        restoreStockBatch(db, item.product_id, ri.qty, item.price, item.cost || 0, isFullRefund ? 'Full refund' : 'Partial refund')
-        db.prepare(`UPDATE products SET monthly_sold = MAX(0, monthly_sold - ?) WHERE id = ?`)
-          .run(ri.qty, item.product_id)
+        if (action === 'refund') {
+          db.prepare(`UPDATE inventory SET quantity = quantity + ?, updated_at = datetime('now') WHERE product_id = ?`)
+            .run(ri.qty, item.product_id)
+          db.prepare(`INSERT INTO stock_movements (id, product_id, type, quantity, reference_id, note) VALUES (?, ?, 'return', ?, ?, ?)`)
+            .run(uuid(), item.product_id, ri.qty, orderId, isFullRefund ? 'Full refund' : 'Partial refund')
+          restoreStockBatch(db, item.product_id, ri.qty, item.price, item.cost || 0, isFullRefund ? 'Full refund' : 'Partial refund')
+          db.prepare(`UPDATE products SET monthly_sold = MAX(0, monthly_sold - ?) WHERE id = ?`)
+            .run(ri.qty, item.product_id)
+        } else {
+          db.prepare(`INSERT INTO stock_movements (id, product_id, type, quantity, reference_id, note) VALUES (?, ?, 'adjustment', ?, ?, ?)`)
+            .run(uuid(), item.product_id, ri.qty, orderId, 'Damaged item')
+        }
+
+        logReturnEvent(db, {
+          orderId,
+          orderItemId: item.id,
+          productId: item.product_id,
+          itemName: item.name,
+          eventType: action,
+          quantity: ri.qty,
+          amount: ri.amount,
+          costAmount: (item.cost || 0) * ri.qty,
+          note: action === 'refund'
+            ? (isFullRefund ? 'Full refund' : 'Partial refund')
+            : 'Damaged item',
+          userId: order.user_id || null,
+        })
       }
 
-      if (isFullRefund) {
+      if (action === 'refund' && isFullRefund) {
         db.prepare(`UPDATE orders SET status = 'void' WHERE id = ?`).run(orderId)
         if (order.is_credit && order.debtor_id) {
           db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_credit = MAX(0, total_credit - ?) WHERE id = ?`)
@@ -288,7 +353,7 @@ export function registerOrderHandlers() {
           db.prepare(`INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note) VALUES (?, ?, 'note', 0, 0, ?, 'Order fully refunded/voided')`)
             .run(uuid(), order.debtor_id, orderId)
         }
-      } else {
+      } else if (action === 'refund') {
         // Partial — append a note, reverse partial debtor balance if credit
         const noteAppend = `Partial refund ₱${refundTotal.toFixed(2)} (${refundItems.length} item${refundItems.length > 1 ? 's' : ''})`
         db.prepare(`UPDATE orders SET note = COALESCE(NULLIF(note,'') || ' | ', '') || ? WHERE id = ?`)
@@ -299,11 +364,15 @@ export function registerOrderHandlers() {
           db.prepare(`INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note) VALUES (?, ?, 'note', 0, 0, ?, ?)`)
             .run(uuid(), order.debtor_id, orderId, `Partial refund: ₱${refundTotal.toFixed(2)}`)
         }
+      } else {
+        const noteAppend = `Damaged items logged (${refundItems.length} item${refundItems.length > 1 ? 's' : ''})`
+        db.prepare(`UPDATE orders SET note = COALESCE(NULLIF(note,'') || ' | ', '') || ? WHERE id = ?`)
+          .run(noteAppend, orderId)
       }
     })()
 
     scheduleAutoSync()
-    return { success: true, is_full: isFullRefund, refund_total: refundTotal }
+    return { success: true, is_full: isFullRefund, refund_total: refundTotal, action }
   })
 
   ipcMain.handle(IPC.ORDERS.GET_PENDING, () => {
@@ -314,5 +383,30 @@ export function registerOrderHandlers() {
       WHERE o.status = 'pending' AND o.deleted_at IS NULL
       GROUP BY o.id ORDER BY o.created_at DESC
     `).all()
+  })
+
+  ipcMain.handle(IPC.ORDERS.GET_RETURN_EVENTS, (_, filters?: { from?: string; to?: string; type?: 'refund' | 'damage' }) => {
+    const db = getDb()
+    let query = `
+      SELECT re.*, o.order_number
+      FROM return_events re
+      JOIN orders o ON o.id = re.order_id
+      WHERE 1 = 1
+    `
+    const params: any[] = []
+    if (filters?.from) {
+      query += ` AND DATE(re.created_at, '+8 hours') >= ?`
+      params.push(filters.from)
+    }
+    if (filters?.to) {
+      query += ` AND DATE(re.created_at, '+8 hours') <= ?`
+      params.push(filters.to)
+    }
+    if (filters?.type) {
+      query += ` AND re.event_type = ?`
+      params.push(filters.type)
+    }
+    query += ` ORDER BY re.created_at DESC`
+    return db.prepare(query).all(...params)
   })
 }

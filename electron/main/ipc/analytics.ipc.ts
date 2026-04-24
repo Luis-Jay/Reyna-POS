@@ -88,24 +88,58 @@ function getDailySeries(from: string, to: string) {
     ORDER BY date ASC
   `).all(from, to)
 
-  const byDate = new Map<string, { sales: number; profit: number; cost: number; expenses: number }>()
+  const refundRows: any[] = db.prepare(`
+    SELECT
+      DATE(created_at, '+8 hours') as date,
+      COALESCE(SUM(CASE WHEN event_type = 'refund' THEN amount ELSE 0 END), 0) as refund_amount,
+      COALESCE(SUM(CASE WHEN event_type = 'refund' THEN cost_amount ELSE 0 END), 0) as refund_cost,
+      COALESCE(SUM(CASE WHEN event_type = 'damage' THEN cost_amount ELSE 0 END), 0) as damage_cost
+    FROM return_events
+    WHERE DATE(created_at, '+8 hours') >= ? AND DATE(created_at, '+8 hours') <= ?
+    GROUP BY DATE(created_at, '+8 hours')
+    ORDER BY date ASC
+  `).all(from, to)
+
+  const byDate = new Map<string, {
+    sales: number
+    profit: number
+    cost: number
+    expenses: number
+    refunds: number
+    damages: number
+  }>()
   for (const row of orderRows) {
     byDate.set(row.date, {
       sales: row.sales || 0,
       profit: row.profit || 0,
       cost: row.cost || 0,
       expenses: 0,
+      refunds: 0,
+      damages: 0,
     })
   }
   for (const row of expenseRows) {
-    const current = byDate.get(row.date) || { sales: 0, profit: 0, cost: 0, expenses: 0 }
+    const current = byDate.get(row.date) || { sales: 0, profit: 0, cost: 0, expenses: 0, refunds: 0, damages: 0 }
     current.expenses = row.expenses || 0
+    byDate.set(row.date, current)
+  }
+  for (const row of refundRows) {
+    const current = byDate.get(row.date) || { sales: 0, profit: 0, cost: 0, expenses: 0, refunds: 0, damages: 0 }
+    const refundAmount = row.refund_amount || 0
+    const refundCost = row.refund_cost || 0
+    const damageCost = row.damage_cost || 0
+    current.sales -= refundAmount
+    current.cost -= refundCost
+    current.profit -= (refundAmount - refundCost)
+    current.expenses += damageCost
+    current.refunds += refundAmount
+    current.damages += damageCost
     byDate.set(row.date, current)
   }
 
   const series = []
   for (let cursor = from; cursor <= to; cursor = shiftDays(cursor, 1)) {
-    const point = byDate.get(cursor) || { sales: 0, profit: 0, cost: 0, expenses: 0 }
+    const point = byDate.get(cursor) || { sales: 0, profit: 0, cost: 0, expenses: 0, refunds: 0, damages: 0 }
     series.push({
       date: cursor,
       sales: point.sales,
@@ -175,8 +209,22 @@ export function registerAnalyticsHandlers() {
       WHERE DATE(date) >= ? AND DATE(date) <= ?
     `).get(from, to)
 
-    const net_profit = (row?.total_sales || 0) - (row?.total_cost || 0)
-    const total_expenses = expenses?.total_expenses || 0
+    const returnAdjustments: any = db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN event_type = 'refund' THEN amount ELSE 0 END), 0) as refund_amount,
+        COALESCE(SUM(CASE WHEN event_type = 'refund' THEN cost_amount ELSE 0 END), 0) as refund_cost,
+        COALESCE(SUM(CASE WHEN event_type = 'damage' THEN cost_amount ELSE 0 END), 0) as damage_cost
+      FROM return_events
+      WHERE DATE(created_at, '+8 hours') >= ? AND DATE(created_at, '+8 hours') <= ?
+    `).get(from, to)
+
+    const refundAmount = returnAdjustments?.refund_amount || 0
+    const refundCost = returnAdjustments?.refund_cost || 0
+    const damageCost = returnAdjustments?.damage_cost || 0
+    const netSales = (row?.total_sales || 0) - refundAmount
+    const netCost = (row?.total_cost || 0) - refundCost
+    const net_profit = netSales - netCost
+    const total_expenses = (expenses?.total_expenses || 0) + damageCost
     const net_income = net_profit - total_expenses
 
     const debt: any = db.prepare(`
@@ -189,10 +237,10 @@ export function registerAnalyticsHandlers() {
     `).get(from, to)
 
     return {
-      total_sales: row?.total_sales || 0,
+      total_sales: netSales,
       net_profit,
       net_income,
-      total_cost: row?.total_cost || 0,
+      total_cost: netCost,
       total_expenses,
       order_count: row?.order_count || 0,
       avg_sale: row?.avg_sale || 0,
@@ -319,10 +367,19 @@ export function registerAnalyticsHandlers() {
       WHERE DATE(date) >= ? AND DATE(date) <= ?
     `).get(from, to)
 
-    const revenue = sales?.total_sales || 0
-    const costOfGoodsSold = sales?.total_cost || 0
+    const returnAdjustments: any = db.prepare(`
+      SELECT
+        COALESCE(SUM(CASE WHEN event_type = 'refund' THEN amount ELSE 0 END), 0) as refund_amount,
+        COALESCE(SUM(CASE WHEN event_type = 'refund' THEN cost_amount ELSE 0 END), 0) as refund_cost,
+        COALESCE(SUM(CASE WHEN event_type = 'damage' THEN cost_amount ELSE 0 END), 0) as damage_cost
+      FROM return_events
+      WHERE DATE(created_at, '+8 hours') >= ? AND DATE(created_at, '+8 hours') <= ?
+    `).get(from, to)
+
+    const revenue = (sales?.total_sales || 0) - (returnAdjustments?.refund_amount || 0)
+    const costOfGoodsSold = (sales?.total_cost || 0) - (returnAdjustments?.refund_cost || 0)
     const grossProfit = revenue - costOfGoodsSold
-    const operatingExpenses = expensesResult?.total_expenses || 0
+    const operatingExpenses = (expensesResult?.total_expenses || 0) + (returnAdjustments?.damage_cost || 0)
     const netIncome = grossProfit - operatingExpenses
     const cashOnHandEstimate = (sales?.cash_sales || 0) + (debtorPayments?.paid || 0)
     const accountsReceivable = debtors?.receivables || 0
@@ -384,6 +441,142 @@ export function registerAnalyticsHandlers() {
         note: 'This is an operational estimate based on recorded sales, debtor balances, payments, and current inventory cost. Inventory valuation reflects present-day stock levels and costs, not historical values at period end. It is not a full accounting ledger.',
       },
     }
+  })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_EXPENSE_REPORT, (_, periodOrRange: AnalyticsRangeInput) => {
+    const db = getDb()
+    const { from, to } = resolveDateRange(periodOrRange)
+    const rows = db.prepare(`
+      SELECT id, category, description, amount, date
+      FROM expenses
+      WHERE DATE(date) >= ? AND DATE(date) <= ?
+      ORDER BY DATE(date) DESC, created_at DESC
+    `).all(from, to)
+    const total = (rows as any[]).reduce((sum, row) => sum + (row.amount || 0), 0)
+    return { period: { from, to }, rows, total }
+  })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_PAYMENTS_REPORT, (_, periodOrRange: AnalyticsRangeInput) => {
+    const db = getDb()
+    const { from, to } = resolveDateRange(periodOrRange)
+    const orders: any[] = db.prepare(`
+      SELECT order_number, total, payment_breakdown, created_at
+      FROM orders
+      WHERE deleted_at IS NULL
+        AND status = 'completed'
+        AND exclude_sales = 0
+        AND DATE(created_at, '+8 hours') >= ?
+        AND DATE(created_at, '+8 hours') <= ?
+      ORDER BY created_at DESC
+    `).all(from, to)
+
+    const rows: any[] = []
+    for (const order of orders) {
+      let breakdown: any[] = []
+      try { breakdown = JSON.parse(order.payment_breakdown || '[]') } catch { breakdown = [] }
+      if (breakdown.length === 0) {
+        rows.push({
+          date: order.created_at,
+          order_number: order.order_number,
+          method: 'cash',
+          amount: order.total,
+        })
+        continue
+      }
+      for (const entry of breakdown) {
+        rows.push({
+          date: order.created_at,
+          order_number: order.order_number,
+          method: entry.method || 'cash',
+          amount: entry.amount || 0,
+        })
+      }
+    }
+
+    return {
+      period: { from, to },
+      rows,
+      total: rows.reduce((sum, row) => sum + row.amount, 0),
+    }
+  })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_CUSTOMER_REPORT, (_, periodOrRange: AnalyticsRangeInput) => {
+    const db = getDb()
+    const { from, to } = resolveDateRange(periodOrRange)
+    const rows = db.prepare(`
+      SELECT
+        d.id,
+        d.name,
+        d.phone,
+        d.balance,
+        d.total_credit,
+        d.total_paid,
+        COALESCE(SUM(CASE WHEN dt.type = 'debt' THEN dt.amount ELSE 0 END), 0) as period_credit,
+        COALESCE(SUM(CASE WHEN dt.type = 'payment' THEN dt.amount ELSE 0 END), 0) as period_paid
+      FROM debtors d
+      LEFT JOIN debtor_transactions dt
+        ON dt.debtor_id = d.id
+        AND DATE(dt.created_at, '+8 hours') >= ?
+        AND DATE(dt.created_at, '+8 hours') <= ?
+      WHERE d.deleted_at IS NULL
+      GROUP BY d.id
+      ORDER BY d.balance DESC, d.name ASC
+    `).all(from, to)
+    return { period: { from, to }, rows }
+  })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_RETURN_REPORT, (_, periodOrRange: AnalyticsRangeInput) => {
+    const db = getDb()
+    const { from, to } = resolveDateRange(periodOrRange)
+    const rows = db.prepare(`
+      SELECT
+        re.*,
+        o.order_number
+      FROM return_events re
+      JOIN orders o ON o.id = re.order_id
+      WHERE DATE(re.created_at, '+8 hours') >= ?
+        AND DATE(re.created_at, '+8 hours') <= ?
+      ORDER BY re.created_at DESC
+    `).all(from, to)
+
+    return {
+      period: { from, to },
+      rows,
+      refund_total: (rows as any[]).reduce((sum, row) => sum + (row.event_type === 'refund' ? row.amount : 0), 0),
+      damage_total: (rows as any[]).reduce((sum, row) => sum + (row.event_type === 'damage' ? row.cost_amount : 0), 0),
+    }
+  })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_Z_READING, (_, periodOrRange: AnalyticsRangeInput) => {
+    const report = resolveDateRange(periodOrRange)
+    const summary = getDb().prepare(`
+      SELECT
+        COUNT(*) as receipt_count,
+        COALESCE(SUM(total), 0) as gross_sales
+      FROM orders
+      WHERE deleted_at IS NULL
+        AND status = 'completed'
+        AND exclude_sales = 0
+        AND DATE(created_at, '+8 hours') >= ?
+        AND DATE(created_at, '+8 hours') <= ?
+    `).get(report.from, report.to) as any
+    return { period: report, ...summary }
+  })
+
+  ipcMain.handle(IPC.ANALYTICS.GET_E_SALES, (_, periodOrRange: AnalyticsRangeInput) => {
+    const { from, to } = resolveDateRange(periodOrRange)
+    const row: any = getDb().prepare(`
+      SELECT
+        COALESCE(SUM(total), 0) as net_sales,
+        COALESCE(COUNT(*), 0) as transaction_count
+      FROM orders
+      WHERE deleted_at IS NULL
+        AND status = 'completed'
+        AND exclude_sales = 0
+        AND DATE(created_at, '+8 hours') >= ?
+        AND DATE(created_at, '+8 hours') <= ?
+    `).get(from, to)
+    return { period: { from, to }, ...row }
   })
 
   ipcMain.handle(IPC.ANALYTICS.GET_TOP_DEBTORS, () => {
