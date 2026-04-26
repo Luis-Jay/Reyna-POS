@@ -3,13 +3,32 @@ import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
-import { addStockBatch, applyBatchPricing, consumeStockBatches } from '../services/stock-batches.service'
+import { addStockBatch, applyBatchPricing, consumeStockBatches, getRemainingStockBatches } from '../services/stock-batches.service'
 
 function getStatus(qty: number, threshold: number): string {
   if (qty <= 0) return 'out'
   if (qty <= threshold / 2) return 'critical'
   if (qty <= threshold) return 'low'
   return 'safe'
+}
+
+function withBatchDetails(db: ReturnType<typeof getDb>, row: any) {
+  const priceTiers = getRemainingStockBatches(db, row.product_id || row.id).map(batch => ({
+    id: batch.id,
+    quantity: batch.remaining_quantity,
+    unit_cost: batch.unit_cost,
+    retail_price: batch.retail_price,
+    wholesale_price: batch.wholesale_price,
+    received_at: batch.received_at,
+    note: batch.note,
+    source_order_id: batch.source_order_id,
+  }))
+
+  return {
+    ...applyBatchPricing(db, row),
+    price_tiers: priceTiers,
+    price_tier_count: priceTiers.length,
+  }
 }
 
 export function registerInventoryHandlers() {
@@ -33,7 +52,7 @@ export function registerInventoryHandlers() {
       WHERE p.deleted_at IS NULL AND p.is_active = 1
       ORDER BY c.name ASC, p.name ASC
     `).all()
-    return rows.map(row => applyBatchPricing(db, row))
+    return rows.map(row => withBatchDetails(db, row))
   })
 
   ipcMain.handle(IPC.INVENTORY.GET_ALL, (_, filter?: string) => {
@@ -62,7 +81,7 @@ export function registerInventoryHandlers() {
 
     const rows: any[] = db.prepare(query).all(...params)
     return rows.map(r => ({
-      ...applyBatchPricing(db, r),
+      ...withBatchDetails(db, r),
       status: getStatus(r.quantity, r.low_threshold),
     }))
   })

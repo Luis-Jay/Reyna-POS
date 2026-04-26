@@ -152,6 +152,39 @@ function getDailySeries(from: string, to: string) {
   return series
 }
 
+function getSalesSnapshot(db: ReturnType<typeof getDb>, from: string, to: string) {
+  return db.prepare(`
+    SELECT
+      COALESCE(COUNT(o.id), 0) as receipt_count,
+      COALESCE(SUM(o.subtotal), 0) as gross_sales,
+      COALESCE(SUM(o.discount), 0) as total_discounts,
+      COALESCE(SUM(o.total), 0) as total_sales,
+      COALESCE(SUM(CASE WHEN o.is_credit = 0 THEN o.total ELSE 0 END), 0) as cash_sales,
+      COALESCE(SUM(CASE WHEN o.is_credit = 1 THEN o.total ELSE 0 END), 0) as credit_sales,
+      COALESCE(SUM(
+        (SELECT COALESCE(SUM(oi.cost * oi.quantity),0)
+         FROM order_items oi WHERE oi.order_id = o.id)
+      ), 0) as total_cost
+    FROM orders o
+    WHERE o.deleted_at IS NULL
+      AND o.status = 'completed'
+      AND o.exclude_sales = 0
+      AND DATE(o.created_at, '+8 hours') >= ?
+      AND DATE(o.created_at, '+8 hours') <= ?
+  `).get(from, to) as any
+}
+
+function getReturnSnapshot(db: ReturnType<typeof getDb>, from: string, to: string) {
+  return db.prepare(`
+    SELECT
+      COALESCE(SUM(CASE WHEN event_type = 'refund' THEN amount ELSE 0 END), 0) as refund_amount,
+      COALESCE(SUM(CASE WHEN event_type = 'refund' THEN cost_amount ELSE 0 END), 0) as refund_cost,
+      COALESCE(SUM(CASE WHEN event_type = 'damage' THEN cost_amount ELSE 0 END), 0) as damage_cost
+    FROM return_events
+    WHERE DATE(created_at, '+8 hours') >= ? AND DATE(created_at, '+8 hours') <= ?
+  `).get(from, to) as any
+}
+
 export function registerAnalyticsHandlers() {
   ipcMain.handle(IPC.ANALYTICS.GET_DASHBOARD, () => {
     const db = getDb()
@@ -318,22 +351,7 @@ export function registerAnalyticsHandlers() {
     const db = getDb()
     const { from, to } = resolveDateRange(periodOrRange)
 
-    const sales: any = db.prepare(`
-      SELECT
-        COALESCE(SUM(o.total), 0) as total_sales,
-        COALESCE(SUM(CASE WHEN o.is_credit = 0 THEN o.total ELSE 0 END), 0) as cash_sales,
-        COALESCE(SUM(CASE WHEN o.is_credit = 1 THEN o.total ELSE 0 END), 0) as credit_sales,
-        COALESCE(SUM(
-          (SELECT COALESCE(SUM(oi.cost * oi.quantity),0)
-           FROM order_items oi WHERE oi.order_id = o.id)
-        ), 0) as total_cost
-      FROM orders o
-      WHERE o.deleted_at IS NULL
-        AND o.status = 'completed'
-        AND o.exclude_sales = 0
-        AND DATE(o.created_at, '+8 hours') >= ?
-        AND DATE(o.created_at, '+8 hours') <= ?
-    `).get(from, to)
+    const sales = getSalesSnapshot(db, from, to)
 
     const debtors: any = db.prepare(`
       SELECT
@@ -367,14 +385,7 @@ export function registerAnalyticsHandlers() {
       WHERE DATE(date) >= ? AND DATE(date) <= ?
     `).get(from, to)
 
-    const returnAdjustments: any = db.prepare(`
-      SELECT
-        COALESCE(SUM(CASE WHEN event_type = 'refund' THEN amount ELSE 0 END), 0) as refund_amount,
-        COALESCE(SUM(CASE WHEN event_type = 'refund' THEN cost_amount ELSE 0 END), 0) as refund_cost,
-        COALESCE(SUM(CASE WHEN event_type = 'damage' THEN cost_amount ELSE 0 END), 0) as damage_cost
-      FROM return_events
-      WHERE DATE(created_at, '+8 hours') >= ? AND DATE(created_at, '+8 hours') <= ?
-    `).get(from, to)
+    const returnAdjustments = getReturnSnapshot(db, from, to)
 
     const revenue = (sales?.total_sales || 0) - (returnAdjustments?.refund_amount || 0)
     const costOfGoodsSold = (sales?.total_cost || 0) - (returnAdjustments?.refund_cost || 0)
@@ -425,6 +436,9 @@ export function registerAnalyticsHandlers() {
         net_profit: netIncome,
       },
       income_statement: {
+        gross_sales: sales?.gross_sales || 0,
+        discounts: sales?.total_discounts || 0,
+        returns: returnAdjustments?.refund_amount || 0,
         net_sales: revenue,
         cost_of_sales: costOfGoodsSold,
         gross_income: grossProfit,
@@ -459,39 +473,23 @@ export function registerAnalyticsHandlers() {
   ipcMain.handle(IPC.ANALYTICS.GET_PAYMENTS_REPORT, (_, periodOrRange: AnalyticsRangeInput) => {
     const db = getDb()
     const { from, to } = resolveDateRange(periodOrRange)
-    const orders: any[] = db.prepare(`
-      SELECT order_number, total, payment_breakdown, created_at
-      FROM orders
-      WHERE deleted_at IS NULL
-        AND status = 'completed'
-        AND exclude_sales = 0
-        AND DATE(created_at, '+8 hours') >= ?
-        AND DATE(created_at, '+8 hours') <= ?
-      ORDER BY created_at DESC
+    const rows: any[] = db.prepare(`
+      SELECT
+        dt.id,
+        dt.created_at as date,
+        d.name as customer_name,
+        d.phone as customer_phone,
+        dt.amount,
+        dt.note,
+        o.order_number
+      FROM debtor_transactions dt
+      JOIN debtors d ON d.id = dt.debtor_id
+      LEFT JOIN orders o ON o.id = dt.order_id
+      WHERE dt.type = 'payment'
+        AND DATE(dt.created_at, '+8 hours') >= ?
+        AND DATE(dt.created_at, '+8 hours') <= ?
+      ORDER BY dt.created_at DESC
     `).all(from, to)
-
-    const rows: any[] = []
-    for (const order of orders) {
-      let breakdown: any[] = []
-      try { breakdown = JSON.parse(order.payment_breakdown || '[]') } catch { breakdown = [] }
-      if (breakdown.length === 0) {
-        rows.push({
-          date: order.created_at,
-          order_number: order.order_number,
-          method: 'cash',
-          amount: order.total,
-        })
-        continue
-      }
-      for (const entry of breakdown) {
-        rows.push({
-          date: order.created_at,
-          order_number: order.order_number,
-          method: entry.method || 'cash',
-          amount: entry.amount || 0,
-        })
-      }
-    }
 
     return {
       period: { from, to },
@@ -549,34 +547,48 @@ export function registerAnalyticsHandlers() {
 
   ipcMain.handle(IPC.ANALYTICS.GET_Z_READING, (_, periodOrRange: AnalyticsRangeInput) => {
     const report = resolveDateRange(periodOrRange)
-    const summary = getDb().prepare(`
-      SELECT
-        COUNT(*) as receipt_count,
-        COALESCE(SUM(total), 0) as gross_sales
-      FROM orders
-      WHERE deleted_at IS NULL
-        AND status = 'completed'
-        AND exclude_sales = 0
+    const db = getDb()
+    const sales = getSalesSnapshot(db, report.from, report.to)
+    const returns = getReturnSnapshot(db, report.from, report.to)
+    const creditPayments: any = db.prepare(`
+      SELECT COALESCE(SUM(amount), 0) as total
+      FROM debtor_transactions
+      WHERE type = 'payment'
         AND DATE(created_at, '+8 hours') >= ?
         AND DATE(created_at, '+8 hours') <= ?
-    `).get(report.from, report.to) as any
-    return { period: report, ...summary }
+    `).get(report.from, report.to)
+
+    return {
+      period: report,
+      receipt_count: sales?.receipt_count || 0,
+      gross_sales: sales?.gross_sales || 0,
+      discounts: sales?.total_discounts || 0,
+      returns: returns?.refund_amount || 0,
+      net_sales: (sales?.total_sales || 0) - (returns?.refund_amount || 0),
+      cash_sales: sales?.cash_sales || 0,
+      credit_sales: sales?.credit_sales || 0,
+      credit_collections: creditPayments?.total || 0,
+    }
   })
 
   ipcMain.handle(IPC.ANALYTICS.GET_E_SALES, (_, periodOrRange: AnalyticsRangeInput) => {
     const { from, to } = resolveDateRange(periodOrRange)
-    const row: any = getDb().prepare(`
-      SELECT
-        COALESCE(SUM(total), 0) as net_sales,
-        COALESCE(COUNT(*), 0) as transaction_count
-      FROM orders
-      WHERE deleted_at IS NULL
-        AND status = 'completed'
-        AND exclude_sales = 0
-        AND DATE(created_at, '+8 hours') >= ?
-        AND DATE(created_at, '+8 hours') <= ?
-    `).get(from, to)
-    return { period: { from, to }, ...row }
+    const db = getDb()
+    const sales = getSalesSnapshot(db, from, to)
+    const returns = getReturnSnapshot(db, from, to)
+    const netSales = (sales?.total_sales || 0) - (returns?.refund_amount || 0)
+
+    return {
+      period: { from, to },
+      gross_sales: sales?.gross_sales || 0,
+      total_discounts: sales?.total_discounts || 0,
+      total_returns: returns?.refund_amount || 0,
+      net_sales: netSales,
+      transaction_count: sales?.receipt_count || 0,
+      average_sale: (sales?.receipt_count || 0) > 0 ? netSales / sales.receipt_count : 0,
+      cash_sales: sales?.cash_sales || 0,
+      credit_sales: sales?.credit_sales || 0,
+    }
   })
 
   ipcMain.handle(IPC.ANALYTICS.GET_TOP_DEBTORS, () => {

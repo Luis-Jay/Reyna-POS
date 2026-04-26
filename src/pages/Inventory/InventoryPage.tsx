@@ -41,6 +41,9 @@ export default function InventoryPage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editMode, setEditMode] = useState<EditMode>('add')
   const [stockQty, setStockQty] = useState('')
+  const [stockUnitCost, setStockUnitCost] = useState('')
+  const [stockRetailPrice, setStockRetailPrice] = useState('')
+  const [stockWholesalePrice, setStockWholesalePrice] = useState('')
   const [counts, setCounts] = useState({ total: 0, safe: 0, low: 0, critical: 0 })
 
   // Order modal
@@ -53,8 +56,6 @@ export default function InventoryPage() {
   const [orderExpected, setOrderExpected] = useState('')
   const [orderNotes, setOrderNotes] = useState('')
   const [placingOrder, setPlacingOrder] = useState(false)
-  const [batchPricingAvailable, setBatchPricingAvailable] = useState(false)
-
   // Pending orders sheet
   const [showPending, setShowPending] = useState(false)
   const [ordersTab, setOrdersTab] = useState<'pending' | 'all'>('pending')
@@ -135,32 +136,35 @@ export default function InventoryPage() {
   }
 
   useEffect(() => { load() }, [filter, search])
-  useEffect(() => {
-    Promise.all([
-      window.api.activation.getStatus(),
-      window.api.settings.getAll(),
-    ]).then(([activation, settings]: any[]) => {
-      setBatchPricingAvailable(activation?.activated === true && settings?.batch_pricing_enabled === 'true')
-    }).catch(() => setBatchPricingAvailable(false))
-  }, [])
 
-  const openEdit = (productId: string) => {
-    setEditingId(productId)
+  const openEdit = (item: InventoryItem) => {
+    const activeTier = item.price_tiers?.[0]
+    setEditingId(item.product_id)
     setEditMode('add')
     setStockQty('')
+    setStockUnitCost(String(activeTier?.unit_cost ?? item.base_cost ?? 0))
+    setStockRetailPrice(String(activeTier?.retail_price ?? item.retail_price ?? item.base_price ?? 0))
+    setStockWholesalePrice(String(activeTier?.wholesale_price ?? item.wholesale_price ?? item.retail_price ?? item.base_price ?? 0))
   }
 
   const handleConfirm = async (productId: string) => {
     const qty = parseFloat(stockQty)
     if (isNaN(qty)) return
     if (editMode === 'add') {
-      await window.api.inventory.addStock(productId, qty)
+      await window.api.inventory.addStock(productId, qty, undefined, {
+        unit_cost: parseFloat(stockUnitCost) || 0,
+        retail_price: parseFloat(stockRetailPrice) || 0,
+        wholesale_price: parseFloat(stockWholesalePrice) || parseFloat(stockRetailPrice) || 0,
+      })
     } else {
       if (qty < 0) return
       await window.api.inventory.setStock(productId, qty)
     }
     setEditingId(null)
     setStockQty('')
+    setStockUnitCost('')
+    setStockRetailPrice('')
+    setStockWholesalePrice('')
     load()
   }
 
@@ -191,8 +195,8 @@ export default function InventoryPage() {
         vendor_name: vendorName || null,
         quantity: parseFloat(orderQty) || 0,
         unit_cost: parseFloat(orderCost) || 0,
-        retail_price: batchPricingAvailable ? parseFloat(orderRetailPrice) || 0 : null,
-        wholesale_price: batchPricingAvailable ? parseFloat(orderWholesalePrice) || 0 : null,
+        retail_price: parseFloat(orderRetailPrice) || 0,
+        wholesale_price: parseFloat(orderWholesalePrice) || parseFloat(orderRetailPrice) || 0,
         expected_at: orderExpected || null,
         notes: orderNotes || null,
       })
@@ -320,6 +324,20 @@ export default function InventoryPage() {
                     <p className="font-bold text-lg text-green-600">{item.monthly_sold}</p>
                   </div>
                 </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(item.price_tiers?.length ? item.price_tiers : [{
+                    id: item.product_id,
+                    quantity: item.quantity,
+                    unit_cost: item.base_cost ?? 0,
+                    retail_price: item.retail_price ?? item.base_price ?? 0,
+                    wholesale_price: item.wholesale_price ?? item.retail_price ?? item.base_price ?? 0,
+                    received_at: item.updated_at,
+                  }]).map(tier => (
+                    <span key={tier.id} className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-600">
+                      {tier.quantity} pcs • R ₱{tier.retail_price.toFixed(2)} • W ₱{tier.wholesale_price.toFixed(2)}
+                    </span>
+                  ))}
+                </div>
               </div>
 
               {isEditing ? (
@@ -348,8 +366,45 @@ export default function InventoryPage() {
                       onClick={() => handleConfirm(item.product_id)}
                       className={`text-white px-3 py-1.5 rounded-lg text-sm font-medium ${editMode === 'add' ? 'bg-green-500 hover:bg-green-600' : 'bg-purple-500 hover:bg-purple-600'}`}
                     >{editMode === 'add' ? 'Add' : 'Set'}</button>
-                    <button onClick={() => { setEditingId(null); setStockQty('') }} className="text-gray-400 hover:text-gray-600 px-1">✕</button>
+                    <button onClick={() => {
+                      setEditingId(null)
+                      setStockQty('')
+                      setStockUnitCost('')
+                      setStockRetailPrice('')
+                      setStockWholesalePrice('')
+                    }} className="text-gray-400 hover:text-gray-600 px-1">✕</button>
                   </div>
+                  {editMode === 'add' && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <input
+                        value={stockUnitCost}
+                        onChange={e => setStockUnitCost(e.target.value)}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="Cost"
+                        className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs focus:outline-none"
+                      />
+                      <input
+                        value={stockRetailPrice}
+                        onChange={e => setStockRetailPrice(e.target.value)}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="Retail"
+                        className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs focus:outline-none"
+                      />
+                      <input
+                        value={stockWholesalePrice}
+                        onChange={e => setStockWholesalePrice(e.target.value)}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        placeholder="Wholesale"
+                        className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs focus:outline-none"
+                      />
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex items-center gap-2 shrink-0">
@@ -361,7 +416,7 @@ export default function InventoryPage() {
                     <ShoppingCart size={16} />
                   </button>
                   <button
-                    onClick={() => openEdit(item.product_id)}
+                    onClick={() => openEdit(item)}
                     title="Adjust Stock"
                     className="w-11 h-11 bg-emerald-600 text-white rounded-full flex items-center justify-center shadow-sm hover:bg-emerald-700"
                   >
@@ -410,19 +465,13 @@ export default function InventoryPage() {
                 </div>
               </div>
 
-              <div className={`rounded-xl border p-3 ${batchPricingAvailable ? 'border-emerald-100 bg-emerald-50/60' : 'border-amber-100 bg-amber-50/70'}`}>
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
                 <div className="mb-2 flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-xs font-bold uppercase tracking-wide text-gray-700">Batch Price Management</p>
-                    <p className="text-xs text-gray-500">
-                      {batchPricingAvailable
-                        ? 'This price becomes active after older stock is sold out.'
-                        : 'Pro feature. Enable Reyna Pro and Batch Price Management in Settings.'}
-                    </p>
+                    <p className="text-xs font-bold uppercase tracking-wide text-gray-700">Incoming Stock Pricing</p>
+                    <p className="text-xs text-gray-500">This restock will be recorded as its own stock batch and becomes active after older stock is sold out.</p>
                   </div>
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${batchPricingAvailable ? 'bg-emerald-600 text-white' : 'bg-amber-200 text-amber-800'}`}>
-                    {batchPricingAvailable ? 'PRO ON' : 'PRO'}
-                  </span>
+                  <span className="rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-bold text-white">ON</span>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -433,8 +482,7 @@ export default function InventoryPage() {
                       step="0.01"
                       value={orderRetailPrice}
                       onChange={e => setOrderRetailPrice(e.target.value)}
-                      disabled={!batchPricingAvailable}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:bg-white/60 disabled:text-gray-400"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
                     />
                   </div>
                   <div>
@@ -445,8 +493,7 @@ export default function InventoryPage() {
                       step="0.01"
                       value={orderWholesalePrice}
                       onChange={e => setOrderWholesalePrice(e.target.value)}
-                      disabled={!batchPricingAvailable}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:bg-white/60 disabled:text-gray-400"
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
                     />
                   </div>
                 </div>

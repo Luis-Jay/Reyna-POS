@@ -6,6 +6,7 @@ import { exportToExcel, exportToPdf } from '../../utils/export'
 
 interface ReportRow {
   barcode: string | null
+  product_id: string
   product_name: string
   category_name: string | null
   quantity: number
@@ -13,6 +14,15 @@ interface ReportRow {
   retail_price: number
   wholesale_price: number
   description: string | null
+  price_tiers?: Array<{
+    id: string
+    quantity: number
+    unit_cost: number
+    retail_price: number
+    wholesale_price: number
+    received_at: string
+    note?: string | null
+  }>
 }
 
 interface Settings {
@@ -44,6 +54,15 @@ export default function InventoryReportPage() {
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   })
 
+  const batchSummary = (row: ReportRow) => {
+    if (!row.price_tiers?.length) {
+      return `1 tier • ${row.quantity} pcs @ ₱${row.retail_price.toFixed(2)}`
+    }
+    return row.price_tiers
+      .map(tier => `${tier.quantity} pcs @ ₱${tier.retail_price.toFixed(2)}`)
+      .join(' | ')
+  }
+
   const handlePrint = () => {
     const logoHtml = settings.store_logo_data
       ? `<img src="${settings.store_logo_data}" style="width:80px;height:80px;object-fit:cover;border-radius:4px;" />`
@@ -58,6 +77,7 @@ export default function InventoryReportPage() {
         <td style="text-align:right">₱${r.base_cost.toFixed(2)}</td>
         <td style="text-align:right">₱${r.retail_price.toFixed(2)}</td>
         <td style="text-align:right">₱${r.wholesale_price.toFixed(2)}</td>
+        <td>${batchSummary(r)}</td>
       </tr>
     `).join('')
 
@@ -82,6 +102,7 @@ export default function InventoryReportPage() {
             <th style="text-align:right">Cost (₱)</th>
             <th style="text-align:right">Retail Price (₱)</th>
             <th style="text-align:right">Wholesale (₱)</th>
+            <th>Price Tiers</th>
           </tr>
         </thead>
         <tbody>${tableRows}</tbody>
@@ -124,6 +145,7 @@ export default function InventoryReportPage() {
         'Cost (₱)':     r.base_cost,
         'Retail Price (₱)': r.retail_price,
         'Wholesale (₱)': r.wholesale_price,
+        'Price Tiers': batchSummary(r),
       })),
     }], `Inventory_Report_${new Date().toISOString().slice(0, 10)}`)
   }
@@ -138,6 +160,7 @@ export default function InventoryReportPage() {
         <td style="text-align:right">₱${r.base_cost.toFixed(2)}</td>
         <td style="text-align:right">₱${r.retail_price.toFixed(2)}</td>
         <td style="text-align:right">₱${r.wholesale_price.toFixed(2)}</td>
+        <td>${batchSummary(r)}</td>
       </tr>
     `).join('')
 
@@ -158,6 +181,7 @@ export default function InventoryReportPage() {
               <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Cost</th>
               <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Retail</th>
               <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Wholesale</th>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Price Tiers</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
@@ -230,6 +254,7 @@ export default function InventoryReportPage() {
                       <th className="text-right px-3 py-2 font-medium">Cost (₱)</th>
                       <th className="text-right px-3 py-2 font-medium">Retail Price (₱)</th>
                       <th className="text-right px-3 py-2 font-medium">Wholesale (₱)</th>
+                      <th className="text-left px-3 py-2 font-medium">Price Tiers</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -242,6 +267,7 @@ export default function InventoryReportPage() {
                         <td className="px-3 py-1.5 text-gray-600 text-right">{r.base_cost.toFixed(2)}</td>
                         <td className="px-3 py-1.5 text-gray-800 text-right">{r.retail_price.toFixed(2)}</td>
                         <td className="px-3 py-1.5 text-gray-600 text-right">{r.wholesale_price.toFixed(2)}</td>
+                        <td className="px-3 py-1.5 text-[11px] text-gray-500">{batchSummary(r)}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -214,6 +214,9 @@ export default function ReportsPage() {
     if (activeTab === 'income_statement') {
       const report = financials.income_statement
       const rows = [
+        ['Gross Sales', peso(report.gross_sales || 0)],
+        ['Less: Discounts', peso(report.discounts || 0)],
+        ['Less: Returns', peso(report.returns || 0)],
         ['Net Sales', peso(report.net_sales)],
         ['Cost of Sales', peso(report.cost_of_sales)],
         ['Gross Income', peso(report.gross_income)],
@@ -270,20 +273,21 @@ export default function ReportsPage() {
     if (activeTab === 'payments_report') {
       const rows = (paymentsReport?.rows || []).map((row: any) => [
         new Date(row.date).toLocaleString('en-PH'),
-        row.order_number,
-        String(row.method || 'cash').toUpperCase(),
+        row.customer_name,
+        row.order_number || row.note || 'Manual payment',
         peso(row.amount),
       ])
       rows.push(['', '', 'Total', peso(paymentsReport?.total || 0)])
       return {
-        title: 'Payments Report',
+        title: 'Credit Payments Report',
         excelRows: (paymentsReport?.rows || []).map((row: any) => ({
           Date: row.date,
-          Order: row.order_number,
-          Method: row.method,
+          Customer: row.customer_name,
+          Order: row.order_number || '',
+          Note: row.note || '',
           Amount: row.amount,
         })),
-        html: buildDocument('Payments Report', businessName, periodLabel, buildTable(['Date', 'Order #', 'Method', 'Amount'], rows, new Set([3]))),
+        html: buildDocument('Credit Payments Report', businessName, periodLabel, buildTable(['Date', 'Customer', 'Reference', 'Amount'], rows, new Set([3]))),
       }
     }
 
@@ -335,6 +339,12 @@ export default function ReportsPage() {
       const rows = [
         ['Receipt Count', String(zReading?.receipt_count || 0)],
         ['Gross Sales', peso(zReading?.gross_sales || 0)],
+        ['Discounts', peso(zReading?.discounts || 0)],
+        ['Returns', peso(zReading?.returns || 0)],
+        ['Net Sales', peso(zReading?.net_sales || 0)],
+        ['Cash Sales', peso(zReading?.cash_sales || 0)],
+        ['Credit Sales', peso(zReading?.credit_sales || 0)],
+        ['Credit Collections', peso(zReading?.credit_collections || 0)],
       ]
       return {
         title: 'Z-Reading Report',
@@ -344,8 +354,14 @@ export default function ReportsPage() {
     }
 
     const rows = [
+      ['Gross Sales', peso(eSales?.gross_sales || 0)],
+      ['Discounts', peso(eSales?.total_discounts || 0)],
+      ['Returns', peso(eSales?.total_returns || 0)],
       ['Net Sales', peso(eSales?.net_sales || 0)],
       ['Transaction Count', String(eSales?.transaction_count || 0)],
+      ['Average Sale', peso(eSales?.average_sale || 0)],
+      ['Cash Sales', peso(eSales?.cash_sales || 0)],
+      ['Credit Sales', peso(eSales?.credit_sales || 0)],
     ]
     return {
       title: 'E-Sales Report',
@@ -384,6 +400,9 @@ export default function ReportsPage() {
       return (
         <>
           <MetricList rows={[
+            ['Gross Sales', report.gross_sales || 0],
+            ['Less: Discounts', report.discounts || 0],
+            ['Less: Returns', report.returns || 0],
             ['Net Sales', report.net_sales],
             ['Cost of Sales', report.cost_of_sales],
             ['Gross Income', report.gross_income],
@@ -421,7 +440,7 @@ export default function ReportsPage() {
     }
 
     if (activeTab === 'payments_report') {
-      return <TableView headers={['Date', 'Order #', 'Method', 'Amount']} rows={(paymentsReport?.rows || []).map((row: any) => [new Date(row.date).toLocaleString('en-PH'), row.order_number, String(row.method || 'cash').toUpperCase(), peso(row.amount)])} rightAligned={[3]} footer={`Total Payments: ${peso(paymentsReport?.total || 0)}`} />
+      return <TableView headers={['Date', 'Customer', 'Reference', 'Amount']} rows={(paymentsReport?.rows || []).map((row: any) => [new Date(row.date).toLocaleString('en-PH'), row.customer_name, row.order_number || row.note || 'Manual payment', peso(row.amount)])} rightAligned={[3]} footer={`Total Credit Payments: ${peso(paymentsReport?.total || 0)}`} />
     }
 
     if (activeTab === 'return_report') {
@@ -452,10 +471,28 @@ export default function ReportsPage() {
     }
 
     if (activeTab === 'z_reading') {
-      return <MetricList rows={[['Receipt Count', zReading?.receipt_count || 0], ['Gross Sales', zReading?.gross_sales || 0]]} />
+      return <MetricList rows={[
+        ['Receipt Count', String(zReading?.receipt_count || 0)],
+        ['Gross Sales', zReading?.gross_sales || 0],
+        ['Discounts', zReading?.discounts || 0],
+        ['Returns', zReading?.returns || 0],
+        ['Net Sales', zReading?.net_sales || 0],
+        ['Cash Sales', zReading?.cash_sales || 0],
+        ['Credit Sales', zReading?.credit_sales || 0],
+        ['Credit Collections', zReading?.credit_collections || 0],
+      ]} />
     }
 
-    return <MetricList rows={[['Net Sales', eSales?.net_sales || 0], ['Transaction Count', eSales?.transaction_count || 0]]} />
+    return <MetricList rows={[
+      ['Gross Sales', eSales?.gross_sales || 0],
+      ['Discounts', eSales?.total_discounts || 0],
+      ['Returns', eSales?.total_returns || 0],
+      ['Net Sales', eSales?.net_sales || 0],
+      ['Transaction Count', String(eSales?.transaction_count || 0)],
+      ['Average Sale', eSales?.average_sale || 0],
+      ['Cash Sales', eSales?.cash_sales || 0],
+      ['Credit Sales', eSales?.credit_sales || 0],
+    ]} />
   }
 
   return (
@@ -585,7 +622,7 @@ export default function ReportsPage() {
   )
 }
 
-function MetricList({ rows, highlightIndex }: { rows: Array<[string, number]>; highlightIndex?: number }) {
+function MetricList({ rows, highlightIndex }: { rows: Array<[string, number | string]>; highlightIndex?: number }) {
   return (
     <div className="space-y-3">
       {rows.map(([label, amount], index) => (

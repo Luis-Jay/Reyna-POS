@@ -167,6 +167,19 @@ export interface InventoryItem {
   monthly_sold: number
   updated_at: string
   status: 'safe' | 'low' | 'critical' | 'out'
+  price_tier_count?: number
+  price_tiers?: InventoryPriceTier[]
+}
+
+export interface InventoryPriceTier {
+  id: string
+  quantity: number
+  unit_cost: number
+  retail_price: number
+  wholesale_price: number
+  received_at: string
+  note?: string | null
+  source_order_id?: string | null
 }
 
 export interface StockMovement {
