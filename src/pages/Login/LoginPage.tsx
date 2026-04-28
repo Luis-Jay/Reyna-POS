@@ -17,11 +17,52 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  useEffect(() => {
+  // Cloud auth state (web only — Electron always skips this step)
+  const [needsCloudAuth, setNeedsCloudAuth] = useState(false)
+  const [cloudEmail, setCloudEmail] = useState('')
+  const [cloudPassword, setCloudPassword] = useState('')
+  const [cloudError, setCloudError] = useState('')
+  const [cloudLoading, setCloudLoading] = useState(false)
+
+  const loadUsers = () => {
     window.api.auth.getUsers().then((list: User[]) => {
-      setUsers(list.filter(u => u.is_active))
+      setUsers(list.filter((u: User) => u.is_active))
     })
+  }
+
+  useEffect(() => {
+    // If the API supports checkCloudSession (web mode), verify before loading users
+    if (typeof window.api.auth.checkCloudSession === 'function') {
+      window.api.auth.checkCloudSession().then((ok: boolean) => {
+        if (ok) {
+          loadUsers()
+        } else {
+          setNeedsCloudAuth(true)
+        }
+      })
+    } else {
+      loadUsers()
+    }
   }, [])
+
+  const handleCloudLogin = async () => {
+    if (!cloudEmail || !cloudPassword) return
+    setCloudLoading(true)
+    setCloudError('')
+    try {
+      const result = await window.api.auth.cloudLogin({ email: cloudEmail, password: cloudPassword })
+      if (result.success) {
+        setNeedsCloudAuth(false)
+        loadUsers()
+      } else {
+        setCloudError(result.error || 'Invalid email or password.')
+      }
+    } catch (err: any) {
+      setCloudError(err?.message || 'Login failed.')
+    } finally {
+      setCloudLoading(false)
+    }
+  }
 
   const handleSelect = (user: User) => {
     setSelected(user)
@@ -61,6 +102,60 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // ── Cloud auth screen (web only) ───────────────────────────────────────────
+  if (needsCloudAuth) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 text-center">
+            <div className="brand-gradient w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <span className="text-white text-2xl font-black">R</span>
+            </div>
+            <h1 className="text-2xl font-bold text-[var(--text)]">Reyna Advanced POS</h1>
+            <p className="text-[var(--muted)] text-sm mt-1">Sign in to your account</p>
+          </div>
+
+          <div className="glass-panel rounded-2xl p-6 flex flex-col gap-4">
+            <div>
+              <label className="block text-sm font-medium text-[var(--text)] mb-1">Email</label>
+              <input
+                type="email"
+                value={cloudEmail}
+                onChange={e => setCloudEmail(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleCloudLogin()}
+                placeholder="you@example.com"
+                className="w-full px-4 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
+                autoComplete="email"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[var(--text)] mb-1">Password</label>
+              <input
+                type="password"
+                value={cloudPassword}
+                onChange={e => setCloudPassword(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleCloudLogin()}
+                placeholder="••••••••"
+                className="w-full px-4 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
+                autoComplete="current-password"
+              />
+            </div>
+            {cloudError && <p className="text-red-500 text-sm text-center">{cloudError}</p>}
+            <button
+              onClick={handleCloudLogin}
+              disabled={cloudLoading || !cloudEmail || !cloudPassword}
+              className="w-full py-3 rounded-xl brand-gradient text-white font-semibold text-base shadow hover:opacity-90 disabled:opacity-50 transition-opacity"
+            >
+              {cloudLoading ? 'Signing in…' : 'Sign In'}
+            </button>
+          </div>
+
+          <p className="text-center text-xs text-[var(--muted)] mt-8">Powered by Reyna Advanced POS</p>
+        </div>
+      </div>
+    )
   }
 
   // ── User selection screen ───────────────────────────────────────────────────

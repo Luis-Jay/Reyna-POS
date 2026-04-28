@@ -112,6 +112,7 @@ Deno.serve(async (req) => {
         pin: hashedPin,
         role: 'admin',
         is_active: true,
+        permissions: {},
         updated_at: new Date().toISOString(),
       })
 

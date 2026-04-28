@@ -78,7 +78,7 @@ Deno.serve(async (req) => {
     if (req.method === 'GET') {
       const { data: cashiers, error: cashierError } = await supabase
         .from('cashiers')
-        .select('id, name, pin, role, is_active, created_at, updated_at')
+        .select('id, name, pin, role, is_active, created_at, updated_at, permissions')
         .eq('business_id', business.id)
         .order('role', { ascending: false }) // admin first
         .order('name')
@@ -89,6 +89,7 @@ Deno.serve(async (req) => {
 
       const cashiersWithPinStatus = (cashiers ?? []).map(cashier => ({
         ...cashier,
+        permissions: cashier.permissions ?? {},
         has_pin: Boolean(cashier.pin),
         pin: undefined, // Remove the pin field
       }))
@@ -123,6 +124,7 @@ Deno.serve(async (req) => {
           pin: hashedPin,
           role: cashier.role ?? 'cashier',
           is_active: cashier.is_active ?? true,
+          permissions: cashier.permissions ?? {},
           updated_at: new Date().toISOString(),
         })
         if (upsertError) {

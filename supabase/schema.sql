@@ -18,10 +18,12 @@ CREATE TABLE IF NOT EXISTS cashiers (
   pin         TEXT NOT NULL, -- PBKDF2 hashed PIN with salt and pepper (see business-setup/sync-cashiers functions for hashing logic)
   role        TEXT NOT NULL DEFAULT 'cashier' CHECK(role IN ('admin','cashier')),
   is_active   BOOLEAN NOT NULL DEFAULT true,
+  permissions JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE cashiers ENABLE ROW LEVEL SECURITY;
+CREATE INDEX IF NOT EXISTS idx_cashiers_business_name ON cashiers(business_id, name);
 
 -- ─── SHARED CATALOG SYNC ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS catalog_categories (

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Camera, ImageIcon } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import TopBar from '../../components/layout/TopBar'
 import { Category, VariationGroup } from '../../types'
@@ -26,6 +26,7 @@ export default function AddProductPage() {
   const { id } = useParams()
   const isEdit = !!id
   const fileRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
   const barcodeSvgRef = useRef<SVGSVGElement>(null)
 
   const [categories, setCategories] = useState<Category[]>([])
@@ -308,15 +309,38 @@ export default function AddProductPage() {
           <div className="flex flex-col items-center gap-3">
             <div
               onClick={() => fileRef.current?.click()}
-              className="w-28 h-28 bg-gray-100 rounded-xl overflow-hidden cursor-pointer hover:bg-gray-200 flex items-center justify-center border-2 border-dashed border-gray-300"
+              className="w-28 h-28 bg-gray-100 rounded-xl overflow-hidden cursor-pointer hover:bg-gray-200 flex items-center justify-center border-2 border-dashed border-gray-300 transition"
             >
               {imagePreview
                 ? <img src={imagePreview} className="w-full h-full object-cover" />
                 : <span className="text-4xl text-gray-300">+</span>
               }
             </div>
+
+            {/* Hidden inputs */}
             <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleImagePick} />
-            <p className="text-xs text-gray-400">Tap to upload product image</p>
+            <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImagePick} />
+
+            {/* On mobile: two buttons; on desktop: single label */}
+            <div className="flex items-center gap-2">
+              {/* Camera button — visible on mobile, hidden on desktop */}
+              <button
+                type="button"
+                onClick={() => cameraRef.current?.click()}
+                className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50 active:scale-95 transition sm:hidden"
+              >
+                <Camera size={14} /> Take Photo
+              </button>
+              <button
+                type="button"
+                onClick={() => fileRef.current?.click()}
+                className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50 active:scale-95 transition"
+              >
+                <ImageIcon size={14} />
+                <span className="sm:hidden">Choose from Gallery</span>
+                <span className="hidden sm:inline">Upload image</span>
+              </button>
+            </div>
           </div>
 
           {/* Form fields */}

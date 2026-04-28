@@ -40,8 +40,24 @@ export default function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null)
 
   useEffect(() => {
-    window.api.settings.get('setup_completed').then(setupCompleted => {
-      setSetupComplete(setupCompleted === 'true')
+    window.api.settings.get('setup_completed').then(async (setupCompleted: string | null) => {
+      if (setupCompleted === 'true') {
+        setSetupComplete(true)
+        return
+      }
+      // Web: if there's already a valid Supabase session the user has previously
+      // logged in on this browser — treat it as setup complete.
+      if (typeof window.api.auth.checkCloudSession === 'function') {
+        try {
+          const ok = await window.api.auth.checkCloudSession()
+          if (ok) {
+            await window.api.settings.set('setup_completed', 'true')
+            setSetupComplete(true)
+            return
+          }
+        } catch { /* ignore */ }
+      }
+      setSetupComplete(false)
     })
   }, [])
 
