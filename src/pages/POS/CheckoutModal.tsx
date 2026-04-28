@@ -522,6 +522,7 @@ function ReceiptPreviewSheet({
   vatRate: number
 }) {
   const barcodeRef = useRef<SVGSVGElement>(null)
+  const paperSize = storeSettings['paper_size'] || '58mm'
   const createdAt = new Date(order.created_at || Date.now()).toLocaleString('en-PH', {
     timeZone: 'Asia/Manila',
     year: 'numeric',
@@ -540,27 +541,26 @@ function ReceiptPreviewSheet({
         displayValue: false,
         background: '#ffffff',
         lineColor: '#111111',
-        width: 1.5,
-        height: 44,
+        width: paperSize === '80mm' ? 1.45 : 1.02,
+        height: paperSize === '80mm' ? 48 : 34,
         margin: 0,
       })
     } catch {
       svg.innerHTML = ''
     }
-  }, [order?.order_number])
+  }, [order?.order_number, paperSize])
 
   const payments = Array.isArray(order?.payment_breakdown) ? order.payment_breakdown : []
   const subtotal = Number(order?.subtotal || order?.total || 0)
   const discount = Number(order?.discount || 0)
   const total = Number(order?.total || 0)
-  const paperSize = storeSettings['paper_size'] || '58mm'
   // vatAmount = total - (subtotal after discount); must account for discount in the formula
   const vatAmount = vatEnabled ? Math.max(0, total - (subtotal - discount)) : 0
   const hasBreakdown = discount > 0 || vatAmount > 0
 
   if (paperSize === '80mm') {
     return (
-      <div className="mx-auto w-full max-w-[320px] rounded-[24px] bg-white px-6 py-7 font-sans text-[#111] shadow-lg">
+      <div className="mx-auto w-full max-w-[304px] rounded-[24px] bg-white px-4 py-7 font-sans text-[#111] shadow-lg">
         <div className="text-center">
           <p className="text-[20px] font-black uppercase tracking-tight">{storeSettings['store_name'] || 'SUPERMARKET'}</p>
           {storeSettings['store_address'] && <p className="mt-1 text-[11px] leading-4">{storeSettings['store_address']}</p>}
@@ -579,7 +579,7 @@ function ReceiptPreviewSheet({
 
         <Divider />
 
-        <div className="grid grid-cols-[1fr_40px_72px] gap-2 text-[12px] font-medium">
+        <div className="grid grid-cols-[1fr_38px_68px] gap-2 text-[12px] font-medium">
           <span>Name</span>
           <span className="text-center">Qty</span>
           <span className="text-right">Price</span>
@@ -587,7 +587,7 @@ function ReceiptPreviewSheet({
 
         <div className="mt-4 space-y-2 text-[12px]">
           {(order?.items || []).map((item: any, index: number) => (
-            <div key={index} className="grid grid-cols-[1fr_40px_72px] gap-2 items-start">
+            <div key={index} className="grid grid-cols-[1fr_38px_68px] gap-2 items-start">
               <span className="leading-4">{item.name}</span>
               <span className="text-center">{Number(item.quantity || 0) % 1 === 0 ? item.quantity : Number(item.quantity || 0).toFixed(2)}</span>
               <span className="text-right">{formatCurrency(item.subtotal || 0).replace('₱', '₱')}</span>
@@ -647,7 +647,7 @@ function ReceiptPreviewSheet({
           )}
         </div>
 
-        <div className="mx-auto my-5 w-40 border-t border-dotted border-[#777]" />
+        <div className="mx-auto my-5 w-36 border-t border-dotted border-[#777]" />
 
         <div className="flex justify-center">
           <svg ref={barcodeRef} className="max-w-full" />

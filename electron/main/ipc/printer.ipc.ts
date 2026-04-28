@@ -246,18 +246,21 @@ function getReceiptLayout(paperSize: string) {
 
   return {
     paperWidthMm: is80mm ? 80 : 58,
-    contentWidthMm: is80mm ? 72 : 48,
-    horizontalPaddingMm: is80mm ? 4 : 2.2,
+    // Many "80mm" thermal printers only expose ~72mm printable width and can
+    // still clip if we render too close to the right edge, so keep a centered
+    // safety margin for the HTML fallback path.
+    contentWidthMm: is80mm ? 68 : 44,
+    horizontalPaddingMm: is80mm ? 3 : 2.6,
     bodyFontPx: is80mm ? 13 : 10.5,
     infoFontPx: is80mm ? 12 : 10,
     storeNamePx: is80mm ? 21 : 15,
     totalPx: is80mm ? 20 : 17,
-    qtyColPx: is80mm ? 44 : 28,
-    priceColPx: is80mm ? 80 : 50,
-    barcodeHeight: is80mm ? 52 : 34,
-    barcodeWidth: is80mm ? 1.7 : 1.02,
+    qtyColPx: is80mm ? 40 : 26,
+    priceColPx: is80mm ? 72 : 46,
+    barcodeHeight: is80mm ? 48 : 34,
+    barcodeWidth: is80mm ? 1.45 : 1.02,
     barcodeFontPx: is80mm ? 11 : 8,
-    shortDividerWidth: is80mm ? '46mm' : '28mm',
+    shortDividerWidth: is80mm ? '42mm' : '24mm',
     footerGapMm: is80mm ? 6 : 5,
   }
 }
@@ -347,12 +350,14 @@ function buildReceiptHtml58(
         color-scheme: light;
         --paper-width: ${layout.paperWidthMm}mm;
         --content-width: ${layout.contentWidthMm}mm;
+        --side-pad: ${layout.horizontalPaddingMm}mm;
         --body-font: ${layout.bodyFontPx}px;
         --info-font: ${layout.infoFontPx}px;
         --store-name-font: ${layout.storeNamePx}px;
         --total-font: ${layout.totalPx}px;
         --qty-col-width: ${layout.qtyColPx}px;
         --price-col-width: ${layout.priceColPx}px;
+        --short-divider-width: ${layout.shortDividerWidth};
       }
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       html, body {
@@ -360,17 +365,18 @@ function buildReceiptHtml58(
         background: #fff;
       }
       body {
+        background: #fff;
         color: #000;
         font-family: Arial, Helvetica, sans-serif;
         font-size: var(--body-font);
         line-height: 1.25;
-        display: flex;
-        justify-content: center;
+        margin: 0 auto;
       }
       .receipt {
-        width: var(--content-width);
+        width: 100%;
+        max-width: var(--content-width);
         margin: 0 auto;
-        padding: 2.4mm 0 4.5mm;
+        padding: 2.8mm var(--side-pad) 4.5mm;
       }
       .center { text-align: center; }
       .store-name {
@@ -441,7 +447,7 @@ function buildReceiptHtml58(
       .short-divider {
         border: none;
         border-top: 1px dotted #8a8a8a;
-        width: 28mm;
+        width: var(--short-divider-width);
         margin: 8px auto 6px;
       }
       .barcode-wrap.compact {
@@ -665,11 +671,11 @@ function buildReceiptHtml(
         font-family: Arial, Helvetica, sans-serif;
         font-size: var(--body-font);
         line-height: 1.32;
-        display: flex;
-        justify-content: center;
+        margin: 0 auto;
       }
       .receipt {
-        width: var(--content-width);
+        width: 100%;
+        max-width: var(--content-width);
         margin: 0 auto;
         padding: 4mm var(--side-pad) var(--footer-gap);
       }
@@ -819,7 +825,7 @@ async function printHtmlReceipt(
 async function printHtmlContent(html: string, printerInterface: string) {
   const { paperSize } = getPrinterSettings()
   const paperWidthMm  = paperSize === '80mm' ? 80 : 58
-  const windowWidthPx = Math.round(paperWidthMm * 3.7795) + 4
+  const windowWidthPx = Math.round((paperWidthMm + (paperSize === '80mm' ? 8 : 4)) * 3.7795)
 
   const tmpFile = path.join(os.tmpdir(), `reyna_receipt_${Date.now()}.html`)
   fs.writeFileSync(tmpFile, html, 'utf-8')
