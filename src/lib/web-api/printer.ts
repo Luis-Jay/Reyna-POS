@@ -173,17 +173,82 @@ async function getStoreSettings() {
   }
 }
 
-function printHtml(html: string) {
-  const win = window.open('', '_blank', 'width=400,height=600')
-  if (!win) return { success: false, error: 'Pop-up blocked. Please allow pop-ups for this site.' }
-  win.document.write(html)
-  win.document.close()
-  win.focus()
-  setTimeout(() => {
-    win.print()
-    setTimeout(() => win.close(), 500)
-  }, 300)
-  return { success: true }
+function printHtml(html: string): { success: boolean; error?: string } {
+  try {
+    // Use a hidden iframe so mobile browsers don't block it as a popup
+    const blob = new Blob([html], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const iframe = document.createElement('iframe')
+    iframe.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:80mm;height:200mm;border:none;visibility:hidden;'
+    document.body.appendChild(iframe)
+    iframe.onload = () => {
+      iframe.contentWindow?.focus()
+      iframe.contentWindow?.print()
+      setTimeout(() => {
+        document.body.removeChild(iframe)
+        URL.revokeObjectURL(url)
+      }, 2000)
+    }
+    iframe.src = url
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err?.message }
+  }
+}
+
+function buildReceiptText(order: any, store: {
+  storeName: string; storeAddress: string; storePhone: string; receiptFooter: string
+}): string {
+  const { storeName, storeAddress, storePhone, receiptFooter } = store
+  const createdAt = order?.created_at
+    ? new Date(order.created_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })
+
+  const sep = '--------------------------------'
+  const lines: string[] = [
+    storeName.toUpperCase(),
+    storeAddress || '',
+    storePhone ? `Tel: ${storePhone}` : '',
+    sep,
+    `Receipt #: ${order?.order_number || ''}`,
+    `Date: ${createdAt}`,
+    order?.customer_name ? `Customer: ${order.customer_name}` : '',
+    sep,
+    'Item                    Qty  Price',
+    sep,
+  ].filter(l => l !== '')
+
+  for (const item of (order?.items || [])) {
+    const qty = Number(item.quantity || 0)
+    const qtyStr = Number.isInteger(qty) ? String(qty) : qty.toFixed(2)
+    const price = `P${Number(item.subtotal || 0).toFixed(2)}`
+    const name = String(item.name || '').substring(0, 20).padEnd(20)
+    lines.push(`${name} ${qtyStr.padStart(4)}  ${price.padStart(8)}`)
+  }
+
+  lines.push(sep)
+  const total = Number(order?.total || 0)
+  lines.push(`TOTAL: P${total.toFixed(2)}`)
+
+  const payments = Array.isArray(order?.payment_breakdown) ? order.payment_breakdown : []
+  if (order?.is_credit) {
+    lines.push('Payment: Charge to Account')
+  } else if (payments.length > 0) {
+    for (const p of payments) {
+      const method = p.method === 'gcash' ? 'GCASH' : p.method === 'card' ? 'CARD' : 'CASH'
+      lines.push(`${method}: P${Number(p.amount || 0).toFixed(2)}`)
+    }
+  } else if (order?.payment_amount != null) {
+    lines.push(`CASH: P${Number(order.payment_amount).toFixed(2)}`)
+  }
+  if (Number(order?.change_amount || 0) > 0) {
+    lines.push(`CHANGE: P${Number(order.change_amount).toFixed(2)}`)
+  }
+
+  lines.push(sep)
+  lines.push('THANK YOU!')
+  lines.push(receiptFooter)
+  return lines.join('\n')
 }
 
 export const printerApi = {
@@ -193,6 +258,19 @@ export const printerApi = {
       const html = buildReceiptHtml(order, store)
       return printHtml(html)
     } catch (err: any) {
+      return { success: false, error: err?.message }
+    }
+  },
+
+  shareReceipt: async (order: any) => {
+    try {
+      if (!navigator.share) return { success: false, error: 'Share not supported on this browser.' }
+      const store = await getStoreSettings()
+      const text = buildReceiptText(order, store)
+      await navigator.share({ title: `Receipt ${order?.order_number || ''}`, text })
+      return { success: true }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return { success: true } // user cancelled
       return { success: false, error: err?.message }
     }
   },

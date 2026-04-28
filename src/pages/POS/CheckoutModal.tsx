@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, Tag, User, Star, CreditCard } from 'lucide-react'
+import { X, Tag, User, Star, CreditCard, Share2, Printer } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import { useCartStore } from '../../stores/cart.store'
 import { useAuthStore } from '../../stores/auth.store'
@@ -433,38 +433,58 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
             {printError && (
               <p className="px-6 pb-2 text-xs text-red-500 text-center shrink-0">{printError}</p>
             )}
-            <div className="px-6 pb-6 grid grid-cols-2 gap-3 pt-2 shrink-0 border-t border-gray-100 bg-white">
-              <button
-                onClick={() => { setShowReceiptPreview(false); setPrintError(''); onComplete() }}
-                className="py-3 rounded-xl border border-gray-200 text-gray-600 font-semibold hover:bg-gray-50"
-              >
-                Skip Print
-              </button>
-              <button
-                disabled={printing}
-                onClick={async () => {
-                  setPrintError('')
-                  setPrinting(true)
-                  try {
-                    const res = await window.api.printer.printReceipt(completedOrder)
-                    if (!res?.success) {
-                      setPrintError(res?.error || 'Printer unavailable. Check printer settings.')
+            <div className="px-4 pb-5 pt-3 shrink-0 border-t border-gray-100 bg-white space-y-2">
+              {/* Print + Share row */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  disabled={printing}
+                  onClick={async () => {
+                    setPrintError('')
+                    setPrinting(true)
+                    try {
+                      const res = await window.api.printer.printReceipt(completedOrder)
+                      if (!res?.success) {
+                        setPrintError(res?.error || 'Printer unavailable.')
+                        setPrinting(false)
+                        return
+                      }
+                    } catch {
+                      setPrintError('Printer unavailable.')
                       setPrinting(false)
                       return
                     }
-                  } catch {
-                    setPrintError('Printer unavailable. Check printer settings.')
                     setPrinting(false)
-                    return
-                  }
-                  setPrinting(false)
-                  setShowReceiptPreview(false)
-                  setPrintError('')
-                  onComplete()
-                }}
-                className="py-3 rounded-xl bg-[#1a8eff] text-white font-semibold hover:bg-[#0077e6] disabled:opacity-60"
+                    setShowReceiptPreview(false)
+                    setPrintError('')
+                    onComplete()
+                  }}
+                  className="flex items-center justify-center gap-2 py-3 rounded-xl bg-[#1a8eff] text-white font-semibold hover:bg-[#0077e6] disabled:opacity-60"
+                >
+                  <Printer size={16} />
+                  {printing ? 'Printing…' : 'Print'}
+                </button>
+
+                {/* Share via native share sheet (WhatsApp, SMS, etc.) */}
+                {'share' in navigator && (
+                  <button
+                    onClick={async () => {
+                      setPrintError('')
+                      const res = await window.api.printer.shareReceipt(completedOrder)
+                      if (!res?.success && res?.error) setPrintError(res.error)
+                    }}
+                    className="flex items-center justify-center gap-2 py-3 rounded-xl bg-green-500 text-white font-semibold hover:bg-green-600"
+                  >
+                    <Share2 size={16} /> Share
+                  </button>
+                )}
+              </div>
+
+              {/* Skip button */}
+              <button
+                onClick={() => { setShowReceiptPreview(false); setPrintError(''); onComplete() }}
+                className="w-full py-2.5 rounded-xl border border-gray-200 text-gray-500 text-sm font-medium hover:bg-gray-50"
               >
-                {printing ? 'Printing...' : 'Print Receipt'}
+                Skip — Done
               </button>
             </div>
           </div>
