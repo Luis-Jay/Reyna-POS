@@ -37,18 +37,67 @@ function tzFilter(from: string, to: string) {
   }
 }
 
+type CompletedOrderRow = {
+  id: string
+  order_number?: string | null
+  total?: number | null
+  subtotal?: number | null
+  discount?: number | null
+  created_at: string
+}
+
+type CompletedOrderItemRow = {
+  id: string
+  order_id: string
+  product_id?: string | null
+  name: string
+  price?: number | null
+  cost?: number | null
+  quantity?: number | null
+  subtotal?: number | null
+  is_custom?: boolean | null
+}
+
+type CompletedOrderWithItems = CompletedOrderRow & {
+  sales_order_items: CompletedOrderItemRow[]
+}
+
 async function getCompletedOrders(businessId: string, from: string, to: string) {
   const tf = tzFilter(from, to)
-  const { data } = await supabase
+  const { data: orders, error: ordersError } = await supabase
     .from('sales_orders')
-    .select('id, total, subtotal, discount, created_at, sales_order_items(price, cost, quantity, product_id, is_custom)')
+    .select('id, order_number, total, subtotal, discount, created_at')
     .eq('business_id', businessId)
     .eq('status', 'completed')
     .eq('exclude_sales', false)
     .is('deleted_at', null)
     .gte('created_at', tf.from)
     .lte('created_at', tf.to)
-  return data ?? []
+
+  if (ordersError) throw ordersError
+
+  const safeOrders = (orders ?? []) as CompletedOrderRow[]
+  if (safeOrders.length === 0) return [] as CompletedOrderWithItems[]
+
+  const orderIds = safeOrders.map(order => order.id)
+  const { data: items, error: itemsError } = await supabase
+    .from('sales_order_items')
+    .select('id, order_id, product_id, name, price, cost, quantity, subtotal, is_custom')
+    .eq('business_id', businessId)
+    .in('order_id', orderIds)
+
+  if (itemsError) throw itemsError
+
+  const itemsByOrderId: Record<string, CompletedOrderItemRow[]> = {}
+  for (const item of (items ?? []) as CompletedOrderItemRow[]) {
+    if (!itemsByOrderId[item.order_id]) itemsByOrderId[item.order_id] = []
+    itemsByOrderId[item.order_id].push(item)
+  }
+
+  return safeOrders.map(order => ({
+    ...order,
+    sales_order_items: itemsByOrderId[order.id] ?? [],
+  }))
 }
 
 export const analyticsApi = {
@@ -56,18 +105,8 @@ export const analyticsApi = {
     try {
       const businessId = await getBusinessId()
       const today = manilaDate()
-      const tf = tzFilter(today, today)
-
-      const [ordersRes, productsRes] = await Promise.all([
-        supabase.from('sales_orders')
-          .select('id, order_number, total, created_at, sales_order_items(price, cost, quantity)')
-          .eq('business_id', businessId)
-          .eq('status', 'completed')
-          .eq('exclude_sales', false)
-          .is('deleted_at', null)
-          .gte('created_at', tf.from)
-          .lte('created_at', tf.to)
-          .order('created_at', { ascending: false }),
+      const [todayOrders, productsRes] = await Promise.all([
+        getCompletedOrders(businessId, today, today),
         supabase.from('catalog_products')
           .select('id', { count: 'exact', head: true })
           .eq('business_id', businessId)
@@ -75,7 +114,7 @@ export const analyticsApi = {
           .eq('is_active', true),
       ])
 
-      const todayOrders = ordersRes.data ?? []
+      todayOrders.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
       const salesToday = todayOrders.reduce((s, o) => s + (o.total ?? 0), 0)
       const profitToday = todayOrders.reduce((s, o) => {
         const items = (o.sales_order_items ?? []) as any[]
@@ -345,19 +384,27 @@ export const analyticsApi = {
   getSlowMoving: async (periodOrRange?: RangeInput) => {
     try {
       const businessId = await getBusinessId()
-      const { data } = await supabase
-        .from('catalog_products')
-        .select('id, name, monthly_sold, catalog_inventory(quantity)')
-        .eq('business_id', businessId)
-        .is('deleted_at', null)
-        .eq('is_active', true)
-        .order('monthly_sold')
-        .limit(20)
+      const [{ data }, invRes] = await Promise.all([
+        supabase
+          .from('catalog_products')
+          .select('id, name, monthly_sold')
+          .eq('business_id', businessId)
+          .is('deleted_at', null)
+          .eq('is_active', true)
+          .order('monthly_sold')
+          .limit(20),
+        supabase
+          .from('catalog_inventory')
+          .select('product_id, quantity')
+          .eq('business_id', businessId),
+      ])
+      const invMap: Record<string, number> = {}
+      for (const row of invRes.data ?? []) invMap[row.product_id] = row.quantity
       return (data ?? []).map(p => ({
         product_id: p.id,
         name: p.name,
         monthly_sold: p.monthly_sold,
-        stock: (p.catalog_inventory as any)?.[0]?.quantity ?? 0,
+        stock: invMap[p.id] ?? 0,
       }))
     } catch {
       return []
