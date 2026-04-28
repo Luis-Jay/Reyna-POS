@@ -159,6 +159,39 @@ function buildReceiptHtml(order: any, store: {
 </html>`
 }
 
+function isApplePrintBrowser() {
+  if (typeof navigator === 'undefined') return false
+  const ua = navigator.userAgent || ''
+  const isIOS = /iPad|iPhone|iPod/.test(ua)
+  const isIPadDesktopMode = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
+  const isWebKit = /AppleWebKit/.test(ua)
+  const isAltIOSBrowser = /CriOS|FxiOS|EdgiOS|OPiOS/.test(ua)
+  return (isIOS || isIPadDesktopMode) && isWebKit && !isAltIOSBrowser
+}
+
+function buildPopupPrintHtml(html: string) {
+  return html.replace(
+    '</body>',
+    `<script>
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          try {
+            window.focus();
+            window.print();
+          } catch {}
+        }, 250);
+      });
+
+      window.addEventListener('afterprint', () => {
+        setTimeout(() => {
+          try { window.close(); } catch {}
+        }, 150);
+      });
+    </script>
+  </body>`
+  )
+}
+
 async function getStoreSettings() {
   const keys = ['thermal_enabled','store_name','store_address','store_phone','store_tin','receipt_footer','paper_size']
   const entries = await Promise.all(keys.map(async k => [k, await settingsApi.get(k)]))
@@ -175,6 +208,18 @@ async function getStoreSettings() {
 
 function printHtml(html: string): { success: boolean; error?: string } {
   try {
+    if (isApplePrintBrowser()) {
+      const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=420,height=900')
+      if (!printWindow) {
+        return { success: false, error: 'Unable to open the receipt print window.' }
+      }
+
+      printWindow.document.open()
+      printWindow.document.write(buildPopupPrintHtml(html))
+      printWindow.document.close()
+      return { success: true }
+    }
+
     // Use a hidden iframe so mobile browsers don't block it as a popup
     const blob = new Blob([html], { type: 'text/html' })
     const url = URL.createObjectURL(blob)
