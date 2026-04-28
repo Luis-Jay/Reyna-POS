@@ -41,6 +41,7 @@ export default function AddProductPage() {
   const [imagePreview, setImagePreview] = useState<string>('')
   const [imageDataUrl, setImageDataUrl] = useState<string>('')
   const [tiers, setTiers] = useState<PriceTier[]>([])
+  const [inventoryPriceTiers, setInventoryPriceTiers] = useState<any[]>([])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -59,6 +60,7 @@ export default function AddProductPage() {
             allow_fractions: !!p.allow_fractions, track_inventory: !!p.track_inventory,
             initial_stock: '',
           })
+          setInventoryPriceTiers(p.price_tiers || [])
           if (p.image_path) setImagePreview(getProductImageSrc(p.image_path))
         }
       })
@@ -428,6 +430,27 @@ export default function AddProductPage() {
                 type="number" placeholder="0.00"
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
           </div>
+
+          {isEdit && (
+            <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
+              <div className="mb-3">
+                <p className="text-sm font-medium text-gray-700">Current Inventory Price Tiers</p>
+                <p className="text-xs text-gray-500">Additional stock with a different price is recorded here per batch.</p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(inventoryPriceTiers.length ? inventoryPriceTiers : [{
+                  id: 'default',
+                  quantity: 0,
+                  retail_price: parseFloat(form.retail_price) || 0,
+                  wholesale_price: parseFloat(form.wholesale_price) || parseFloat(form.retail_price) || 0,
+                }]).map(tier => (
+                  <span key={tier.id} className="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm">
+                    {tier.quantity} pcs • R ₱{Number(tier.retail_price || 0).toFixed(2)} • W ₱{Number(tier.wholesale_price || 0).toFixed(2)}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {!isEdit && (
             <div>

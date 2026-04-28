@@ -72,6 +72,8 @@ export interface Product {
   // Runtime joined
   stock?: number
   status?: 'safe' | 'low' | 'critical' | 'out'
+  price_tier_count?: number
+  price_tiers?: InventoryPriceTier[]
 }
 
 export interface ProductVariation {

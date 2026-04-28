@@ -5,7 +5,26 @@ import { v4 as uuid } from 'uuid'
 import { getCurrentProductImagesDir, getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
-import { addStockBatch, applyBatchPricing } from '../services/stock-batches.service'
+import { addStockBatch, applyBatchPricing, getRemainingStockBatches } from '../services/stock-batches.service'
+
+function withBatchDetails(db: ReturnType<typeof getDb>, row: any) {
+  const priceTiers = getRemainingStockBatches(db, row.id).map(batch => ({
+    id: batch.id,
+    quantity: batch.remaining_quantity,
+    unit_cost: batch.unit_cost,
+    retail_price: batch.retail_price,
+    wholesale_price: batch.wholesale_price,
+    received_at: batch.received_at,
+    note: batch.note,
+    source_order_id: batch.source_order_id,
+  }))
+
+  return {
+    ...applyBatchPricing(db, row),
+    price_tiers: priceTiers,
+    price_tier_count: priceTiers.length,
+  }
+}
 
 export function registerProductHandlers() {
   // GET ALL with optional filters
@@ -26,7 +45,7 @@ export function registerProductHandlers() {
     if (filters?.search)   { query += ` AND (p.name LIKE ? OR p.barcode = ?)`; params.push(`%${filters.search}%`, filters.search) }
     query += ` ORDER BY p.sort_order, p.name`
     const rows = db.prepare(query).all(...params) as any[]
-    return rows.map(row => applyBatchPricing(db, row))
+    return rows.map(row => withBatchDetails(db, row))
   })
 
   // GET BY ID
@@ -39,7 +58,7 @@ export function registerProductHandlers() {
       LEFT JOIN inventory i ON i.product_id = p.id
       WHERE p.id = ? AND p.deleted_at IS NULL
     `).get(id) as any
-    return row ? applyBatchPricing(db, row) : row
+    return row ? withBatchDetails(db, row) : row
   })
 
   // GET BY BARCODE
@@ -52,7 +71,7 @@ export function registerProductHandlers() {
       LEFT JOIN inventory i ON i.product_id = p.id
       WHERE p.barcode = ? AND p.deleted_at IS NULL
     `).get(barcode) as any
-    return row ? applyBatchPricing(db, row) : row
+    return row ? withBatchDetails(db, row) : row
   })
 
   // SEARCH
@@ -67,7 +86,7 @@ export function registerProductHandlers() {
         AND (LOWER(p.name) LIKE LOWER(?) OR p.barcode = ?)
       ORDER BY p.sort_order, p.name LIMIT 20
     `).all(`%${q}%`, q) as any[]
-    return rows.map(row => applyBatchPricing(db, row))
+    return rows.map(row => withBatchDetails(db, row))
   })
 
   // CREATE

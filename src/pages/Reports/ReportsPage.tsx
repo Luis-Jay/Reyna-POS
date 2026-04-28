@@ -16,13 +16,13 @@ const FILTERS = [
 const REPORT_TABS = [
   { key: 'profit_and_loss', label: 'Profit & Loss' },
   { key: 'income_statement', label: 'Income Statement' },
-  { key: 'trial_balance', label: 'Trial Balance' },
-  { key: 'expense_report', label: 'Expense Report' },
-  { key: 'payments_report', label: 'Payments Report' },
-  { key: 'return_report', label: 'Return / Refund Report' },
-  { key: 'customer_report', label: 'Customer Report' },
   { key: 'z_reading', label: 'Z-Reading' },
   { key: 'e_sales', label: 'E-Sales' },
+  { key: 'payments_report', label: 'Credit Payment Report' },
+  { key: 'trial_balance', label: 'Trial Balance' },
+  { key: 'expense_report', label: 'Expense Report' },
+  { key: 'return_report', label: 'Return / Refund Report' },
+  { key: 'customer_report', label: 'Customer Report' },
 ] as const
 
 type FilterPreset = typeof FILTERS[number]['value']
@@ -353,20 +353,43 @@ export default function ReportsPage() {
       }
     }
 
-    const rows = [
-      ['Gross Sales', peso(eSales?.gross_sales || 0)],
-      ['Discounts', peso(eSales?.total_discounts || 0)],
-      ['Returns', peso(eSales?.total_returns || 0)],
-      ['Net Sales', peso(eSales?.net_sales || 0)],
-      ['Transaction Count', String(eSales?.transaction_count || 0)],
-      ['Average Sale', peso(eSales?.average_sale || 0)],
-      ['Cash Sales', peso(eSales?.cash_sales || 0)],
-      ['Credit Sales', peso(eSales?.credit_sales || 0)],
-    ]
+    const rows = (eSales?.daily_rows || []).map((row: any) => ({
+      Date: row.date,
+      Day: row.day,
+      Transactions: row.transaction_count,
+      'Gross Sales': row.gross_sales,
+      Discounts: row.discounts,
+      Returns: row.returns,
+      'Net Sales': row.net_sales,
+      'Avg Basket': row.avg_basket,
+    }))
+    rows.push({
+      Date: 'TOTAL',
+      Day: '',
+      Transactions: eSales?.transaction_count || 0,
+      'Gross Sales': eSales?.gross_sales || 0,
+      Discounts: eSales?.total_discounts || 0,
+      Returns: eSales?.total_returns || 0,
+      'Net Sales': eSales?.net_sales || 0,
+      'Avg Basket': eSales?.average_sale || 0,
+    })
     return {
       title: 'E-Sales Report',
-      excelRows: rows.map(([item, value]) => ({ Item: item, Value: value })),
-      html: buildDocument('E-Sales Report', businessName, periodLabel, buildTable(['Metric', 'Value'], rows, new Set([1]))),
+      excelRows: rows,
+      html: buildDocument('E-Sales Report', businessName, periodLabel, buildTable(
+        ['Date', 'Day', 'Transactions', 'Gross Sales', 'Discounts', 'Returns', 'Net Sales', 'Avg Basket'],
+        rows.map((row: any) => [
+          row.Date,
+          row.Day,
+          String(row.Transactions),
+          peso(row['Gross Sales']),
+          peso(row.Discounts),
+          peso(row.Returns),
+          peso(row['Net Sales']),
+          peso(row['Avg Basket']),
+        ]),
+        new Set([2, 3, 4, 5, 6, 7]),
+      )),
     }
   }
 
@@ -483,16 +506,31 @@ export default function ReportsPage() {
       ]} />
     }
 
-    return <MetricList rows={[
-      ['Gross Sales', eSales?.gross_sales || 0],
-      ['Discounts', eSales?.total_discounts || 0],
-      ['Returns', eSales?.total_returns || 0],
-      ['Net Sales', eSales?.net_sales || 0],
-      ['Transaction Count', String(eSales?.transaction_count || 0)],
-      ['Average Sale', eSales?.average_sale || 0],
-      ['Cash Sales', eSales?.cash_sales || 0],
-      ['Credit Sales', eSales?.credit_sales || 0],
-    ]} />
+    return (
+      <>
+        <TableView
+          headers={['Date', 'Day', 'Transactions', 'Gross Sales', 'Discounts', 'Returns', 'Net Sales', 'Avg Basket']}
+          rows={(eSales?.daily_rows || []).map((row: any) => [
+            row.date,
+            row.day,
+            String(row.transaction_count),
+            peso(row.gross_sales),
+            peso(row.discounts),
+            peso(row.returns),
+            peso(row.net_sales),
+            peso(row.avg_basket),
+          ])}
+          rightAligned={[2, 3, 4, 5, 6, 7]}
+          footer={`Period Net Sales: ${peso(eSales?.net_sales || 0)}`}
+        />
+        <div className="mt-4 grid grid-cols-2 gap-4 text-sm font-semibold text-slate-700 md:grid-cols-4">
+          <div className="rounded-2xl bg-slate-50 px-4 py-3">Transactions: {eSales?.transaction_count || 0}</div>
+          <div className="rounded-2xl bg-emerald-50 px-4 py-3">Cash Sales: {peso(eSales?.cash_sales || 0)}</div>
+          <div className="rounded-2xl bg-blue-50 px-4 py-3">Credit Sales: {peso(eSales?.credit_sales || 0)}</div>
+          <div className="rounded-2xl bg-amber-50 px-4 py-3">Average Sale: {peso(eSales?.average_sale || 0)}</div>
+        </div>
+      </>
+    )
   }
 
   return (

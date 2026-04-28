@@ -185,6 +185,75 @@ function getReturnSnapshot(db: ReturnType<typeof getDb>, from: string, to: strin
   `).get(from, to) as any
 }
 
+function getDailySalesSummary(db: ReturnType<typeof getDb>, from: string, to: string) {
+  const salesRows: any[] = db.prepare(`
+    SELECT
+      DATE(o.created_at, '+8 hours') as date,
+      COUNT(o.id) as transaction_count,
+      COALESCE(SUM(o.subtotal), 0) as gross_sales,
+      COALESCE(SUM(o.discount), 0) as discounts,
+      COALESCE(SUM(o.total), 0) as total_sales
+    FROM orders o
+    WHERE o.deleted_at IS NULL
+      AND o.status = 'completed'
+      AND o.exclude_sales = 0
+      AND DATE(o.created_at, '+8 hours') >= ?
+      AND DATE(o.created_at, '+8 hours') <= ?
+    GROUP BY DATE(o.created_at, '+8 hours')
+    ORDER BY date ASC
+  `).all(from, to)
+
+  const returnRows: any[] = db.prepare(`
+    SELECT
+      DATE(created_at, '+8 hours') as date,
+      COALESCE(SUM(CASE WHEN event_type = 'refund' THEN amount ELSE 0 END), 0) as returns
+    FROM return_events
+    WHERE DATE(created_at, '+8 hours') >= ?
+      AND DATE(created_at, '+8 hours') <= ?
+    GROUP BY DATE(created_at, '+8 hours')
+    ORDER BY date ASC
+  `).all(from, to)
+
+  const salesByDate = new Map<string, any>()
+  for (const row of salesRows) {
+    salesByDate.set(row.date, {
+      date: row.date,
+      day: new Intl.DateTimeFormat('en-PH', { weekday: 'long', timeZone: 'Asia/Manila' }).format(new Date(`${row.date}T12:00:00+08:00`)),
+      transaction_count: row.transaction_count || 0,
+      gross_sales: row.gross_sales || 0,
+      discounts: row.discounts || 0,
+      returns: 0,
+      net_sales: row.total_sales || 0,
+      avg_basket: (row.transaction_count || 0) > 0 ? (row.total_sales || 0) / row.transaction_count : 0,
+    })
+  }
+
+  for (const row of returnRows) {
+    const current = salesByDate.get(row.date) || {
+      date: row.date,
+      day: new Intl.DateTimeFormat('en-PH', { weekday: 'long', timeZone: 'Asia/Manila' }).format(new Date(`${row.date}T12:00:00+08:00`)),
+      transaction_count: 0,
+      gross_sales: 0,
+      discounts: 0,
+      returns: 0,
+      net_sales: 0,
+      avg_basket: 0,
+    }
+    current.returns = row.returns || 0
+    current.net_sales = Math.max(0, current.net_sales - current.returns)
+    current.avg_basket = current.transaction_count > 0 ? current.net_sales / current.transaction_count : 0
+    salesByDate.set(row.date, current)
+  }
+
+  const rows = []
+  for (let cursor = from; cursor <= to; cursor = shiftDays(cursor, 1)) {
+    const current = salesByDate.get(cursor)
+    if (!current) continue
+    rows.push(current)
+  }
+  return rows
+}
+
 export function registerAnalyticsHandlers() {
   ipcMain.handle(IPC.ANALYTICS.GET_DASHBOARD, () => {
     const db = getDb()
@@ -577,6 +646,7 @@ export function registerAnalyticsHandlers() {
     const sales = getSalesSnapshot(db, from, to)
     const returns = getReturnSnapshot(db, from, to)
     const netSales = (sales?.total_sales || 0) - (returns?.refund_amount || 0)
+    const dailyRows = getDailySalesSummary(db, from, to)
 
     return {
       period: { from, to },
@@ -588,6 +658,7 @@ export function registerAnalyticsHandlers() {
       average_sale: (sales?.receipt_count || 0) > 0 ? netSales / sales.receipt_count : 0,
       cash_sales: sales?.cash_sales || 0,
       credit_sales: sales?.credit_sales || 0,
+      daily_rows: dailyRows,
     }
   })
 
