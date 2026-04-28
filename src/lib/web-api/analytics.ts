@@ -60,7 +60,7 @@ export const analyticsApi = {
 
       const [ordersRes, productsRes] = await Promise.all([
         supabase.from('sales_orders')
-          .select('id, order_number, total, created_at, sales_order_items(quantity)')
+          .select('id, order_number, total, created_at, sales_order_items(price, cost, quantity)')
           .eq('business_id', businessId)
           .eq('status', 'completed')
           .eq('exclude_sales', false)
