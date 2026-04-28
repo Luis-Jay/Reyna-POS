@@ -8,7 +8,7 @@ function normalizePhone(input: string) {
 }
 
 export default function SetupPage({ onComplete }: { onComplete: () => void }) {
-  const [mode, setMode] = useState<Mode>('new')
+  const [mode, setMode] = useState<Mode>('restore')
 
   return mode === 'new'
     ? <NewAccountForm onComplete={onComplete} onSwitchMode={() => setMode('restore')} />
@@ -206,6 +206,7 @@ function RestoreForm({ onComplete, onSwitchMode }: { onComplete: () => void; onS
         setError(result.error || 'Login failed. Check your credentials.')
         return
       }
+      try { await window.api.sync.force() } catch { /* non-fatal */ }
       try { await window.api.sync.triggerAuto('online') } catch { /* non-fatal */ }
       onComplete()
     } catch {

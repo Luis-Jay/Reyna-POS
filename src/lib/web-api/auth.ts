@@ -56,6 +56,18 @@ export const authApi = {
     return session?.user?.email ?? null
   },
 
+  // Returns the business name from Supabase for the current cloud account (web-only helper)
+  getCloudBusinessName: async (): Promise<string | null> => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return null
+      const { data } = await supabase.from('businesses').select('name').eq('user_id', user.id).single()
+      return (data as any)?.name ?? null
+    } catch {
+      return null
+    }
+  },
+
   // PIN-based login (cashier or admin via PIN).
   // Calls a Supabase Edge Function to verify the hashed PIN server-side.
   login: async (name: string, pin: string) => {

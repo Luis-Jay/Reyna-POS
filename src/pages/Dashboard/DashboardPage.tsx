@@ -5,15 +5,50 @@ import { DashboardSnapshot } from '../../types'
 import { formatDate } from '../../utils/format'
 import { useAuthStore } from '../../stores/auth.store'
 
+type DashboardSyncState = {
+  status?: string
+  pending?: number
+  pendingCount?: number
+  syncing?: boolean
+  cloudSignedIn?: boolean
+  lastSyncedAt?: string | null
+  message?: string
+}
+
 export default function DashboardPage() {
   const navigate = useNavigate()
   const logout = useAuthStore(s => s.logout)
   const [snap, setSnap] = useState<DashboardSnapshot | null>(null)
   const [pendingCount, setPendingCount] = useState(0)
+  const [syncState, setSyncState] = useState<DashboardSyncState | null>(null)
+  const [cloudBusinessName, setCloudBusinessName] = useState<string | null>(null)
+  const [cloudEmail, setCloudEmail] = useState<string | null>(null)
 
   useEffect(() => {
     window.api.analytics.getDashboard().then(setSnap)
     window.api.orders.getPending().then((r: any[]) => setPendingCount(r.length))
+    // Web-only: load the cloud account's business name and email
+    if (typeof (window.api.auth as any).getCloudBusinessName === 'function') {
+      ;(window.api.auth as any).getCloudBusinessName().then((name: string | null) => setCloudBusinessName(name))
+      ;(window.api.auth as any).getCloudEmail().then((email: string | null) => setCloudEmail(email))
+    }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+
+    window.api.sync.getStatus().then((status: DashboardSyncState) => {
+      if (mounted) setSyncState(status)
+    })
+
+    const unsubscribe = window.api.on.syncStatus((status: DashboardSyncState) => {
+      setSyncState(status)
+    })
+
+    return () => {
+      mounted = false
+      unsubscribe()
+    }
   }, [])
 
   const tiles = [
@@ -40,12 +75,31 @@ export default function DashboardPage() {
             <p className="mb-1 text-xs font-semibold uppercase tracking-[0.28em] text-emerald-50/80">Operations Overview</p>
             <h1 className="text-3xl font-semibold tracking-tight text-white">Admin Dashboard</h1>
           </div>
-        <button
-          onClick={async () => { await window.api.auth.logout(); logout(); navigate('/login') }}
-            className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-        >
-            ADMIN
-        </button>
+          <div className="flex items-center gap-2">
+            {cloudBusinessName && (
+              <div className="flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-2">
+                <span className="text-xs font-semibold text-white/90 max-w-[160px] truncate">{cloudBusinessName}</span>
+                <button
+                  title={`Signed in as ${cloudEmail ?? '...'} — click to switch account`}
+                  onClick={async () => {
+                    if (!confirm('Switch to a different cloud account?')) return
+                    await (window.api.auth as any).cloudLogout()
+                    logout()
+                    window.location.reload()
+                  }}
+                  className="text-[10px] font-bold text-white/60 hover:text-white underline underline-offset-2 transition whitespace-nowrap"
+                >
+                  Switch
+                </button>
+              </div>
+            )}
+            <button
+              onClick={async () => { await window.api.auth.logout(); logout(); navigate('/login') }}
+              className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+            >
+              ADMIN
+            </button>
+          </div>
         </div>
       </div>
 
@@ -58,8 +112,11 @@ export default function DashboardPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700/70">Today</p>
                   <h2 className="text-xl font-semibold text-slate-900">Store snapshot</h2>
                 </div>
-                <div className="rounded-full bg-[var(--brand-50)] px-3 py-1 text-xs font-semibold text-[var(--brand-700)]">
-                  Live summary
+                <div className="flex items-center gap-2">
+                  <DashboardSyncBadge syncState={syncState} />
+                  <div className="rounded-full bg-[var(--brand-50)] px-3 py-1 text-xs font-semibold text-[var(--brand-700)]">
+                    Live summary
+                  </div>
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -142,6 +199,48 @@ function Stat({ label, value, green }: { label: string; value: string; green?: b
     <div className="rounded-[22px] border border-emerald-900/5 bg-white/75 p-4">
       <p className="text-xs font-medium uppercase tracking-[0.18em] text-slate-400">{label}</p>
       <p className={`mt-2 text-2xl font-semibold tracking-tight ${green ? 'text-green-700' : 'text-slate-900'}`}>{value}</p>
+    </div>
+  )
+}
+
+function DashboardSyncBadge({ syncState }: { syncState: DashboardSyncState | null }) {
+  const pending = syncState?.pending ?? syncState?.pendingCount ?? 0
+
+  if (syncState?.syncing) {
+    return (
+      <div className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+        Syncing local data...
+      </div>
+    )
+  }
+
+  if (pending > 0) {
+    return (
+      <div className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+        {pending} local change{pending === 1 ? '' : 's'} pending sync
+      </div>
+    )
+  }
+
+  if (syncState?.cloudSignedIn === false || syncState?.status === 'not_signed_in') {
+    return (
+      <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+        Local-only data
+      </div>
+    )
+  }
+
+  if (syncState?.lastSyncedAt) {
+    return (
+      <div className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+        Synced {formatDate(syncState.lastSyncedAt)}
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+      Cloud connected
     </div>
   )
 }
