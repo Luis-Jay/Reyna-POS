@@ -105,10 +105,10 @@ function OrderCard({ order, onToggleExclude, onRefund }: { order: any; onToggleE
     setRefundError('')
     try {
       const refundItems = selectedItems.map(item => {
-        const qty = Math.min(parseFloat(refundQtys[item.id] || '0') || 0, item.quantity)
+        const quantity = Math.min(parseFloat(refundQtys[item.id] || '0') || 0, item.quantity)
         const unitPrice = item.quantity > 0 ? item.subtotal / item.quantity : item.price
-        return { item_id: item.id, qty, amount: qty * unitPrice }
-      }).filter(ri => ri.qty > 0)
+        return { item_id: item.id, product_id: item.product_id ?? null, quantity, subtotal: quantity * unitPrice }
+      }).filter(ri => ri.quantity > 0)
 
       const res = await window.api.orders.partialRefund(order.id, refundItems)
       if (!res.success) {
