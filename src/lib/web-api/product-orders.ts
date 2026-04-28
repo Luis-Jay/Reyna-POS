@@ -2,25 +2,46 @@ import { v4 as uuid } from 'uuid'
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
 
+async function fetchProductMap(businessId: string): Promise<Record<string, any>> {
+  try {
+    const { data } = await supabase
+      .from('catalog_products')
+      .select('id, name, barcode, base_cost, retail_price, wholesale_price, image_url, image_data')
+      .eq('business_id', businessId)
+    const map: Record<string, any> = {}
+    for (const p of data ?? []) map[p.id] = p
+    return map
+  } catch {
+    return {}
+  }
+}
+
+function mergeProduct(o: any, productMap: Record<string, any>) {
+  const p = productMap[o.product_id] ?? {}
+  return {
+    ...o,
+    product_name: p.name ?? '',
+    barcode: p.barcode ?? null,
+    base_cost: p.base_cost ?? 0,
+    current_retail_price: p.retail_price ?? 0,
+    current_wholesale_price: p.wholesale_price ?? null,
+    image_path: p.image_url ?? p.image_data ?? null,
+  }
+}
+
 export const productOrdersApi = {
   getAll: async () => {
     try {
       const businessId = await getBusinessId()
-      const { data } = await supabase
-        .from('product_orders')
-        .select('*, catalog_products(name, barcode, base_cost, retail_price, wholesale_price, image_url, image_data)')
-        .eq('business_id', businessId)
-        .order('created_at', { ascending: false })
-
-      return (data ?? []).map(o => ({
-        ...o,
-        product_name: (o.catalog_products as any)?.name ?? '',
-        barcode: (o.catalog_products as any)?.barcode ?? null,
-        base_cost: (o.catalog_products as any)?.base_cost ?? 0,
-        current_retail_price: (o.catalog_products as any)?.retail_price ?? 0,
-        current_wholesale_price: (o.catalog_products as any)?.wholesale_price ?? null,
-        image_path: (o.catalog_products as any)?.image_url ?? (o.catalog_products as any)?.image_data ?? null,
-      }))
+      const [{ data }, productMap] = await Promise.all([
+        supabase
+          .from('product_orders')
+          .select('id, product_id, vendor_name, quantity, unit_cost, retail_price, wholesale_price, expected_at, received_at, status, notes, created_at')
+          .eq('business_id', businessId)
+          .order('created_at', { ascending: false }),
+        fetchProductMap(businessId),
+      ])
+      return (data ?? []).map(o => mergeProduct(o, productMap))
     } catch {
       return []
     }
@@ -29,21 +50,16 @@ export const productOrdersApi = {
   getPending: async () => {
     try {
       const businessId = await getBusinessId()
-      const { data } = await supabase
-        .from('product_orders')
-        .select('*, catalog_products(name, barcode, retail_price, wholesale_price, image_url, image_data)')
-        .eq('business_id', businessId)
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-
-      return (data ?? []).map(o => ({
-        ...o,
-        product_name: (o.catalog_products as any)?.name ?? '',
-        barcode: (o.catalog_products as any)?.barcode ?? null,
-        current_retail_price: (o.catalog_products as any)?.retail_price ?? 0,
-        current_wholesale_price: (o.catalog_products as any)?.wholesale_price ?? null,
-        image_path: (o.catalog_products as any)?.image_url ?? (o.catalog_products as any)?.image_data ?? null,
-      }))
+      const [{ data }, productMap] = await Promise.all([
+        supabase
+          .from('product_orders')
+          .select('id, product_id, vendor_name, quantity, unit_cost, retail_price, wholesale_price, expected_at, received_at, status, notes, created_at')
+          .eq('business_id', businessId)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: false }),
+        fetchProductMap(businessId),
+      ])
+      return (data ?? []).map(o => mergeProduct(o, productMap))
     } catch {
       return []
     }
