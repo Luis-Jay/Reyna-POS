@@ -50,6 +50,12 @@ export const authApi = {
     return !!session
   },
 
+  // Returns the email of the currently signed-in cloud user (web-only helper)
+  getCloudEmail: async (): Promise<string | null> => {
+    const { data: { session } } = await supabase.auth.getSession()
+    return session?.user?.email ?? null
+  },
+
   // PIN-based login (cashier or admin via PIN).
   // Calls a Supabase Edge Function to verify the hashed PIN server-side.
   login: async (name: string, pin: string) => {
@@ -86,6 +92,7 @@ export const authApi = {
   cloudLogout: async () => {
     clearBusinessId()
     await supabase.auth.signOut()
+    await settingsApi.set('setup_completed', 'false')
     return { success: true }
   },
 

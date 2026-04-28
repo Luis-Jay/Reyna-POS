@@ -37,6 +37,7 @@ export default function SettingsPage() {
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
   const [smsCredits, setSmsCredits] = useState<number | null>(null)
+  const [cloudEmail, setCloudEmail] = useState<string | null>(null)
 
   const persistSettings = async (nextSettings: Record<string, string>) => {
     const normalizedSettings = Object.fromEntries(
@@ -77,6 +78,12 @@ export default function SettingsPage() {
     window.api.sms.getCredits().then((res: any) => {
       if (res?.credits !== null && res?.credits !== undefined) setSmsCredits(res.credits)
     }).catch(() => {})
+    // Load current cloud account email (web only)
+    if (typeof (window.api.auth as any).getCloudEmail === 'function') {
+      ;(window.api.auth as any).getCloudEmail().then((email: string | null) => {
+        setCloudEmail(email)
+      }).catch(() => {})
+    }
   }
 
   const handleSavePermissions = async (userId: string) => {
@@ -745,6 +752,12 @@ export default function SettingsPage() {
           </Section>
 
           <Section title="Account">
+            {cloudEmail && (
+              <div className="py-3 flex items-center gap-2 text-sm text-gray-700 border-b border-gray-100 mb-2">
+                <span className="text-gray-400">Signed in as</span>
+                <span className="font-semibold text-gray-900">{cloudEmail}</span>
+              </div>
+            )}
             <p className="py-3 text-sm text-gray-600">
               Disconnect this device from the current cloud account if you want to sign in with a different email.
             </p>
