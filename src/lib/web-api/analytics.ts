@@ -9,6 +9,12 @@ function manilaDate(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(date)
 }
 
+function shiftDays(dateStr: string, delta: number): string {
+  const date = new Date(`${dateStr}T00:00:00+08:00`)
+  date.setDate(date.getDate() + delta)
+  return manilaDate(date)
+}
+
 function monthBounds(offsetMonths = 0) {
   const now = new Date()
   const start = new Date(now.getFullYear(), now.getMonth() + offsetMonths, 1)
@@ -43,6 +49,7 @@ type CompletedOrderRow = {
   total?: number | null
   subtotal?: number | null
   discount?: number | null
+  is_credit?: boolean | null
   created_at: string
 }
 
@@ -66,7 +73,7 @@ async function getCompletedOrders(businessId: string, from: string, to: string) 
   const tf = tzFilter(from, to)
   const { data: orders, error: ordersError } = await supabase
     .from('sales_orders')
-    .select('id, order_number, total, subtotal, discount, created_at')
+    .select('id, order_number, total, subtotal, discount, is_credit, created_at')
     .eq('business_id', businessId)
     .eq('status', 'completed')
     .eq('exclude_sales', false)
@@ -408,6 +415,208 @@ export const analyticsApi = {
       }))
     } catch {
       return []
+    }
+  },
+
+  getExpenseReport: async (periodOrRange?: RangeInput) => {
+    try {
+      const businessId = await getBusinessId()
+      const { from, to } = resolveRange(periodOrRange)
+      const { data } = await supabase
+        .from('expenses')
+        .select('id, category, description, amount, date')
+        .eq('business_id', businessId)
+        .gte('date', from)
+        .lte('date', to)
+        .order('date', { ascending: false })
+      const rows = data ?? []
+      return { period: { from, to }, rows, total: rows.reduce((s, r) => s + (r.amount ?? 0), 0) }
+    } catch { return { period: { from: '', to: '' }, rows: [], total: 0 } }
+  },
+
+  getPaymentsReport: async (periodOrRange?: RangeInput) => {
+    try {
+      const businessId = await getBusinessId()
+      const { from, to } = resolveRange(periodOrRange)
+      const tf = tzFilter(from, to)
+      const { data: txns } = await supabase
+        .from('sales_debtor_transactions')
+        .select('id, created_at, amount, note, debtor_id, order_id')
+        .eq('business_id', businessId)
+        .eq('type', 'payment')
+        .gte('created_at', tf.from)
+        .lte('created_at', tf.to)
+        .order('created_at', { ascending: false })
+      if (!txns || txns.length === 0) return { period: { from, to }, rows: [], total: 0 }
+      const debtorIds = [...new Set(txns.map(t => t.debtor_id))]
+      const { data: debtors } = await supabase.from('sales_debtors').select('id, name').in('id', debtorIds)
+      const debtorMap: Record<string, string> = {}
+      for (const d of debtors ?? []) debtorMap[d.id] = d.name
+      const orderIds = txns.map(t => t.order_id).filter(Boolean) as string[]
+      const orderMap: Record<string, string> = {}
+      if (orderIds.length > 0) {
+        const { data: orders } = await supabase.from('sales_orders').select('id, order_number').in('id', [...new Set(orderIds)])
+        for (const o of orders ?? []) orderMap[o.id] = o.order_number ?? ''
+      }
+      const rows = txns.map(t => ({
+        id: t.id,
+        date: t.created_at,
+        customer_name: debtorMap[t.debtor_id] ?? 'Unknown',
+        order_number: t.order_id ? (orderMap[t.order_id] ?? '') : '',
+        note: t.note ?? '',
+        amount: t.amount ?? 0,
+      }))
+      return { period: { from, to }, rows, total: rows.reduce((s, r) => s + r.amount, 0) }
+    } catch { return { period: { from: '', to: '' }, rows: [], total: 0 } }
+  },
+
+  getCustomerReport: async (periodOrRange?: RangeInput) => {
+    try {
+      const businessId = await getBusinessId()
+      const { from, to } = resolveRange(periodOrRange)
+      const tf = tzFilter(from, to)
+      const [debtorsRes, txnsRes] = await Promise.all([
+        supabase.from('sales_debtors').select('id, name, phone, balance').eq('business_id', businessId).is('deleted_at', null),
+        supabase.from('sales_debtor_transactions').select('debtor_id, type, amount')
+          .eq('business_id', businessId)
+          .gte('created_at', tf.from)
+          .lte('created_at', tf.to),
+      ])
+      const periodCredit: Record<string, number> = {}
+      const periodPaid: Record<string, number> = {}
+      for (const t of txnsRes.data ?? []) {
+        if (t.type === 'debt') periodCredit[t.debtor_id] = (periodCredit[t.debtor_id] ?? 0) + t.amount
+        if (t.type === 'payment') periodPaid[t.debtor_id] = (periodPaid[t.debtor_id] ?? 0) + t.amount
+      }
+      const rows = (debtorsRes.data ?? []).map(d => ({
+        id: d.id,
+        name: d.name,
+        phone: d.phone ?? '',
+        balance: d.balance ?? 0,
+        period_credit: periodCredit[d.id] ?? 0,
+        period_paid: periodPaid[d.id] ?? 0,
+      })).sort((a, b) => b.balance - a.balance)
+      return { period: { from, to }, rows }
+    } catch { return { period: { from: '', to: '' }, rows: [] } }
+  },
+
+  getReturnReport: async (periodOrRange?: RangeInput) => {
+    try {
+      const businessId = await getBusinessId()
+      const { from, to } = resolveRange(periodOrRange)
+      const tf = tzFilter(from, to)
+      const { data: movements } = await supabase
+        .from('stock_movements')
+        .select('id, product_id, quantity, note, created_at')
+        .eq('business_id', businessId)
+        .eq('type', 'return')
+        .gte('created_at', tf.from)
+        .lte('created_at', tf.to)
+        .order('created_at', { ascending: false })
+      if (!movements || movements.length === 0) return { period: { from, to }, rows: [], refund_total: 0, damage_total: 0 }
+      const productIds = [...new Set(movements.map(m => m.product_id))]
+      const { data: products } = await supabase.from('catalog_products').select('id, name').in('id', productIds)
+      const productMap: Record<string, string> = {}
+      for (const p of products ?? []) productMap[p.id] = p.name ?? ''
+      const rows = movements.map(m => ({
+        id: m.id,
+        created_at: m.created_at,
+        order_number: '—',
+        item_name: productMap[m.product_id] ?? 'Unknown',
+        quantity: Math.abs(m.quantity ?? 0),
+        event_type: 'refund',
+        amount: 0,
+        cost_amount: 0,
+      }))
+      return { period: { from, to }, rows, refund_total: 0, damage_total: 0 }
+    } catch { return { period: { from: '', to: '' }, rows: [], refund_total: 0, damage_total: 0 } }
+  },
+
+  getZReading: async (periodOrRange?: RangeInput) => {
+    try {
+      const businessId = await getBusinessId()
+      const { from, to } = resolveRange(periodOrRange)
+      const tf = tzFilter(from, to)
+      const [orders, debtPayments] = await Promise.all([
+        getCompletedOrders(businessId, from, to),
+        supabase.from('sales_debtor_transactions').select('amount')
+          .eq('business_id', businessId)
+          .eq('type', 'payment')
+          .gte('created_at', tf.from)
+          .lte('created_at', tf.to),
+      ])
+      const grossSales = orders.reduce((s, o) => s + (o.subtotal ?? o.total ?? 0), 0)
+      const discounts = orders.reduce((s, o) => s + (o.discount ?? 0), 0)
+      const netSales = orders.reduce((s, o) => s + (o.total ?? 0), 0)
+      const returns = Math.max(0, grossSales - discounts - netSales)
+      const cashSales = orders.filter(o => !o.is_credit).reduce((s, o) => s + (o.total ?? 0), 0)
+      const creditSales = orders.filter(o => o.is_credit).reduce((s, o) => s + (o.total ?? 0), 0)
+      const creditCollections = (debtPayments.data ?? []).reduce((s, t) => s + (t.amount ?? 0), 0)
+      return {
+        period: { from, to },
+        receipt_count: orders.length,
+        gross_sales: grossSales,
+        discounts,
+        returns,
+        net_sales: netSales,
+        cash_sales: cashSales,
+        credit_sales: creditSales,
+        credit_collections: creditCollections,
+      }
+    } catch {
+      return { period: { from: '', to: '' }, receipt_count: 0, gross_sales: 0, discounts: 0, returns: 0, net_sales: 0, cash_sales: 0, credit_sales: 0, credit_collections: 0 }
+    }
+  },
+
+  getESales: async (periodOrRange?: RangeInput) => {
+    try {
+      const businessId = await getBusinessId()
+      const { from, to } = resolveRange(periodOrRange)
+      const orders = await getCompletedOrders(businessId, from, to)
+      const grossSales = orders.reduce((s, o) => s + (o.subtotal ?? o.total ?? 0), 0)
+      const totalDiscounts = orders.reduce((s, o) => s + (o.discount ?? 0), 0)
+      const netSales = orders.reduce((s, o) => s + (o.total ?? 0), 0)
+      const totalReturns = Math.max(0, grossSales - totalDiscounts - netSales)
+      const cashSales = orders.filter(o => !o.is_credit).reduce((s, o) => s + (o.total ?? 0), 0)
+      const creditSales = orders.filter(o => o.is_credit).reduce((s, o) => s + (o.total ?? 0), 0)
+      const byDate: Record<string, { count: number; gross: number; discount: number; total: number }> = {}
+      for (const o of orders) {
+        const date = manilaDate(new Date(o.created_at))
+        if (!byDate[date]) byDate[date] = { count: 0, gross: 0, discount: 0, total: 0 }
+        byDate[date].count++
+        byDate[date].gross += o.subtotal ?? o.total ?? 0
+        byDate[date].discount += o.discount ?? 0
+        byDate[date].total += o.total ?? 0
+      }
+      const daily_rows = []
+      for (let cursor = from; cursor <= to; cursor = shiftDays(cursor, 1)) {
+        const d = byDate[cursor] ?? { count: 0, gross: 0, discount: 0, total: 0 }
+        const returns = Math.max(0, d.gross - d.discount - d.total)
+        daily_rows.push({
+          date: cursor,
+          day: new Intl.DateTimeFormat('en-PH', { weekday: 'long', timeZone: 'Asia/Manila' }).format(new Date(`${cursor}T12:00:00+08:00`)),
+          transaction_count: d.count,
+          gross_sales: d.gross,
+          discounts: d.discount,
+          returns,
+          net_sales: d.total,
+          avg_basket: d.count > 0 ? d.total / d.count : 0,
+        })
+      }
+      return {
+        period: { from, to },
+        gross_sales: grossSales,
+        total_discounts: totalDiscounts,
+        total_returns: totalReturns,
+        net_sales: netSales,
+        transaction_count: orders.length,
+        average_sale: orders.length > 0 ? netSales / orders.length : 0,
+        cash_sales: cashSales,
+        credit_sales: creditSales,
+        daily_rows,
+      }
+    } catch {
+      return { period: { from: '', to: '' }, gross_sales: 0, total_discounts: 0, total_returns: 0, net_sales: 0, transaction_count: 0, average_sale: 0, cash_sales: 0, credit_sales: 0, daily_rows: [] }
     }
   },
 
