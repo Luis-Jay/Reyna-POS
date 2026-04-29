@@ -9,42 +9,94 @@ function stockStatus(qty: number, threshold: number): 'out' | 'critical' | 'low'
   return 'safe'
 }
 
+function normalizeInventoryRow(product: any) {
+  const inventory = product.catalog_inventory?.[0]
+  const quantity = Number(inventory?.quantity ?? 0)
+  const lowThreshold = Number(inventory?.low_threshold ?? 5)
+
+  return {
+    id: inventory?.id ?? `missing-${product.id}`,
+    product_id: product.id,
+    product_name: product.name ?? '',
+    image_path: product.image_url ?? product.image_data ?? null,
+    barcode: product.barcode ?? null,
+    base_price: Number(product.base_price ?? 0),
+    base_cost: Number(product.base_cost ?? 0),
+    retail_price: Number(product.retail_price ?? product.base_price ?? 0),
+    wholesale_price: Number(product.wholesale_price ?? product.retail_price ?? product.base_price ?? 0),
+    quantity,
+    low_threshold: lowThreshold,
+    monthly_sold: Number(product.monthly_sold ?? 0),
+    updated_at: inventory?.updated_at ?? product.updated_at ?? new Date().toISOString(),
+    status: stockStatus(quantity, lowThreshold),
+    category_name: product.catalog_categories?.name ?? null,
+    description: product.description ?? null,
+  }
+}
+
+async function fetchProducts(businessId: string) {
+  // Try with image_url first; fall back without it if the column doesn't exist yet
+  const full = await supabase
+    .from('catalog_products')
+    .select('id, name, image_url, image_data, barcode, base_price, base_cost, retail_price, wholesale_price, monthly_sold, description, updated_at, is_active, deleted_at, track_inventory')
+    .eq('business_id', businessId)
+  if (!full.error) return full
+
+  // image_url column may not be in PostgREST schema cache yet — retry without it
+  console.warn('[inventory] catalog_products query failed, retrying without image_url:', full.error.message)
+  return supabase
+    .from('catalog_products')
+    .select('id, name, image_data, barcode, base_price, base_cost, retail_price, wholesale_price, monthly_sold, description, updated_at, is_active, deleted_at, track_inventory')
+    .eq('business_id', businessId)
+}
+
 export const inventoryApi = {
   getAll: async (filter?: string) => {
     try {
       const businessId = await getBusinessId()
-      let query = supabase
-        .from('catalog_inventory')
-        .select('*, catalog_products(name, image_url, image_data, barcode, base_price, base_cost, retail_price, wholesale_price, monthly_sold, is_active, deleted_at)')
-        .eq('business_id', businessId)
+      const [productsRes, inventoryRes] = await Promise.all([
+        fetchProducts(businessId),
+        supabase
+          .from('catalog_inventory')
+          .select('id, product_id, quantity, low_threshold, updated_at')
+          .eq('business_id', businessId),
+      ])
+      if (productsRes.error) {
+        console.error('[inventory] catalog_products error:', productsRes.error)
+        throw productsRes.error
+      }
+      if (inventoryRes.error) {
+        console.error('[inventory] catalog_inventory error:', inventoryRes.error)
+        throw inventoryRes.error
+      }
 
-      const { data, error } = await query
-      if (error) throw error
+      const invMap: Record<string, any> = {}
+      for (const inv of inventoryRes.data ?? []) invMap[inv.product_id] = inv
 
-      let rows = (data ?? [])
-        .filter(r => !r.catalog_products?.deleted_at && r.catalog_products?.is_active)
-        .map(r => ({
-          id: r.id,
-          product_id: r.product_id,
-          product_name: r.catalog_products?.name ?? '',
-          image_path: r.catalog_products?.image_url ?? r.catalog_products?.image_data ?? null,
-          barcode: r.catalog_products?.barcode ?? null,
-          base_price: r.catalog_products?.base_price ?? 0,
-          base_cost: r.catalog_products?.base_cost ?? 0,
-          retail_price: r.catalog_products?.retail_price ?? 0,
-          wholesale_price: r.catalog_products?.wholesale_price ?? null,
-          quantity: r.quantity,
-          low_threshold: r.low_threshold,
-          monthly_sold: r.catalog_products?.monthly_sold ?? 0,
-          updated_at: r.updated_at,
-          status: stockStatus(r.quantity, r.low_threshold),
-        }))
+      const merged = (productsRes.data ?? []).map(p => ({
+        ...p,
+        catalog_inventory: invMap[p.id] ? [invMap[p.id]] : [],
+      }))
 
-      if (filter === 'low') rows = rows.filter(r => r.status === 'low' || r.status === 'critical' || r.status === 'out')
-      if (filter === 'out') rows = rows.filter(r => r.status === 'out')
+      let rows = merged
+        .filter(p => !p.deleted_at && p.is_active && p.track_inventory)
+        .map(normalizeInventoryRow)
 
-      return rows.sort((a, b) => a.product_name.localeCompare(b.product_name))
-    } catch {
+      if (filter === 'Low Stock' || filter === 'low') {
+        rows = rows.filter(r => r.status === 'low' || r.status === 'critical' || r.status === 'out')
+      } else if (filter === 'Out of Stock' || filter === 'out') {
+        rows = rows.filter(r => r.status === 'out')
+      } else if (filter === 'Critical' || filter === 'critical') {
+        rows = rows.filter(r => r.status === 'critical')
+      } else if (filter === 'Fast Moving') {
+        rows = [...rows].sort((a, b) => (b.monthly_sold ?? 0) - (a.monthly_sold ?? 0))
+      } else {
+        rows = [...rows].sort((a, b) => a.product_name.localeCompare(b.product_name))
+      }
+
+      return rows
+    } catch (err: any) {
+      console.error('[inventory] getAll error:', err?.message ?? err)
       return []
     }
   },
@@ -52,25 +104,56 @@ export const inventoryApi = {
   getReport: async () => {
     try {
       const businessId = await getBusinessId()
-      const { data } = await supabase
-        .from('catalog_inventory')
-        .select('*, catalog_products(name, retail_price, base_cost, monthly_sold, is_active, deleted_at)')
-        .eq('business_id', businessId)
+      const [productsRes, inventoryRes, categoriesRes] = await Promise.all([
+        supabase
+          .from('catalog_products')
+          .select('id, name, barcode, description, category_id, retail_price, wholesale_price, base_cost, monthly_sold, is_active, deleted_at, track_inventory, updated_at')
+          .eq('business_id', businessId),
+        supabase
+          .from('catalog_inventory')
+          .select('id, product_id, quantity, low_threshold, updated_at')
+          .eq('business_id', businessId),
+        supabase
+          .from('catalog_categories')
+          .select('id, name')
+          .eq('business_id', businessId),
+      ])
+      if (productsRes.error) throw productsRes.error
+      if (inventoryRes.error) throw inventoryRes.error
+      if (categoriesRes.error) throw categoriesRes.error
 
-      return (data ?? [])
-        .filter(r => !r.catalog_products?.deleted_at && r.catalog_products?.is_active)
-        .map(r => ({
-          product_id: r.product_id,
-          product_name: r.catalog_products?.name ?? '',
-          quantity: r.quantity,
-          low_threshold: r.low_threshold,
-          retail_price: r.catalog_products?.retail_price ?? 0,
-          base_cost: r.catalog_products?.base_cost ?? 0,
-          monthly_sold: r.catalog_products?.monthly_sold ?? 0,
-          status: stockStatus(r.quantity, r.low_threshold),
-          stock_value: r.quantity * (r.catalog_products?.base_cost ?? 0),
-          potential_revenue: r.quantity * (r.catalog_products?.retail_price ?? 0),
-        }))
+      const invMap: Record<string, any> = {}
+      for (const inv of inventoryRes.data ?? []) invMap[inv.product_id] = inv
+      const catMap: Record<string, string> = {}
+      for (const cat of categoriesRes.data ?? []) catMap[cat.id] = cat.name
+
+      const data = (productsRes.data ?? []).map(p => ({
+        ...p,
+        catalog_inventory: invMap[p.id] ? [invMap[p.id]] : [],
+        catalog_categories: p.category_id ? { name: catMap[p.category_id] ?? null } : null,
+      }))
+
+      return data
+        .filter(p => !p.deleted_at && p.is_active && p.track_inventory)
+        .map(product => {
+          const row = normalizeInventoryRow(product)
+          return {
+            barcode: row.barcode,
+            product_id: row.product_id,
+            product_name: row.product_name,
+            category_name: row.category_name,
+            quantity: row.quantity,
+            low_threshold: row.low_threshold,
+            retail_price: row.retail_price,
+            wholesale_price: row.wholesale_price,
+            base_cost: row.base_cost,
+            description: row.description,
+            monthly_sold: row.monthly_sold,
+            status: row.status,
+            stock_value: row.quantity * row.base_cost,
+            potential_revenue: row.quantity * row.retail_price,
+          }
+        })
     } catch {
       return []
     }
