@@ -206,6 +206,11 @@ function RestoreForm({ onComplete, onSwitchMode }: { onComplete: () => void; onS
         setError(result.error || 'Login failed. Check your credentials.')
         return
       }
+      try {
+        if (typeof window.api.auth.syncCloudBusinessSettings === 'function') {
+          await window.api.auth.syncCloudBusinessSettings()
+        }
+      } catch { /* non-fatal */ }
       try { await window.api.sync.force() } catch { /* non-fatal */ }
       try { await window.api.sync.triggerAuto('online') } catch { /* non-fatal */ }
       onComplete()

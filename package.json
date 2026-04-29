@@ -16,7 +16,7 @@
     "pack:mac": "npm run build && electron-builder --mac",
     "pack:win": "npm run build && electron-builder --win",
     "pack:all": "npm run build && electron-builder --win --mac",
-    "postinstall": "electron-rebuild -f -w better-sqlite3 || true"
+    "postinstall": "if [ -n \"$VERCEL\" ]; then echo 'Skipping electron rebuild on Vercel'; else electron-rebuild -f -w better-sqlite3 || true; fi"
   },
   "keywords": [
     "pos",

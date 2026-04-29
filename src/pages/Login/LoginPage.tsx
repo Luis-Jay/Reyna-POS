@@ -52,6 +52,12 @@ export default function LoginPage() {
     try {
       const result = await window.api.auth.cloudLogin({ email: cloudEmail, password: cloudPassword })
       if (result.success) {
+        try {
+          if (typeof window.api.auth.syncCloudBusinessSettings === 'function') {
+            await window.api.auth.syncCloudBusinessSettings()
+          }
+        } catch { /* non-fatal */ }
+        try { await window.api.sync.force() } catch { /* non-fatal */ }
         setNeedsCloudAuth(false)
         loadUsers()
       } else {

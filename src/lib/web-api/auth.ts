@@ -43,6 +43,33 @@ function mapCashierToUser(c: any) {
   }
 }
 
+async function syncCloudBusinessSettings() {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { success: false, error: 'Not authenticated' }
+
+  const { data: business, error } = await supabase
+    .from('businesses')
+    .select('id, store_name, store_phone')
+    .eq('user_id', user.id)
+    .single()
+
+  if (error || !business) {
+    return { success: false, error: error?.message || 'Business not found.' }
+  }
+
+  await settingsApi.setMany({
+    setup_completed: 'true',
+    store_name: business.store_name ?? '',
+    store_phone: business.store_phone ?? '',
+  })
+
+  return {
+    success: true,
+    businessId: business.id as string,
+    email: user.email ?? null,
+  }
+}
+
 export const authApi = {
   // Returns true if there is an active Supabase session (web-only helper)
   checkCloudSession: async (): Promise<boolean> => {
@@ -61,12 +88,18 @@ export const authApi = {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return null
-      const { data } = await supabase.from('businesses').select('name').eq('user_id', user.id).single()
-      return (data as any)?.name ?? null
+      const { data } = await supabase
+        .from('businesses')
+        .select('store_name')
+        .eq('user_id', user.id)
+        .single()
+      return (data as any)?.store_name ?? null
     } catch {
       return null
     }
   },
+
+  syncCloudBusinessSettings,
 
   // PIN-based login (cashier or admin via PIN).
   // Calls a Supabase Edge Function to verify the hashed PIN server-side.
@@ -199,9 +232,7 @@ export const authApi = {
 
       clearBusinessId()
       await getBusinessId()
-      await settingsApi.set('setup_completed', 'true')
-      await settingsApi.set('store_name', signupData.storeName || signupData.store_name || 'My Store')
-      await settingsApi.set('store_phone', signupData.storePhone || signupData.store_phone || '')
+      await syncCloudBusinessSettings()
 
       return { success: true }
     } catch (err: any) {
@@ -221,7 +252,7 @@ export const authApi = {
       // Eagerly warm up the business ID cache and persist setup flag
       try {
         await getBusinessId()
-        await settingsApi.set('setup_completed', 'true')
+        await syncCloudBusinessSettings()
       } catch {}
 
       return { success: true, user: data.user }

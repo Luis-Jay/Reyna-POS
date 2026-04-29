@@ -34,19 +34,10 @@ function normalizeInventoryRow(product: any) {
   }
 }
 
-async function fetchProducts(businessId: string) {
-  // Try with image_url first; fall back without it if the column doesn't exist yet
-  const full = await supabase
-    .from('catalog_products')
-    .select('id, name, image_url, image_data, barcode, base_price, base_cost, retail_price, wholesale_price, monthly_sold, description, updated_at, is_active, deleted_at, track_inventory')
-    .eq('business_id', businessId)
-  if (!full.error) return full
-
-  // image_url column may not be in PostgREST schema cache yet — retry without it
-  console.warn('[inventory] catalog_products query failed, retrying without image_url:', full.error.message)
+async function fetchProducts(businessId: string): Promise<any> {
   return supabase
     .from('catalog_products')
-    .select('id, name, image_data, barcode, base_price, base_cost, retail_price, wholesale_price, monthly_sold, description, updated_at, is_active, deleted_at, track_inventory')
+    .select('*')
     .eq('business_id', businessId)
 }
 
@@ -73,7 +64,7 @@ export const inventoryApi = {
       const invMap: Record<string, any> = {}
       for (const inv of inventoryRes.data ?? []) invMap[inv.product_id] = inv
 
-      const merged = (productsRes.data ?? []).map(p => ({
+      const merged = ((productsRes.data ?? []) as any[]).map(p => ({
         ...p,
         catalog_inventory: invMap[p.id] ? [invMap[p.id]] : [],
       }))

@@ -140,7 +140,8 @@ export default function InventoryPage() {
       window.api.activation.getStatus(),
       window.api.settings.getAll(),
     ]).then(([activation, settings]: any[]) => {
-      setBatchPricingAvailable(activation?.activated === true && settings?.batch_pricing_enabled === 'true')
+      const batchPricingEnabled = settings?.batch_pricing_enabled !== 'false'
+      setBatchPricingAvailable(activation?.activated === true && batchPricingEnabled)
     }).catch(() => setBatchPricingAvailable(false))
   }, [])
 
@@ -250,13 +251,13 @@ export default function InventoryPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={openPending}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white/20 text-white rounded-lg hover:bg-white/30"
+            className="flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white/20 text-white rounded-lg hover:bg-white/30"
           >
             <Clock size={13} /> Pending Orders
           </button>
           <button
             onClick={() => navigate('/inventory/report')}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-white/20 text-white rounded-lg hover:bg-white/30"
+            className="flex shrink-0 items-center gap-1.5 px-3 py-2 text-xs font-medium bg-white/20 text-white rounded-lg hover:bg-white/30"
           >
             <FileText size={13} /> View Report
           </button>
@@ -264,41 +265,42 @@ export default function InventoryPage() {
       } />
 
       {/* Status cards */}
-      <div className="grid grid-cols-4 gap-3 p-4">
+      <div className="grid grid-cols-2 gap-3 p-3 sm:grid-cols-4 sm:p-4">
         {[
           { label: 'Total',    value: counts.total,    icon: '📦', color: 'from-slate-800 to-slate-700' },
           { label: 'Safe',     value: counts.safe,     icon: '✓',  color: 'from-emerald-600 to-emerald-500' },
           { label: 'Low',      value: counts.low,      icon: '!',  color: 'from-amber-500 to-yellow-500' },
           { label: 'Critical', value: counts.critical, icon: '⚠',  color: 'from-red-600 to-rose-500' },
         ].map(c => (
-          <div key={c.label} className={`bg-gradient-to-br ${c.color} text-white rounded-xl p-4 flex items-center gap-3 shadow-sm`}>
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-white/15 text-2xl">{c.icon}</span>
+          <div key={c.label} className={`bg-gradient-to-br ${c.color} text-white rounded-xl p-3 sm:p-4 flex items-center gap-2 sm:gap-3 shadow-sm`}>
+            <span className="grid h-9 w-9 sm:h-10 sm:w-10 place-items-center rounded-xl bg-white/15 text-xl sm:text-2xl">{c.icon}</span>
             <div>
               <p className="text-xs opacity-80">{c.label}</p>
-              <p className="text-2xl font-bold">{c.value}</p>
+              <p className="text-xl sm:text-2xl font-bold">{c.value}</p>
             </div>
           </div>
         ))}
       </div>
 
       {/* Controls */}
-      <div className="px-4 pb-3 flex gap-3">
+      <div className="px-3 pb-3 flex flex-col gap-3 sm:px-4 sm:flex-row">
         <input value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search products..."
           className="flex-1 border border-emerald-100 rounded-xl px-4 py-2.5 bg-white text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200" />
         <select value={filter} onChange={e => setFilter(e.target.value)}
-          className="border border-emerald-100 rounded-xl px-4 py-2.5 bg-white text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200">
+          className="w-full sm:w-auto border border-emerald-100 rounded-xl px-4 py-2.5 bg-white text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-200">
           {FILTERS.map(f => <option key={f}>{f}</option>)}
         </select>
       </div>
 
       {/* List */}
-      <div className="flex-1 overflow-y-auto px-4 space-y-3 pb-4">
+      <div className="flex-1 overflow-y-auto px-3 space-y-3 pb-4 sm:px-4">
         {items.map(item => {
           const sl = statusLabel(item.status)
           const isEditing = editingId === item.product_id
           return (
-            <div key={item.id} className="bg-white/95 rounded-2xl border border-emerald-50 p-4 flex items-center gap-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+            <div key={item.id} className="bg-white/95 rounded-2xl border border-emerald-50 p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
+              <div className="flex items-start gap-3 sm:gap-4">
               <div className="w-14 h-14 bg-emerald-50 rounded-xl overflow-hidden shrink-0">
                 {item.image_path && (
                   <img src={getProductImageSrc(item.image_path)} alt={item.product_name || ''} className="w-full h-full object-cover" />
@@ -310,7 +312,7 @@ export default function InventoryPage() {
                   <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${sl.class}`}>{sl.text}</span>
                 </div>
                 {item.barcode && <p className="text-xs text-gray-400 font-mono mt-0.5">{item.barcode}</p>}
-                <div className="flex gap-6 mt-2">
+                <div className="mt-2 grid grid-cols-2 gap-3 sm:flex sm:gap-6">
                   <div>
                     <p className="text-xs text-gray-400">Total Stock</p>
                     <p className={`font-bold text-lg ${item.quantity <= 0 ? 'text-red-500' : 'text-gray-800'}`}>{item.quantity}</p>
@@ -352,23 +354,24 @@ export default function InventoryPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-col gap-2 shrink-0 sm:flex-row">
                   <button
                     onClick={() => openOrderForm(item)}
                     title="Place Order"
-                    className="w-11 h-11 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-sm hover:bg-blue-700"
+                    className="h-11 w-11 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-sm hover:bg-blue-700"
                   >
                     <ShoppingCart size={16} />
                   </button>
                   <button
                     onClick={() => openEdit(item.product_id)}
                     title="Adjust Stock"
-                    className="w-11 h-11 bg-emerald-600 text-white rounded-full flex items-center justify-center shadow-sm hover:bg-emerald-700"
+                    className="h-11 w-11 bg-emerald-600 text-white rounded-full flex items-center justify-center shadow-sm hover:bg-emerald-700"
                   >
                     <Plus size={20} />
                   </button>
                 </div>
               )}
+              </div>
             </div>
           )
         })}

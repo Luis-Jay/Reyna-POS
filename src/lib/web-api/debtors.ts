@@ -2,6 +2,15 @@ import { v4 as uuid } from 'uuid'
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
 
+function shouldFallbackToClientFlow(error: any, fnName: string) {
+  const message = String(error?.message || '').toLowerCase()
+  return message.includes(fnName.toLowerCase()) && (
+    message.includes('could not find the function')
+    || message.includes('does not exist')
+    || message.includes('schema cache')
+  )
+}
+
 export const debtorsApi = {
   getAll: async (filters?: { search?: string; hasBalance?: boolean }) => {
     try {
@@ -97,31 +106,56 @@ export const debtorsApi = {
     try {
       const businessId = await getBusinessId()
       const id = uuid()
-      await supabase.from('sales_debtor_transactions').insert({
-        id, business_id: businessId,
-        debtor_id: tx.debtor_id,
-        type: tx.type,
-        amount: tx.amount,
-        profit: 0,
-        note: tx.note || null,
-        order_id: tx.order_id || null,
-        user_id: tx.user_id || null,
+      const { error } = await supabase.rpc('add_debtor_transaction', {
+        p_business_id: businessId,
+        p_transaction_id: id,
+        p_debtor_id: tx.debtor_id,
+        p_type: tx.type,
+        p_amount: tx.amount ?? 0,
+        p_note: tx.note || null,
+        p_order_id: tx.order_id || null,
+        p_user_id: tx.user_id || null,
       })
+      if (error && !shouldFallbackToClientFlow(error, 'add_debtor_transaction')) {
+        return { success: false, error: error.message }
+      }
 
-      // Update debtor balance
-      if (tx.type === 'debt') {
-        await supabase.from('sales_debtors').update({
-          balance: supabase.rpc('increment', { x: tx.amount }) as any,
-          total_credit: supabase.rpc('increment', { x: tx.amount }) as any,
-          updated_at: new Date().toISOString(),
-        }).eq('id', tx.debtor_id).eq('business_id', businessId)
-      } else if (tx.type === 'payment') {
-        const { data: debtor } = await supabase.from('sales_debtors')
-          .select('balance, total_paid').eq('id', tx.debtor_id).single()
-        if (debtor) {
+      if (error) {
+        const { error: insertError } = await supabase.from('sales_debtor_transactions').insert({
+          id,
+          business_id: businessId,
+          debtor_id: tx.debtor_id,
+          type: tx.type,
+          amount: tx.amount,
+          profit: 0,
+          note: tx.note || null,
+          order_id: tx.order_id || null,
+          user_id: tx.user_id || null,
+        })
+        if (insertError) return { success: false, error: insertError.message }
+
+        if (tx.type === 'debt') {
+          const { data: debtor } = await supabase.from('sales_debtors')
+            .select('balance, total_credit')
+            .eq('id', tx.debtor_id)
+            .eq('business_id', businessId)
+            .single()
+
           await supabase.from('sales_debtors').update({
-            balance: Math.max(0, debtor.balance - tx.amount),
-            total_paid: debtor.total_paid + tx.amount,
+            balance: Number(debtor?.balance ?? 0) + Number(tx.amount ?? 0),
+            total_credit: Number(debtor?.total_credit ?? 0) + Number(tx.amount ?? 0),
+            updated_at: new Date().toISOString(),
+          }).eq('id', tx.debtor_id).eq('business_id', businessId)
+        } else if (tx.type === 'payment') {
+          const { data: debtor } = await supabase.from('sales_debtors')
+            .select('balance, total_paid')
+            .eq('id', tx.debtor_id)
+            .eq('business_id', businessId)
+            .single()
+
+          await supabase.from('sales_debtors').update({
+            balance: Math.max(0, Number(debtor?.balance ?? 0) - Number(tx.amount ?? 0)),
+            total_paid: Number(debtor?.total_paid ?? 0) + Number(tx.amount ?? 0),
             updated_at: new Date().toISOString(),
           }).eq('id', tx.debtor_id).eq('business_id', businessId)
         }

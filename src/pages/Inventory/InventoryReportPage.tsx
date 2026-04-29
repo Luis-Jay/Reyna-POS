@@ -143,20 +143,20 @@ export default function InventoryReportPage() {
 
       <div className="flex-1 overflow-y-auto">
         {/* Actions */}
-        <div className="max-w-6xl mx-auto px-4 pt-4 flex items-center justify-between">
+        <div className="max-w-6xl mx-auto px-3 pt-3 sm:px-4 sm:pt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-gray-400">Printed at: {printedAt}</p>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:flex">
             <button
               onClick={handleExcel}
               disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
+              className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50"
             >
               <FileSpreadsheet size={14} /> Export Excel
             </button>
             <button
               onClick={handlePrint}
               disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50"
+              className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50"
             >
               <Printer size={14} /> Print
             </button>
@@ -164,18 +164,18 @@ export default function InventoryReportPage() {
         </div>
 
         {/* Report header */}
-        <div className="max-w-6xl mx-auto px-4 pt-4 pb-2">
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-6">
-            <div className="flex items-center gap-4 mb-4">
+        <div className="max-w-6xl mx-auto px-3 pt-3 pb-2 sm:px-4 sm:pt-4">
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 sm:p-6">
+            <div className="mb-4 flex flex-col items-center gap-3 text-center sm:flex-row sm:items-center sm:gap-4 sm:text-left">
               {settings.store_logo_data && (
                 <img src={settings.store_logo_data} className="w-16 h-16 object-cover rounded" />
               )}
-              <div className="flex-1 text-center">
+              <div className="flex-1">
                 <p className="text-base font-bold text-[#1a8eff] tracking-wide">{settings.store_name ?? 'Store'}</p>
                 {settings.store_address && <p className="text-xs text-gray-500">{settings.store_address}</p>}
                 {settings.store_phone && <p className="text-xs text-gray-500">{settings.store_phone}</p>}
               </div>
-              <div className="text-right">
+              <div className="sm:text-right">
                 <p className="text-xs font-bold bg-gray-800 text-white px-3 py-1 rounded">TOTAL INVENTORY REPORT</p>
               </div>
             </div>
@@ -184,7 +184,7 @@ export default function InventoryReportPage() {
               <p className="text-sm text-gray-400 text-center py-8">Loading...</p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-xs">
+                <table className="min-w-[760px] w-full text-xs">
                   <thead>
                     <tr className="bg-gray-800 text-white">
                       <th className="text-left px-3 py-2 font-medium">Product Code</th>
@@ -221,7 +221,7 @@ export default function InventoryReportPage() {
                   const totalQty          = rows.reduce((s, r) => s + r.quantity, 0)
                   const fmt = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                   return (
-                    <div className="mt-4 grid grid-cols-3 gap-3">
+                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
                       <div className="bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
                         <p className="text-xs text-gray-400 mb-0.5">Total Items in Stock</p>
                         <p className="text-lg font-bold text-gray-800">{totalQty.toLocaleString('en-PH')}</p>

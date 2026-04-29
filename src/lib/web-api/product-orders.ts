@@ -6,7 +6,7 @@ async function fetchProductMap(businessId: string): Promise<Record<string, any>>
   try {
     const { data } = await supabase
       .from('catalog_products')
-      .select('id, name, barcode, base_cost, retail_price, wholesale_price, image_url, image_data')
+      .select('*')
       .eq('business_id', businessId)
     const map: Record<string, any> = {}
     for (const p of data ?? []) map[p.id] = p

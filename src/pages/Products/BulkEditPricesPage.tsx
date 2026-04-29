@@ -53,7 +53,7 @@ export default function BulkEditPricesPage() {
       const p = products.find(x => x.id === id)
       if (p) {
         const price = Math.ceil(p.base_cost * (1 + pct / 100))
-        updates[id] = { price, markup_pct: pct }
+        updates[id] = { price, retail_price: price, base_price: price, markup_pct: pct }
       }
     }
     setEdits(e => ({ ...e, ...updates }))
@@ -85,11 +85,33 @@ export default function BulkEditPricesPage() {
 
   const handleSave = async () => {
     setSaving(true)
-    const updates = Object.entries(edits).map(([id, v]) => ({ id, ...v }))
-    if (tab === 'prices') await window.api.products.bulkPrices(updates)
-    else if (tab === 'names') await window.api.products.bulkNames(updates)
-    else if (tab === 'barcodes') await window.api.products.bulkBarcodes(updates)
-    else if (tab === 'costs') await window.api.products.bulkCosts(updates)
+    if (tab === 'prices') {
+      const updates = Object.entries(edits).map(([id, v]) => {
+        const nextPrice = v.price ?? v.retail_price ?? v.base_price
+        return {
+          id,
+          ...(nextPrice !== undefined ? {
+            price: nextPrice,
+            retail_price: nextPrice,
+            base_price: nextPrice,
+          } : {}),
+          ...(v.markup_pct !== undefined ? { markup_pct: v.markup_pct } : {}),
+        }
+      })
+      await window.api.products.bulkPrices(updates)
+    } else if (tab === 'names') {
+      const updates = Object.entries(edits).map(([id, v]) => ({ id, ...v }))
+      await window.api.products.bulkNames(updates)
+    } else if (tab === 'barcodes') {
+      const updates = Object.entries(edits).map(([id, v]) => ({ id, ...v }))
+      await window.api.products.bulkBarcodes(updates)
+    } else if (tab === 'costs') {
+      const updates = Object.entries(edits).map(([id, v]) => {
+        const nextCost = v.cost ?? v.base_cost
+        return { id, cost: nextCost, base_cost: nextCost }
+      })
+      await window.api.products.bulkCosts(updates)
+    }
     setEdits({})
     setSaving(false)
     load()
@@ -196,8 +218,8 @@ export default function BulkEditPricesPage() {
             {filtered.map(p => {
               const edit = edits[p.id] || {}
               const isSelected = selected.has(p.id)
-              const price = edit.price ?? p.base_price
-              const cost = edit.cost ?? p.base_cost
+              const price = edit.price ?? edit.retail_price ?? edit.base_price ?? p.retail_price ?? p.base_price
+              const cost = edit.cost ?? edit.base_cost ?? p.base_cost
               const name = edit.name ?? p.name
               const barcode = edit.barcode ?? p.barcode ?? ''
               const markup = edit.markup_pct ?? p.markup_pct

@@ -2,6 +2,17 @@ import { v4 as uuid } from 'uuid'
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
 
+async function getCashierNameMap(businessId: string) {
+  const { data, error } = await supabase
+    .from('cashiers')
+    .select('id, name')
+    .eq('business_id', businessId)
+
+  if (error) throw error
+
+  return new Map((data ?? []).map((cashier: any) => [cashier.id, cashier.name ?? 'Unknown Cashier']))
+}
+
 export const shiftsApi = {
   timeIn: async (data: { userId: string; startMoney: number; note?: string }) => {
     try {
@@ -56,9 +67,10 @@ export const shiftsApi = {
   getActive: async (userId?: string) => {
     try {
       const businessId = await getBusinessId()
+      const cashierNames = await getCashierNameMap(businessId)
       let query = supabase
         .from('cashier_shifts')
-        .select('*, cashiers(name)')
+        .select('*')
         .eq('business_id', businessId)
         .is('time_out', null)
         .order('time_in', { ascending: false })
@@ -66,7 +78,10 @@ export const shiftsApi = {
       if (userId) query = query.eq('user_id', userId)
 
       const { data } = await query
-      return (data ?? []).map(s => ({ ...s, cashier_name: (s.cashiers as any)?.name ?? '' }))
+      return (data ?? []).map((shift: any) => ({
+        ...shift,
+        cashier_name: cashierNames.get(shift.user_id) ?? 'Unknown Cashier',
+      }))
     } catch {
       return []
     }
@@ -75,9 +90,10 @@ export const shiftsApi = {
   getAll: async (filters?: { userId?: string; from?: string; to?: string }) => {
     try {
       const businessId = await getBusinessId()
+      const cashierNames = await getCashierNameMap(businessId)
       let query = supabase
         .from('cashier_shifts')
-        .select('*, cashiers(name)')
+        .select('*')
         .eq('business_id', businessId)
         .order('time_in', { ascending: false })
         .limit(100)
@@ -87,7 +103,10 @@ export const shiftsApi = {
       if (filters?.to) query = query.lte('time_in', `${filters.to}T23:59:59`)
 
       const { data } = await query
-      return (data ?? []).map(s => ({ ...s, cashier_name: (s.cashiers as any)?.name ?? '' }))
+      return (data ?? []).map((shift: any) => ({
+        ...shift,
+        cashier_name: cashierNames.get(shift.user_id) ?? 'Unknown Cashier',
+      }))
     } catch {
       return []
     }

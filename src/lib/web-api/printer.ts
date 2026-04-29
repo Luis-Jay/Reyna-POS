@@ -192,6 +192,82 @@ function buildPopupPrintHtml(html: string) {
   )
 }
 
+function buildInlinePrintRoot(html: string) {
+  const parsed = new DOMParser().parseFromString(html, 'text/html')
+  const styles = Array.from(parsed.head.querySelectorAll('style'))
+    .map(node => node.textContent || '')
+    .join('\n')
+  const bodyContent = parsed.body.innerHTML
+
+  return `
+    <style>
+      ${styles}
+      #reyna-inline-print-root{
+        position:fixed;
+        inset:0;
+        z-index:2147483647;
+        overflow:auto;
+        background:#ffffff;
+        padding:24px 12px 40px;
+      }
+      @media screen {
+        body.reyna-printing-inline #root {
+          display:none !important;
+        }
+      }
+      @media print {
+        html, body {
+          background:#ffffff !important;
+        }
+        body.reyna-printing-inline #root {
+          display:none !important;
+        }
+        body.reyna-printing-inline #reyna-inline-print-root {
+          position:static !important;
+          inset:auto !important;
+          overflow:visible !important;
+          padding:0 !important;
+        }
+      }
+    </style>
+    <div class="reyna-inline-print-body">${bodyContent}</div>
+  `
+}
+
+function printWithInlineRoot(html: string): { success: boolean; error?: string } {
+  const existingRoot = document.getElementById('reyna-inline-print-root')
+  if (existingRoot) existingRoot.remove()
+
+  const host = document.createElement('div')
+  host.id = 'reyna-inline-print-root'
+  host.innerHTML = buildInlinePrintRoot(html)
+  document.body.appendChild(host)
+  document.body.classList.add('reyna-printing-inline')
+
+  let cleaned = false
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    window.removeEventListener('afterprint', cleanup)
+    document.body.classList.remove('reyna-printing-inline')
+    host.remove()
+  }
+
+  window.addEventListener('afterprint', cleanup, { once: true })
+
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      try {
+        window.print()
+      } finally {
+        setTimeout(cleanup, 1500)
+      }
+    })
+  })
+
+  return { success: true }
+}
+
 async function getStoreSettings() {
   const keys = ['thermal_enabled','store_name','store_address','store_phone','store_tin','receipt_footer','paper_size']
   const entries = await Promise.all(keys.map(async k => [k, await settingsApi.get(k)]))
@@ -209,15 +285,7 @@ async function getStoreSettings() {
 function printHtml(html: string): { success: boolean; error?: string } {
   try {
     if (isApplePrintBrowser()) {
-      const printWindow = window.open('', '_blank', 'noopener,noreferrer,width=420,height=900')
-      if (!printWindow) {
-        return { success: false, error: 'Unable to open the receipt print window.' }
-      }
-
-      printWindow.document.open()
-      printWindow.document.write(buildPopupPrintHtml(html))
-      printWindow.document.close()
-      return { success: true }
+      return printWithInlineRoot(html)
     }
 
     // Use a hidden iframe so mobile browsers don't block it as a popup

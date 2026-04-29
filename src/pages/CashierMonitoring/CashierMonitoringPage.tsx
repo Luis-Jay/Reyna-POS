@@ -18,6 +18,7 @@ type User = { id: string; name: string; role: string }
 
 const fmt = (n: number) => `₱${Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
 const fmtDt = (s: string) => new Date(s).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+const initials = (name?: string | null) => (name?.trim()?.charAt(0) || '?').toUpperCase()
 const duration = (timeIn: string, timeOut: string | null) => {
   const ms = (timeOut ? new Date(timeOut) : new Date()).getTime() - new Date(timeIn).getTime()
   const h = Math.floor(ms / 3600000)
@@ -115,7 +116,7 @@ export default function CashierMonitoringPage() {
     <div className="h-screen flex flex-col bg-gray-50">
       <TopBar title="Cashier Monitoring" back="/" />
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto p-4 space-y-4">
+        <div className="max-w-3xl mx-auto p-3 sm:p-4 space-y-4">
 
           {/* Today's Sales Summary */}
           {(() => {
@@ -124,21 +125,21 @@ export default function CashierMonitoringPage() {
             const active = cashierSales.filter(c => c.order_count > 0)
             return (
               <div className="bg-white rounded-2xl shadow-sm overflow-hidden">
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100">
+                <div className="flex items-center gap-3 px-4 sm:px-5 py-4 border-b border-gray-100">
                   <TrendingUp size={18} className="text-[#1a8eff]" />
                   <h2 className="font-bold text-gray-900">Sales Today</h2>
-                  <span className="ml-auto text-xs text-gray-400">{new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+                  <span className="ml-auto text-[11px] sm:text-xs text-gray-400">{new Date().toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
                 </div>
 
                 {/* Totals row */}
                 <div className="grid grid-cols-2 divide-x divide-gray-100 border-b border-gray-100">
-                  <div className="px-5 py-4">
+                  <div className="px-4 sm:px-5 py-4">
                     <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Sales</p>
-                    <p className="text-2xl font-bold text-[#1a8eff]">{fmt(totalSales)}</p>
+                    <p className="text-xl sm:text-2xl font-bold text-[#1a8eff] break-words">{fmt(totalSales)}</p>
                   </div>
-                  <div className="px-5 py-4">
+                  <div className="px-4 sm:px-5 py-4">
                     <p className="text-xs text-gray-400 uppercase tracking-wide mb-1">Total Orders</p>
-                    <p className="text-2xl font-bold text-gray-800">{totalOrders}</p>
+                    <p className="text-xl sm:text-2xl font-bold text-gray-800">{totalOrders}</p>
                   </div>
                 </div>
 
@@ -147,12 +148,12 @@ export default function CashierMonitoringPage() {
                   {cashierSales.map((c, i) => {
                     const pct = totalSales > 0 ? (c.total_sales / totalSales) * 100 : 0
                     return (
-                      <div key={c.user_id} className="flex items-center gap-3 px-5 py-3">
+                      <div key={c.user_id} className="flex items-start gap-3 px-4 sm:px-5 py-3">
                         <div className="w-8 h-8 rounded-full bg-[#1a8eff]/10 flex items-center justify-center shrink-0">
-                          <span className="text-xs font-bold text-[#1a8eff]">{c.cashier_name.charAt(0).toUpperCase()}</span>
+                          <span className="text-xs font-bold text-[#1a8eff]">{initials(c.cashier_name)}</span>
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between mb-1">
+                          <div className="mb-1 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
                             <span className="text-sm font-semibold text-gray-800">{c.cashier_name}</span>
                             <span className="text-sm font-bold text-gray-900">{fmt(c.total_sales)}</span>
                           </div>
@@ -180,8 +181,8 @@ export default function CashierMonitoringPage() {
           })()}
 
           {/* Tabs + Time In button */}
-          <div className="flex items-center justify-between">
-            <div className="flex gap-1">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap gap-2">
               {(['active','history'] as const).map(t => (
                 <button key={t} onClick={() => setTab(t)}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === t ? 'bg-[#1a8eff] text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}>
@@ -190,7 +191,7 @@ export default function CashierMonitoringPage() {
               ))}
             </div>
             <button onClick={() => setShowTimeIn(true)}
-              className="flex items-center gap-2 bg-[#1a8eff] text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-[#0077e6]">
+              className="flex items-center justify-center gap-2 bg-[#1a8eff] text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-[#0077e6] sm:self-auto">
               <LogIn size={15} /> Time In
             </button>
           </div>
@@ -201,27 +202,32 @@ export default function CashierMonitoringPage() {
               ? <div className="bg-white rounded-xl p-10 text-center text-sm text-gray-400 shadow-sm">No active shifts.</div>
               : activeShifts.map(shift => (
                 <div key={shift.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
-                  <div className="flex items-center gap-3 px-4 py-3">
+                  <div className="px-4 py-3">
+                    <div className="flex items-start gap-3">
                     <div className="w-10 h-10 rounded-full bg-[#1a8eff] flex items-center justify-center text-white font-bold text-sm shrink-0">
-                      {shift.cashier_name.charAt(0).toUpperCase()}
+                      {initials(shift.cashier_name)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-semibold text-gray-900">{shift.cashier_name}</p>
-                      <p className="text-xs text-gray-500">Time in: {fmtDt(shift.time_in)} · {duration(shift.time_in, null)}</p>
+                      <p className="text-xs text-gray-500">Time in: {fmtDt(shift.time_in)}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Duration: {duration(shift.time_in, null)}</p>
                     </div>
-                    <div className="text-right shrink-0">
+                    </div>
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+                    <div className="rounded-xl bg-gray-50 px-3 py-2 sm:text-right">
                       <p className="text-xs text-gray-500">Start Money</p>
                       <p className="font-bold text-gray-900">{fmt(shift.start_money)}</p>
                     </div>
-                    <div className="flex gap-2 ml-2">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                       <button onClick={() => openPetty(shift)}
-                        className="text-xs px-2 py-1.5 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium">
+                        className="text-xs px-3 py-2 rounded-lg bg-amber-50 text-amber-700 border border-amber-200 hover:bg-amber-100 font-medium">
                         Petty Cash
                       </button>
                       <button onClick={() => { setShowTimeOut(shift); setToMoney('') }}
-                        className="text-xs px-2 py-1.5 rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 font-medium flex items-center gap-1">
+                        className="text-xs px-3 py-2 rounded-lg bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 font-medium flex items-center justify-center gap-1">
                         <LogOut size={13} /> Time Out
                       </button>
+                    </div>
                     </div>
                   </div>
                   {shift.petty_cash_total > 0 && (
@@ -242,18 +248,22 @@ export default function CashierMonitoringPage() {
                 const diff = (shift.end_money ?? 0) - shift.start_money - shift.petty_cash_total
                 return (
                   <div key={shift.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
-                    <div className="flex items-center gap-3 px-4 py-3 cursor-pointer" onClick={() => toggleExpand(shift.id)}>
+                    <div className="cursor-pointer px-4 py-3" onClick={() => toggleExpand(shift.id)}>
+                      <div className="flex items-start gap-3">
                       <div className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center text-gray-600 font-bold text-sm shrink-0">
-                        {shift.cashier_name.charAt(0).toUpperCase()}
+                        {initials(shift.cashier_name)}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="font-semibold text-gray-900 text-sm">{shift.cashier_name}</p>
                         <p className="text-xs text-gray-500">{fmtDt(shift.time_in)} → {shift.time_out ? fmtDt(shift.time_out) : '—'} · {duration(shift.time_in, shift.time_out)}</p>
                       </div>
+                      </div>
+                      <div className="mt-3 flex items-center justify-between border-t border-gray-100 pt-3">
                       <span className={`text-sm font-bold ${diff >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                         {diff >= 0 ? '+' : ''}{fmt(diff)}
                       </span>
                       {isExpanded ? <ChevronUp size={16} className="text-gray-400" /> : <ChevronDown size={16} className="text-gray-400" />}
+                      </div>
                     </div>
                     {isExpanded && (
                       <div className="px-4 pb-3 border-t border-gray-100 text-sm space-y-1 pt-2">

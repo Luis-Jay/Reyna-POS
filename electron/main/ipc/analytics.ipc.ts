@@ -138,11 +138,16 @@ export function registerAnalyticsHandlers() {
 
     const recentOrders = db.prepare(`
       SELECT o.id, o.order_number, o.total, o.created_at,
-             COUNT(oi.id) as item_count
+             COALESCE(SUM(oi.quantity), 0) as item_count
       FROM orders o
       LEFT JOIN order_items oi ON oi.order_id = o.id
       WHERE o.deleted_at IS NULL
-      GROUP BY o.id ORDER BY o.created_at DESC LIMIT 7
+        AND o.status = 'completed'
+        AND o.exclude_sales = 0
+        AND DATE(o.created_at, '+8 hours') = DATE('now', '+8 hours')
+      GROUP BY o.id
+      ORDER BY o.created_at DESC
+      LIMIT 5
     `).all()
 
     return {

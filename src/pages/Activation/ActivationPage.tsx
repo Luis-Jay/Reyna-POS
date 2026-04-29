@@ -33,15 +33,12 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
 
     const interval = window.setInterval(async () => {
       const result = await window.api.activation.checkStatus()
-      if (result.activated && result.expiresAt) {
-        await window.api.activation.markActivated(result.expiresAt)
+      const expiresAt = result.expiresAt || result.expires_at
+      if (result.activated && expiresAt) {
+        await window.api.activation.markActivated(expiresAt)
         window.clearInterval(interval)
         setStep('success')
         setErrorMsg('')
-        successTimeoutRef.current = window.setTimeout(() => {
-          onActivated()
-          navigate('/settings')
-        }, 1500)
         return
       }
 
@@ -63,6 +60,18 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
 
     return () => {
       window.clearInterval(interval)
+    }
+  }, [step, navigate, onActivated])
+
+  useEffect(() => {
+    if (step !== 'success') return
+
+    successTimeoutRef.current = window.setTimeout(() => {
+      onActivated()
+      navigate('/settings')
+    }, 1500)
+
+    return () => {
       if (successTimeoutRef.current !== null) {
         window.clearTimeout(successTimeoutRef.current)
         successTimeoutRef.current = null
@@ -81,7 +90,9 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
         setErrorMsg(result.error || 'Failed to open payment page. Check your internet connection.')
       } else if (result.alreadyActivated) {
         const status = await window.api.activation.getStatus()
-        if (status.activated && status.expiresAt) {
+        const expiresAt = status.expiresAt || status.expires_at
+        if (status.activated && expiresAt) {
+          await window.api.activation.markActivated(expiresAt)
           setStep('success')
           window.setTimeout(() => {
             onActivated()
@@ -92,6 +103,9 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
           await handleCheck()
         }
       } else {
+        if (result.invoiceUrl) {
+          window.open(result.invoiceUrl, '_blank', 'noopener,noreferrer')
+        }
         setStep('checking')
         setErrorMsg('')
       }
@@ -107,8 +121,9 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
     setPendingNotice('')
     try {
       const result = await window.api.activation.checkStatus()
-      if (result.activated && result.expiresAt) {
-        await window.api.activation.markActivated(result.expiresAt)
+      const expiresAt = result.expiresAt || result.expires_at
+      if (result.activated && expiresAt) {
+        await window.api.activation.markActivated(expiresAt)
         setStep('success')
         setTimeout(() => {
           onActivated()

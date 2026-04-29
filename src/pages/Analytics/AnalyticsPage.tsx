@@ -326,24 +326,24 @@ export default function AnalyticsPage() {
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       <TopBar title="Analytics & Reports" back="/" />
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div className="flex flex-wrap gap-2">
             {FILTERS.map(p => (
               <button
                 key={p.value}
                 onClick={() => setFilterPreset(p.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${filterPreset === p.value ? 'bg-[#1a8eff] text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}
+                className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors ${filterPreset === p.value ? 'bg-[#1a8eff] text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`}
               >
                 {p.label}
               </button>
             ))}
           </div>
-          <div className="flex gap-2">
-            <button onClick={handleExcelExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-green-600 text-white hover:bg-green-700">
+          <div className="grid grid-cols-2 gap-2 sm:flex">
+            <button onClick={handleExcelExport} className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-green-600 text-white hover:bg-green-700">
               <FileSpreadsheet size={13} /> Excel
             </button>
-            <button onClick={handlePdfExport} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500 text-white hover:bg-red-600">
+            <button onClick={handlePdfExport} className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium bg-red-500 text-white hover:bg-red-600">
               <FileDown size={13} /> PDF
             </button>
           </div>
@@ -356,14 +356,14 @@ export default function AnalyticsPage() {
         )}
 
         {filterPreset === 'custom' && (
-          <div className="bg-white rounded-xl p-4 shadow-sm flex flex-wrap items-end gap-3">
+          <div className="bg-white rounded-xl p-4 shadow-sm flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <div>
               <label className="block text-xs text-gray-500 mb-1">From</label>
               <input
                 type="date"
                 value={customRange.from || ''}
                 onChange={e => setCustomRange(r => ({ ...r, from: e.target.value }))}
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff] sm:w-auto"
               />
             </div>
             <div>
@@ -372,7 +372,7 @@ export default function AnalyticsPage() {
                 type="date"
                 value={customRange.to || ''}
                 onChange={e => setCustomRange(r => ({ ...r, to: e.target.value }))}
-                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff] sm:w-auto"
               />
             </div>
             <p className="text-xs text-gray-400 pb-2">Custom range uses Manila dates.</p>
@@ -381,7 +381,7 @@ export default function AnalyticsPage() {
 
         <div>
           <p className="text-sm font-semibold text-gray-700 mb-2">{filterLabel} Performance</p>
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {[
               { label: 'Total Sales', value: `₱${(report?.total_sales || 0).toLocaleString()}`, icon: '💰', color: 'bg-blue-50' },
               { label: 'Gross Profit', value: `₱${(report?.net_profit || 0).toLocaleString()}`, icon: '💵', color: 'bg-green-50', green: true },
@@ -400,7 +400,7 @@ export default function AnalyticsPage() {
 
         <div>
           <p className="text-sm font-semibold text-gray-700 mb-2">{filterLabel} Debt Overview</p>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {[
               { label: 'Total Outstanding Debt', value: `₱${(report?.debt_outstanding || 0).toLocaleString()}`, color: 'bg-red-50', icon: '👥' },
               { label: 'New Debt Added', value: `₱${(report?.debt_added || 0).toLocaleString()}`, color: 'bg-orange-50', icon: '↑' },
@@ -416,13 +416,13 @@ export default function AnalyticsPage() {
         </div>
 
         <div className="bg-white rounded-xl p-4 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
+          <div className="mb-3">
             <div>
               <p className="font-semibold text-gray-800">Cashflow Graph</p>
               <p className="text-xs text-gray-400">Sales, expenses, and net income across the selected range</p>
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={220}>
+          <ResponsiveContainer width="100%" height={260}>
             <ComposedChart data={cashflow} onClick={(e) => e?.activeLabel && setSelectedDay(e.activeLabel as string)}>
               <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={d => d.slice(5)} />
               <YAxis tick={{ fontSize: 10 }} />
@@ -436,12 +436,12 @@ export default function AnalyticsPage() {
               <Line type="monotone" dataKey="net_income" name="Net Income" stroke="#16a34a" strokeWidth={3} dot={{ r: 3 }} activeDot={{ r: 5 }} />
             </ComposedChart>
           </ResponsiveContainer>
-          <div className="mt-3 pt-3 border-t flex justify-between items-center">
+          <div className="mt-3 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <p className="text-xs text-gray-400 uppercase">Selected Day</p>
               <p className="font-semibold text-gray-800">{displayDay}</p>
             </div>
-            <div className="flex gap-6 text-right">
+            <div className="grid grid-cols-1 gap-2 text-left sm:flex sm:gap-6 sm:text-right">
               <div><p className="text-xs text-gray-400">Sales</p><p className="font-bold text-gray-800">₱{(selectedPoint?.sales || 0).toLocaleString()}</p></div>
               <div><p className="text-xs text-gray-400">Expenses</p><p className="font-bold text-rose-500">₱{(selectedPoint?.expenses || 0).toLocaleString()}</p></div>
               <div><p className="text-xs text-gray-400">Net Income</p><p className="font-bold text-green-600">₱{(selectedPoint?.net_income || 0).toLocaleString()}</p></div>
@@ -449,7 +449,7 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <div className="bg-white rounded-xl p-4 shadow-sm">
             <p className="font-semibold text-gray-800 mb-3">Busiest Hours (Manila Time)</p>
             <div className="flex gap-1">
@@ -527,7 +527,7 @@ export default function AnalyticsPage() {
           ))}
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           {/* Top 10 Creditors */}
           <div className="bg-white rounded-xl p-4 shadow-sm">
             <p className="font-semibold text-gray-800 mb-1">Top 10 Creditors</p>
@@ -569,7 +569,7 @@ export default function AnalyticsPage() {
 
         <div className="bg-white rounded-xl p-4 shadow-sm">
           <p className="font-semibold text-gray-800 mb-3">Inventory Valuation</p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="border-2 border-green-200 rounded-xl p-4">
               <p className="text-xs text-gray-500 mb-1">Potential Revenue (Selling Price)</p>
               <p className="text-2xl font-bold text-green-600">₱{valuation.potential_revenue.toLocaleString()}</p>

@@ -42,6 +42,9 @@ export default function App() {
   useEffect(() => {
     window.api.settings.get('setup_completed').then(async (setupCompleted: string | null) => {
       if (setupCompleted === 'true') {
+        if (typeof window.api.auth.syncCloudBusinessSettings === 'function') {
+          try { await window.api.auth.syncCloudBusinessSettings() } catch { /* ignore */ }
+        }
         setSetupComplete(true)
         return
       }
@@ -51,7 +54,11 @@ export default function App() {
         try {
           const ok = await window.api.auth.checkCloudSession()
           if (ok) {
-            await window.api.settings.set('setup_completed', 'true')
+            if (typeof window.api.auth.syncCloudBusinessSettings === 'function') {
+              await window.api.auth.syncCloudBusinessSettings()
+            } else {
+              await window.api.settings.set('setup_completed', 'true')
+            }
             setSetupComplete(true)
             return
           }

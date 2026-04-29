@@ -16,18 +16,27 @@ function mapProduct(p: any) {
   }
 }
 
+async function fetchInventoryMap(businessId: string): Promise<Record<string, number>> {
+  try {
+    const { data } = await supabase
+      .from('catalog_inventory')
+      .select('product_id, quantity')
+      .eq('business_id', businessId)
+    const map: Record<string, number> = {}
+    for (const row of data ?? []) map[row.product_id] = row.quantity
+    return map
+  } catch {
+    return {}
+  }
+}
+
 export const productsApi = {
   getAll: async (filters?: { category?: string; letter?: string; search?: string }) => {
     try {
       const businessId = await getBusinessId()
       let query = supabase
         .from('catalog_products')
-        .select(`
-          *,
-          catalog_categories(name),
-          catalog_variation_groups(name),
-          catalog_inventory(quantity)
-        `)
+        .select('*, catalog_categories(name), catalog_variation_groups(name)')
         .eq('business_id', businessId)
         .is('deleted_at', null)
         .eq('is_active', true)
@@ -38,10 +47,10 @@ export const productsApi = {
       if (filters?.search) query = query.or(`name.ilike.%${filters.search}%,barcode.eq.${filters.search}`)
       if (filters?.letter) query = query.ilike('name', `${filters.letter}%`)
 
-      const { data, error } = await query
+      const [{ data, error }, invMap] = await Promise.all([query, fetchInventoryMap(businessId)])
       if (error) throw error
       return (data ?? []).map(p => ({
-        ...mapProduct(p),
+        ...mapProduct({ ...p, catalog_inventory: invMap[p.id] != null ? [{ quantity: invMap[p.id] }] : [] }),
         category_name: p.catalog_categories?.name ?? null,
         variation_group_name: p.catalog_variation_groups?.name ?? null,
       }))
@@ -53,15 +62,12 @@ export const productsApi = {
   getById: async (id: string) => {
     try {
       const businessId = await getBusinessId()
-      const { data, error } = await supabase
-        .from('catalog_products')
-        .select('*, catalog_categories(name), catalog_inventory(quantity)')
-        .eq('id', id)
-        .eq('business_id', businessId)
-        .is('deleted_at', null)
-        .single()
+      const [{ data, error }, invMap] = await Promise.all([
+        supabase.from('catalog_products').select('*, catalog_categories(name)').eq('id', id).eq('business_id', businessId).is('deleted_at', null).single(),
+        fetchInventoryMap(businessId),
+      ])
       if (error) return null
-      return { ...mapProduct(data), category_name: data.catalog_categories?.name ?? null }
+      return { ...mapProduct({ ...data, catalog_inventory: invMap[id] != null ? [{ quantity: invMap[id] }] : [] }), category_name: data.catalog_categories?.name ?? null }
     } catch {
       return null
     }
@@ -72,13 +78,14 @@ export const productsApi = {
       const businessId = await getBusinessId()
       const { data, error } = await supabase
         .from('catalog_products')
-        .select('*, catalog_categories(name), catalog_inventory(quantity)')
+        .select('*, catalog_categories(name)')
         .eq('barcode', barcode)
         .eq('business_id', businessId)
         .is('deleted_at', null)
         .single()
       if (error) return null
-      return { ...mapProduct(data), category_name: data.catalog_categories?.name ?? null }
+      const { data: inv } = await supabase.from('catalog_inventory').select('quantity').eq('product_id', data.id).eq('business_id', businessId).single()
+      return { ...mapProduct({ ...data, catalog_inventory: inv ? [inv] : [] }), category_name: data.catalog_categories?.name ?? null }
     } catch {
       return null
     }
@@ -87,18 +94,12 @@ export const productsApi = {
   search: async (q: string) => {
     try {
       const businessId = await getBusinessId()
-      const { data, error } = await supabase
-        .from('catalog_products')
-        .select('*, catalog_categories(name), catalog_inventory(quantity)')
-        .eq('business_id', businessId)
-        .is('deleted_at', null)
-        .eq('is_active', true)
-        .or(`name.ilike.%${q}%,barcode.eq.${q}`)
-        .order('sort_order')
-        .order('name')
-        .limit(20)
+      const [{ data, error }, invMap] = await Promise.all([
+        supabase.from('catalog_products').select('*, catalog_categories(name)').eq('business_id', businessId).is('deleted_at', null).eq('is_active', true).or(`name.ilike.%${q}%,barcode.eq.${q}`).order('sort_order').order('name').limit(20),
+        fetchInventoryMap(businessId),
+      ])
       if (error) return []
-      return (data ?? []).map(p => ({ ...mapProduct(p), category_name: p.catalog_categories?.name ?? null }))
+      return (data ?? []).map(p => ({ ...mapProduct({ ...p, catalog_inventory: invMap[p.id] != null ? [{ quantity: invMap[p.id] }] : [] }), category_name: p.catalog_categories?.name ?? null }))
     } catch {
       return []
     }
@@ -192,14 +193,18 @@ export const productsApi = {
     }
   },
 
-  bulkPrices: async (updates: { id: string; retail_price?: number; wholesale_price?: number; base_price?: number }[]) => {
+  bulkPrices: async (updates: { id: string; price?: number; retail_price?: number; wholesale_price?: number; base_price?: number; markup_pct?: number | null }[]) => {
     try {
       const businessId = await getBusinessId()
       await Promise.all(updates.map(u => {
         const patch: any = { updated_at: new Date().toISOString() }
-        if (u.retail_price !== undefined) patch.retail_price = u.retail_price
+        const nextPrice = u.price ?? u.retail_price ?? u.base_price
+        if (nextPrice !== undefined) {
+          patch.retail_price = nextPrice
+          patch.base_price = nextPrice
+        }
         if (u.wholesale_price !== undefined) patch.wholesale_price = u.wholesale_price
-        if (u.base_price !== undefined) patch.base_price = u.base_price
+        if (u.markup_pct !== undefined) patch.markup_pct = u.markup_pct
         return supabase.from('catalog_products').update(patch).eq('id', u.id).eq('business_id', businessId)
       }))
       return { success: true }
@@ -234,11 +239,11 @@ export const productsApi = {
     }
   },
 
-  bulkCosts: async (updates: { id: string; base_cost: number }[]) => {
+  bulkCosts: async (updates: { id: string; cost?: number; base_cost?: number }[]) => {
     try {
       const businessId = await getBusinessId()
       await Promise.all(updates.map(u =>
-        supabase.from('catalog_products').update({ base_cost: u.base_cost, updated_at: new Date().toISOString() })
+        supabase.from('catalog_products').update({ base_cost: u.cost ?? u.base_cost ?? 0, updated_at: new Date().toISOString() })
           .eq('id', u.id).eq('business_id', businessId)
       ))
       return { success: true }
@@ -278,6 +283,16 @@ export const productsApi = {
             base_cost: row.base_cost ?? 0,
             track_inventory: true,
             is_active: true,
+          })
+          await supabase.from('catalog_inventory').upsert({
+            id: `inv-${id}`,
+            business_id: businessId,
+            product_id: id,
+            quantity: Number(row.quantity ?? row.stock ?? 0),
+            low_threshold: Number(row.low_threshold ?? 5),
+            updated_at: new Date().toISOString(),
+          }, {
+            onConflict: 'business_id,product_id',
           })
           if (row.id) updated++; else created++
         } catch { errors++ }

@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import axios from 'axios'
-import { getActiveCloudUserId, getDb, migrateLocalDeviceDataToCloudUser, setActiveCloudUserId, withScopedDb } from '../db'
+import { getActiveCloudUserId, getDb, setActiveCloudUserId, withScopedDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { reconnectRealtime, disconnectRealtime } from '../realtime'
 
@@ -238,6 +238,9 @@ export function registerAuthHandlers() {
   ipcMain.handle(IPC.AUTH.LOGOUT, () => ({ success: true }))
 
   ipcMain.handle(IPC.AUTH.CLOUD_LOGOUT, () => {
+    withScopedDb(null, (db) => {
+      db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('setup_completed', 'false')`).run()
+    })
     clearCloudSession()
     setActiveCloudUserId(null)
     disconnectRealtime()
@@ -362,11 +365,14 @@ export function registerAuthHandlers() {
       )
 
       // 2b. Explicitly sync the current local cashier list so the account can be restored on other devices.
-      // 3. Move the current device-local setup into this cloud account's storage
+      // 3. Start the new cloud account with isolated storage instead of inheriting
+      // the current device's existing products/orders. This prevents a new
+      // account from accidentally uploading another store's historical data.
       try {
         await pushCashiersToCloud(access_token, usersForCloud)
-        migrateLocalDeviceDataToCloudUser(user.id)
         setActiveCloudUserId(user.id)
+        applyCloudCashiers(usersForCloud)
+        reconnectRealtime()
       } catch (syncError) {
         setActiveCloudUserId(previousActiveCloudUserId)
 
