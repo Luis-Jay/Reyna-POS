@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
-import { InventoryItem } from '../../types'
+import { InventoryItem, VariationGroup } from '../../types'
 import { Plus, FileText, ShoppingCart, X, PackageCheck, Clock, FileSpreadsheet, Printer } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
 import { exportToExcel, exportToPdf } from '../../utils/export'
@@ -33,9 +33,16 @@ interface PendingOrder {
   created_at: string
 }
 
+interface ProductPriceTierForm {
+  min_qty: string
+  price: string
+  label: string
+}
+
 export default function InventoryPage() {
   const navigate = useNavigate()
   const [items, setItems] = useState<InventoryItem[]>([])
+  const [variationGroups, setVariationGroups] = useState<VariationGroup[]>([])
   const [filter, setFilter] = useState('Fast Moving')
   const [search, setSearch] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -44,6 +51,11 @@ export default function InventoryPage() {
   const [stockUnitCost, setStockUnitCost] = useState('')
   const [stockRetailPrice, setStockRetailPrice] = useState('')
   const [stockWholesalePrice, setStockWholesalePrice] = useState('')
+  const [setupHasVariations, setSetupHasVariations] = useState(false)
+  const [setupVariationGroupId, setSetupVariationGroupId] = useState('')
+  const [setupTrackInventory, setSetupTrackInventory] = useState(true)
+  const [setupPriceTiers, setSetupPriceTiers] = useState<ProductPriceTierForm[]>([])
+  const [savingSetup, setSavingSetup] = useState(false)
   const [counts, setCounts] = useState({ total: 0, safe: 0, low: 0, critical: 0 })
 
   // Order modal
@@ -62,6 +74,8 @@ export default function InventoryPage() {
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([])
   const [allOrders, setAllOrders] = useState<PendingOrder[]>([])
   const [receivingId, setReceivingId] = useState<string | null>(null)
+  const editRequestRef = useRef(0)
+  const activeEditProductIdRef = useRef<string | null>(null)
 
   const load = async () => {
     const [data, all]: [InventoryItem[], InventoryItem[]] = await Promise.all([
@@ -136,15 +150,47 @@ export default function InventoryPage() {
   }
 
   useEffect(() => { load() }, [filter, search])
+  useEffect(() => {
+    window.api.variations.getGroups().then(setVariationGroups)
+  }, [])
 
-  const openEdit = (item: InventoryItem) => {
+  const closeEdit = () => {
+    setEditingId(null)
+    activeEditProductIdRef.current = null
+    editRequestRef.current += 1
+    setStockQty('')
+    setStockUnitCost('')
+    setStockRetailPrice('')
+    setStockWholesalePrice('')
+    setSetupHasVariations(false)
+    setSetupVariationGroupId('')
+    setSetupTrackInventory(true)
+    setSetupPriceTiers([])
+  }
+
+  const openEdit = async (item: InventoryItem) => {
+    const requestId = editRequestRef.current + 1
+    editRequestRef.current = requestId
     const activeTier = item.price_tiers?.[0]
     setEditingId(item.product_id)
+    activeEditProductIdRef.current = item.product_id
     setEditMode('add')
     setStockQty('')
     setStockUnitCost(String(activeTier?.unit_cost ?? item.base_cost ?? 0))
     setStockRetailPrice(String(activeTier?.retail_price ?? item.retail_price ?? item.base_price ?? 0))
     setStockWholesalePrice(String(activeTier?.wholesale_price ?? item.wholesale_price ?? item.retail_price ?? item.base_price ?? 0))
+    setSetupHasVariations(!!item.has_variations)
+    setSetupVariationGroupId(item.variation_group_id || '')
+    setSetupTrackInventory(item.track_inventory !== 0)
+    const tiers = await window.api.priceTiers.get(item.product_id)
+    if (editRequestRef.current !== requestId || activeEditProductIdRef.current !== item.product_id) return
+    setSetupPriceTiers(
+      (tiers || []).map((tier: any) => ({
+        min_qty: String(tier.min_qty ?? ''),
+        price: String(tier.price ?? ''),
+        label: tier.label || '',
+      }))
+    )
   }
 
   const handleConfirm = async (productId: string) => {
@@ -160,12 +206,41 @@ export default function InventoryPage() {
       if (qty < 0) return
       await window.api.inventory.setStock(productId, qty)
     }
-    setEditingId(null)
-    setStockQty('')
-    setStockUnitCost('')
-    setStockRetailPrice('')
-    setStockWholesalePrice('')
+    closeEdit()
     load()
+  }
+
+  const handleSaveProductSetup = async (productId: string) => {
+    setSavingSetup(true)
+    try {
+      await window.api.products.update(productId, {
+        has_variations: setupHasVariations,
+        variation_group_id: setupHasVariations ? (setupVariationGroupId || null) : null,
+        track_inventory: setupTrackInventory,
+      })
+
+      const validTiers = setupPriceTiers
+        .filter(tier => tier.min_qty && tier.price)
+        .map(tier => ({
+          min_qty: parseFloat(tier.min_qty),
+          price: parseFloat(tier.price),
+          label: tier.label || null,
+        }))
+
+      if (validTiers.length > 0) {
+        await window.api.priceTiers.set(productId, validTiers)
+      } else {
+        await window.api.priceTiers.delete(productId)
+      }
+
+      await load()
+      closeEdit()
+    } catch (err) {
+      console.error('Save product setup failed:', err)
+      alert(`Failed to save product setup: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setSavingSetup(false)
+    }
   }
 
   const openOrderForm = (item: InventoryItem) => {
@@ -299,7 +374,9 @@ export default function InventoryPage() {
       {/* List */}
       <div className="flex-1 overflow-y-auto px-4 space-y-3 pb-4">
         {items.map(item => {
-          const sl = statusLabel(item.status)
+          const sl = item.track_inventory === 0
+            ? { text: 'Not Tracked', class: 'bg-slate-100 text-slate-600' }
+            : statusLabel(item.status)
           const isEditing = editingId === item.product_id
           return (
             <div key={item.id} className="bg-white/95 rounded-2xl border border-emerald-50 p-4 flex items-center gap-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
@@ -366,13 +443,7 @@ export default function InventoryPage() {
                       onClick={() => handleConfirm(item.product_id)}
                       className={`text-white px-3 py-1.5 rounded-lg text-sm font-medium ${editMode === 'add' ? 'bg-green-500 hover:bg-green-600' : 'bg-purple-500 hover:bg-purple-600'}`}
                     >{editMode === 'add' ? 'Add' : 'Set'}</button>
-                    <button onClick={() => {
-                      setEditingId(null)
-                      setStockQty('')
-                      setStockUnitCost('')
-                      setStockRetailPrice('')
-                      setStockWholesalePrice('')
-                    }} className="text-gray-400 hover:text-gray-600 px-1">✕</button>
+                    <button onClick={closeEdit} className="text-gray-400 hover:text-gray-600 px-1">✕</button>
                   </div>
                   {editMode === 'add' && (
                     <div className="grid grid-cols-3 gap-2">
@@ -405,6 +476,119 @@ export default function InventoryPage() {
                       />
                     </div>
                   )}
+                  <div className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-left">
+                    <div className="mb-3">
+                      <p className="text-xs font-bold uppercase tracking-wide text-slate-700">Same Features as Add New Product</p>
+                      <p className="text-[11px] text-slate-500">You can update `price tier`, `variations`, and `track inventory` here too.</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2">
+                        <div>
+                          <p className="text-xs font-medium text-slate-700">Has Variations</p>
+                          <p className="text-[11px] text-slate-400">Product comes in sizes or types</p>
+                        </div>
+                        <button
+                          onClick={() => setSetupHasVariations(value => !value)}
+                          className={`h-6 w-12 rounded-full transition-colors ${setupHasVariations ? 'bg-[#1a8eff]' : 'bg-slate-200'}`}
+                        >
+                          <div className={`mx-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${setupHasVariations ? 'translate-x-6' : 'translate-x-0'}`} />
+                        </button>
+                      </div>
+
+                      {setupHasVariations && (
+                        <select
+                          value={setupVariationGroupId}
+                          onChange={e => setSetupVariationGroupId(e.target.value)}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs focus:outline-none"
+                        >
+                          <option value="">Select variation group</option>
+                          {variationGroups.map(group => (
+                            <option key={group.id} value={group.id}>{group.name}</option>
+                          ))}
+                        </select>
+                      )}
+
+                      <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2">
+                        <div>
+                          <p className="text-xs font-medium text-slate-700">Track Inventory</p>
+                          <p className="text-[11px] text-slate-400">Deduct stock on each sale</p>
+                        </div>
+                        <button
+                          onClick={() => setSetupTrackInventory(value => !value)}
+                          className={`h-6 w-12 rounded-full transition-colors ${setupTrackInventory ? 'bg-[#1a8eff]' : 'bg-slate-200'}`}
+                        >
+                          <div className={`mx-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${setupTrackInventory ? 'translate-x-6' : 'translate-x-0'}`} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div>
+                          <p className="text-xs font-medium text-slate-700">Wholesale Price Tiers</p>
+                          <p className="text-[11px] text-slate-400">Same client tier setup as Add New Product</p>
+                        </div>
+                        <button
+                          onClick={() => setSetupPriceTiers(tiers => [...tiers, { min_qty: '', price: '', label: '' }])}
+                          className="text-[11px] font-semibold text-[#1a8eff] hover:underline"
+                        >
+                          + Add Tier
+                        </button>
+                      </div>
+
+                      {setupPriceTiers.length > 0 ? (
+                        <div className="space-y-2">
+                          <div className="grid grid-cols-[1fr_1fr_1.3fr_auto] gap-2 px-1 text-[10px] text-slate-400">
+                            <span>Min Qty</span>
+                            <span>Price</span>
+                            <span>Label</span>
+                            <span />
+                          </div>
+                          {setupPriceTiers.map((tier, index) => (
+                            <div key={`${editingId}-tier-${index}`} className="grid grid-cols-[1fr_1fr_1.3fr_auto] gap-2 items-center">
+                              <input
+                                value={tier.min_qty}
+                                onChange={e => setSetupPriceTiers(tiers => tiers.map((current, currentIndex) => currentIndex === index ? { ...current, min_qty: e.target.value } : current))}
+                                type="number"
+                                placeholder="10"
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs focus:outline-none"
+                              />
+                              <input
+                                value={tier.price}
+                                onChange={e => setSetupPriceTiers(tiers => tiers.map((current, currentIndex) => currentIndex === index ? { ...current, price: e.target.value } : current))}
+                                type="number"
+                                placeholder="0.00"
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs focus:outline-none"
+                              />
+                              <input
+                                value={tier.label}
+                                onChange={e => setSetupPriceTiers(tiers => tiers.map((current, currentIndex) => currentIndex === index ? { ...current, label: e.target.value } : current))}
+                                placeholder="Wholesale"
+                                className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs focus:outline-none"
+                              />
+                              <button
+                                onClick={() => setSetupPriceTiers(tiers => tiers.filter((_, currentIndex) => currentIndex !== index))}
+                                className="px-1 text-sm text-red-400 hover:text-red-600"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="rounded-lg bg-white px-3 py-2 text-[11px] text-slate-400">No client price tiers yet.</p>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={() => { void handleSaveProductSetup(item.product_id) }}
+                      disabled={savingSetup || (setupHasVariations && !setupVariationGroupId)}
+                      className="mt-3 w-full rounded-lg bg-slate-800 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-900 disabled:opacity-50"
+                    >
+                      {savingSetup ? 'Saving setup...' : 'Save Product Setup'}
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 shrink-0">
@@ -416,7 +600,7 @@ export default function InventoryPage() {
                     <ShoppingCart size={16} />
                   </button>
                   <button
-                    onClick={() => openEdit(item)}
+                    onClick={() => { void openEdit(item) }}
                     title="Adjust Stock"
                     className="w-11 h-11 bg-emerald-600 text-white rounded-full flex items-center justify-center shadow-sm hover:bg-emerald-700"
                   >

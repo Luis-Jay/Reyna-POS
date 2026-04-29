@@ -61,6 +61,19 @@ CREATE TABLE IF NOT EXISTS catalog_variation_options (
 );
 CREATE INDEX IF NOT EXISTS idx_catalog_variation_options_business ON catalog_variation_options(business_id);
 
+CREATE TABLE IF NOT EXISTS catalog_product_price_tiers (
+  id          TEXT PRIMARY KEY,
+  business_id UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  product_id  TEXT NOT NULL,
+  min_qty     NUMERIC NOT NULL DEFAULT 0,
+  price       NUMERIC NOT NULL DEFAULT 0,
+  label       TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_catalog_product_price_tiers_business ON catalog_product_price_tiers(business_id);
+CREATE INDEX IF NOT EXISTS idx_catalog_product_price_tiers_product ON catalog_product_price_tiers(product_id);
+
 CREATE TABLE IF NOT EXISTS catalog_products (
   id                  TEXT PRIMARY KEY,
   business_id         UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
@@ -102,6 +115,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_catalog_inventory_product ON catalog_inven
 ALTER TABLE catalog_categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_variation_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_variation_options ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog_product_price_tiers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog_inventory ENABLE ROW LEVEL SECURITY;
 
@@ -114,6 +128,7 @@ CREATE TABLE IF NOT EXISTS sales_debtors (
   balance          NUMERIC NOT NULL DEFAULT 0,
   total_credit     NUMERIC NOT NULL DEFAULT 0,
   total_paid       NUMERIC NOT NULL DEFAULT 0,
+  credit_limit     NUMERIC NOT NULL DEFAULT 0,
   due_date         TEXT,
   follow_up_date   TEXT,
   last_reminder_at TEXT,
@@ -138,6 +153,21 @@ CREATE TABLE IF NOT EXISTS sales_debtor_transactions (
 );
 CREATE INDEX IF NOT EXISTS idx_sales_debtor_transactions_business ON sales_debtor_transactions(business_id);
 CREATE INDEX IF NOT EXISTS idx_sales_debtor_transactions_debtor ON sales_debtor_transactions(debtor_id);
+
+CREATE TABLE IF NOT EXISTS sales_stock_movements (
+  id           TEXT PRIMARY KEY,
+  business_id  UUID NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
+  product_id   TEXT NOT NULL,
+  type         TEXT NOT NULL CHECK(type IN ('sale','restock','adjustment','return')),
+  quantity     NUMERIC NOT NULL DEFAULT 0,
+  note         TEXT,
+  reference_id TEXT,
+  user_id      TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_sales_stock_movements_business ON sales_stock_movements(business_id);
+CREATE INDEX IF NOT EXISTS idx_sales_stock_movements_product ON sales_stock_movements(product_id);
 
 CREATE TABLE IF NOT EXISTS sales_orders (
   id               TEXT PRIMARY KEY,
@@ -182,6 +212,7 @@ CREATE INDEX IF NOT EXISTS idx_sales_order_items_order ON sales_order_items(orde
 -- Enable RLS — access is granted only via service-role Edge Functions (bypasses RLS)
 ALTER TABLE sales_debtors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales_debtor_transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sales_stock_movements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales_order_items ENABLE ROW LEVEL SECURITY;
 

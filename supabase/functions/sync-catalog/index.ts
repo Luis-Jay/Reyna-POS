@@ -7,6 +7,7 @@ type CatalogPayload = {
   categories?: any[]
   variationGroups?: any[]
   variationOptions?: any[]
+  productPriceTiers?: any[]
   products?: any[]
   inventory?: any[]
 }
@@ -43,6 +44,7 @@ Deno.serve(async (req) => {
       const categories = Array.isArray(payload.categories) ? payload.categories : []
       const variationGroups = Array.isArray(payload.variationGroups) ? payload.variationGroups : []
       const variationOptions = Array.isArray(payload.variationOptions) ? payload.variationOptions : []
+      const productPriceTiers = Array.isArray(payload.productPriceTiers) ? payload.productPriceTiers : []
       const products = Array.isArray(payload.products) ? payload.products : []
       const inventory = Array.isArray(payload.inventory) ? payload.inventory : []
 
@@ -91,6 +93,23 @@ Deno.serve(async (req) => {
           }))
         )
         if (error) return json({ error: `Failed to sync variation options: ${error.message}` }, 500)
+      }
+
+      if (productPriceTiers.length > 0) {
+        const validProductPriceTiers = productPriceTiers.filter(t => typeof t.id === 'string' && t.id.trim())
+        const { error } = await supabase.from('catalog_product_price_tiers').upsert(
+          validProductPriceTiers.map(tier => ({
+            id: tier.id,
+            business_id: businessId,
+            product_id: tier.product_id,
+            min_qty: tier.min_qty ?? 0,
+            price: tier.price ?? 0,
+            label: tier.label ?? null,
+            created_at: tier.created_at ?? new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }))
+        )
+        if (error) return json({ error: `Failed to sync product price tiers: ${error.message}` }, 500)
       }
 
       if (products.length > 0) {
@@ -210,17 +229,19 @@ Deno.serve(async (req) => {
       { data: categories, error: categoriesError },
       { data: variationGroups, error: variationGroupsError },
       { data: variationOptions, error: variationOptionsError },
+      { data: productPriceTiers, error: productPriceTiersError },
       { data: products, error: productsError },
       { data: inventory, error: inventoryError },
     ] = await Promise.all([
       supabase.from('catalog_categories').select('*').eq('business_id', businessId).order('sort_order'),
       supabase.from('catalog_variation_groups').select('*').eq('business_id', businessId).order('name'),
       supabase.from('catalog_variation_options').select('*').eq('business_id', businessId).order('sort_order'),
+      supabase.from('catalog_product_price_tiers').select('*').eq('business_id', businessId).order('min_qty'),
       supabase.from('catalog_products').select('*').eq('business_id', businessId).order('sort_order'),
       supabase.from('catalog_inventory').select('*').eq('business_id', businessId),
     ])
 
-    const firstError = categoriesError || variationGroupsError || variationOptionsError || productsError || inventoryError
+    const firstError = categoriesError || variationGroupsError || variationOptionsError || productPriceTiersError || productsError || inventoryError
     if (firstError) {
       return json({ error: firstError.message }, 500)
     }
@@ -229,6 +250,7 @@ Deno.serve(async (req) => {
       categories: categories ?? [],
       variationGroups: variationGroups ?? [],
       variationOptions: variationOptions ?? [],
+      productPriceTiers: productPriceTiers ?? [],
       products: products ?? [],
       inventory: inventory ?? [],
     })

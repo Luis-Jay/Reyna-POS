@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
       .single()
 
     if (existing?.expires_at && new Date(existing.expires_at) > new Date()) {
-      return json({ alreadyActivated: true })
+      return json({ alreadyActivated: true, expiresAt: existing.expires_at })
     }
 
     if (existing?.xendit_invoice_id && existing.xendit_external_id === externalId) {

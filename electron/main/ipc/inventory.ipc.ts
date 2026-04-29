@@ -60,21 +60,23 @@ export function registerInventoryHandlers() {
     let query = `
       SELECT i.*, p.name as product_name, p.image_path, p.monthly_sold,
              p.track_inventory, p.is_active, p.base_price, p.retail_price,
-             p.wholesale_price, p.base_cost, p.barcode
+             p.wholesale_price, p.base_cost, p.barcode,
+             p.has_variations, p.variation_group_id, vg.name as variation_group_name
       FROM inventory i
       JOIN products p ON i.product_id = p.id
-      WHERE p.deleted_at IS NULL AND p.is_active = 1 AND p.track_inventory = 1
+      LEFT JOIN variation_groups vg ON vg.id = p.variation_group_id
+      WHERE p.deleted_at IS NULL AND p.is_active = 1
     `
     const params: any[] = []
 
     if (filter === 'Fast Moving') {
       query += ` ORDER BY p.monthly_sold DESC`
     } else if (filter === 'Low Stock') {
-      query += ` AND i.quantity <= i.low_threshold AND i.quantity > 0 ORDER BY i.quantity ASC`
+      query += ` AND p.track_inventory = 1 AND i.quantity <= i.low_threshold AND i.quantity > 0 ORDER BY i.quantity ASC`
     } else if (filter === 'Out of Stock') {
-      query += ` AND i.quantity <= 0 ORDER BY p.monthly_sold DESC`
+      query += ` AND p.track_inventory = 1 AND i.quantity <= 0 ORDER BY p.monthly_sold DESC`
     } else if (filter === 'Critical') {
-      query += ` AND i.quantity <= i.low_threshold / 2 ORDER BY i.quantity ASC`
+      query += ` AND p.track_inventory = 1 AND i.quantity <= i.low_threshold / 2 ORDER BY i.quantity ASC`
     } else {
       query += ` ORDER BY p.monthly_sold DESC`
     }

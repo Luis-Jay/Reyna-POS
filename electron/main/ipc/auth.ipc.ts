@@ -83,7 +83,10 @@ export async function getValidCloudToken(): Promise<string | null> {
   return refreshAccessToken()
 }
 
-function applyCloudCashiers(cashiers: any[]) {
+function applyCloudCashiers(
+  cashiers: any[],
+  options: { fallbackAdminPin?: string } = {}
+) {
   const db = getDb()
   const incomingIds = new Set(cashiers.map(c => c.id))
 
@@ -97,13 +100,31 @@ function applyCloudCashiers(cashiers: any[]) {
   }
 
   for (const c of cashiers) {
-    const existing: any = db.prepare(`SELECT id FROM users WHERE id = ?`).get(c.id)
+    const existing: any = db.prepare(`SELECT id, pin FROM users WHERE id = ?`).get(c.id)
+    const existingPin = typeof existing?.pin === 'string' && existing.pin.trim() ? existing.pin : null
+    const cloudPin = typeof c.pin === 'string' && c.pin.trim() ? c.pin : null
+    const resolvedPin =
+      cloudPin ||
+      existingPin ||
+      (c.role === 'admin' ? options.fallbackAdminPin : `restored-needs-reset-${uuid()}`)
+
+    if (!resolvedPin) {
+      throw new Error('Cloud restore needs a new owner PIN for this device.')
+    }
+
+    // Cloud restores do not return cashier PINs. Keep non-admin restored users inactive
+    // until the admin assigns them a fresh local PIN on this device.
+    const restoredWithoutPin = !cloudPin && !existingPin
+    const resolvedIsActive = restoredWithoutPin && c.role !== 'admin'
+      ? 0
+      : (c.is_active ? 1 : 0)
+
     if (existing) {
       db.prepare(`UPDATE users SET name = ?, pin = ?, role = ?, is_active = ?, deleted_at = NULL WHERE id = ?`)
-        .run(c.name, c.pin, c.role, c.is_active ? 1 : 0, c.id)
+        .run(c.name, resolvedPin, c.role, resolvedIsActive, c.id)
     } else {
       db.prepare(`INSERT OR IGNORE INTO users (id, name, pin, role, is_active, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)`)
-        .run(c.id, c.name, c.pin, c.role, c.is_active ? 1 : 0)
+        .run(c.id, c.name, resolvedPin, c.role, resolvedIsActive)
     }
   }
 }
@@ -398,7 +419,7 @@ export function registerAuthHandlers() {
   })
 
   // ─── Cloud login (restore on new device) ────────────────────────────────────
-  ipcMain.handle(IPC.AUTH.CLOUD_LOGIN, async (_, data: { email: string; password: string }) => {
+  ipcMain.handle(IPC.AUTH.CLOUD_LOGIN, async (_, data: { email: string; password: string; localPin?: string }) => {
     try {
       // 1. Authenticate with Supabase
       const loginRes = await axios.post(
@@ -464,13 +485,24 @@ export function registerAuthHandlers() {
       // 4. Switch this device into the signed-in account's isolated storage
       setActiveCloudUserId(user.id)
 
+      const fallbackAdminPin = (typeof data.localPin === 'string' && data.localPin.trim())
+        ? data.localPin.trim()
+        : '1234'
+
       // 5. Upsert all cashiers into local users table
-      applyCloudCashiers(cashiers)
+      applyCloudCashiers(cashiers, { fallbackAdminPin })
 
       // Connect Realtime to the signed-in account's broadcast channel
       reconnectRealtime()
 
-      return { success: true, userId: user.id }
+      const restoredCashierCount = cashiers.filter((cashier: any) => cashier.role !== 'admin').length
+      return {
+        success: true,
+        userId: user.id,
+        warning: restoredCashierCount > 0
+          ? 'Cashier accounts were restored as inactive on this device. Set new local PINs for them in Users before they sign in.'
+          : undefined,
+      }
     } catch (err: any) {
       return { success: false, error: getFriendlyCloudError(err, 'login') }
     }

@@ -167,6 +167,10 @@ export interface InventoryItem {
   quantity: number
   low_threshold: number
   monthly_sold: number
+  has_variations?: number
+  variation_group_id?: string
+  variation_group_name?: string
+  track_inventory?: number
   updated_at: string
   status: 'safe' | 'low' | 'critical' | 'out'
   price_tier_count?: number
@@ -204,6 +208,7 @@ export interface Debtor {
   balance: number
   total_credit: number
   total_paid: number
+  credit_limit?: number
   due_date?: string
   follow_up_date?: string
   last_reminder_at?: string

@@ -109,7 +109,11 @@ export function registerActivationHandlers() {
 
       if (res.data.alreadyActivated) {
         // Subscription is still active — no need to pay
-        return { success: true, alreadyActivated: true }
+        return {
+          success: true,
+          alreadyActivated: true,
+          expiresAt: res.data.expiresAt ?? null,
+        }
       }
       const { invoiceUrl } = res.data
       if (invoiceUrl) {

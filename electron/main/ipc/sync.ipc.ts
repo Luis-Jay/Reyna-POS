@@ -6,6 +6,7 @@ import { getCurrentProductImagesDir, getDb } from '../db'
 import { getValidCloudToken } from './auth.ipc'
 import { broadcastDataUpdated, updateRealtimeAuth } from '../realtime'
 import { IPC } from '../../../shared/ipc-channels'
+import { recalculateAllDebtorTotals } from '../services/debtors.service'
 
 const SUPABASE_URL = 'https://rzhjfsgjkbvcspfncyku.supabase.co'
 const SUPABASE_FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`
@@ -57,6 +58,10 @@ function getCatalogSnapshot() {
       SELECT id, group_id, name, price, cost, sort_order, deleted_at
       FROM variation_options
     `).all(),
+    productPriceTiers: db.prepare(`
+      SELECT id, product_id, min_qty, price, label, created_at
+      FROM product_price_tiers
+    `).all(),
     products: products.map(p => ({
       ...p,
       image_data: readImageAsDataUrl(p.image_path),
@@ -93,7 +98,7 @@ function getSalesSnapshot() {
   return {
     debtors: db.prepare(`
       SELECT
-        id, name, phone, balance, total_credit, total_paid,
+        id, name, phone, balance, total_credit, total_paid, credit_limit,
         due_date, follow_up_date, last_reminder_at, created_at, deleted_at
       FROM debtors
       WHERE synced = 0
@@ -182,6 +187,34 @@ function applyCatalogSnapshot(snapshot: any): Array<{ productId: string; url: st
         option.cost ?? 0,
         option.sort_order ?? 0,
         option.deleted_at ?? null,
+      )
+    }
+
+    const catalogProductIds = new Set<string>()
+    for (const tier of snapshot.productPriceTiers || []) {
+      if (!tier?.product_id) continue
+      catalogProductIds.add(tier.product_id)
+    }
+    for (const productId of catalogProductIds) {
+      db.prepare(`DELETE FROM product_price_tiers WHERE product_id = ?`).run(productId)
+    }
+    for (const tier of snapshot.productPriceTiers || []) {
+      db.prepare(`
+        INSERT INTO product_price_tiers (id, product_id, min_qty, price, label, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          product_id = excluded.product_id,
+          min_qty = excluded.min_qty,
+          price = excluded.price,
+          label = excluded.label,
+          created_at = excluded.created_at
+      `).run(
+        tier.id,
+        tier.product_id,
+        tier.min_qty ?? 0,
+        tier.price ?? 0,
+        tier.label ?? null,
+        tier.created_at ?? new Date().toISOString(),
       )
     }
 
@@ -302,15 +335,16 @@ function applySalesSnapshot(snapshot: any) {
       db.prepare(`
         INSERT INTO debtors (
           id, name, phone, balance, total_credit, total_paid,
-          due_date, follow_up_date, last_reminder_at, created_at, deleted_at, synced
+          credit_limit, due_date, follow_up_date, last_reminder_at, created_at, deleted_at, synced
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           phone = excluded.phone,
           balance = excluded.balance,
           total_credit = excluded.total_credit,
           total_paid = excluded.total_paid,
+          credit_limit = excluded.credit_limit,
           due_date = excluded.due_date,
           follow_up_date = excluded.follow_up_date,
           last_reminder_at = excluded.last_reminder_at,
@@ -324,6 +358,7 @@ function applySalesSnapshot(snapshot: any) {
         debtor.balance ?? 0,
         debtor.total_credit ?? 0,
         debtor.total_paid ?? 0,
+        debtor.credit_limit ?? 0,
         debtor.due_date ?? null,
         debtor.follow_up_date ?? null,
         debtor.last_reminder_at ?? null,
@@ -432,9 +467,35 @@ function applySalesSnapshot(snapshot: any) {
       )
     }
 
+    for (const stockMovement of snapshot.stockMovements || []) {
+      db.prepare(`
+        INSERT INTO stock_movements (id, product_id, type, quantity, note, reference_id, user_id, created_at, synced)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        ON CONFLICT(id) DO UPDATE SET
+          product_id = excluded.product_id,
+          type = excluded.type,
+          quantity = excluded.quantity,
+          note = excluded.note,
+          reference_id = excluded.reference_id,
+          user_id = excluded.user_id,
+          created_at = excluded.created_at,
+          synced = 1
+      `).run(
+        stockMovement.id,
+        stockMovement.product_id,
+        stockMovement.type,
+        stockMovement.quantity ?? 0,
+        stockMovement.note ?? null,
+        stockMovement.reference_id ?? null,
+        stockMovement.user_id ?? null,
+        stockMovement.created_at ?? new Date().toISOString(),
+      )
+    }
+
   })
 
   tx()
+  recalculateAllDebtorTotals(db)
 }
 
 function getPendingCount() {
@@ -602,7 +663,7 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
 
     return {
       success: true,
-      message: 'Cashiers, catalog, inventory, orders, and debtors synced successfully across connected devices.',
+      message: 'Cashiers, catalog, inventory, stock history, orders, and debtors synced successfully across connected devices.',
     }
   } catch (err: any) {
     const message = err?.response?.data?.error || err?.message || 'Failed to sync with the cloud service.'

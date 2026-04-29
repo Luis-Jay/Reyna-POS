@@ -4,6 +4,7 @@ import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
 import { consumeStockBatches, restoreStockBatch } from '../services/stock-batches.service'
+import { recalculateDebtorTotals } from '../services/debtors.service'
 
 function mapOrder(order: any) {
   if (!order) return order
@@ -122,12 +123,11 @@ export function registerOrderHandlers() {
       if (orderData.is_credit && orderData.debtor_id) {
         const profit = (orderData.items || []).reduce((s: number, i: any) =>
           s + ((i.price - (i.cost || 0)) * i.quantity), 0)
-        db.prepare(`UPDATE debtors SET balance = balance + ?, total_credit = total_credit + ? WHERE id = ?`)
-          .run(orderData.total, orderData.total, orderData.debtor_id)
         db.prepare(`
           INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, user_id)
           VALUES (?, ?, 'debt', ?, ?, ?, ?)
         `).run(uuid(), orderData.debtor_id, orderData.total, profit, orderId, orderData.user_id || null)
+        recalculateDebtorTotals(db, orderData.debtor_id)
       }
 
       return orderId
@@ -282,10 +282,11 @@ export function registerOrderHandlers() {
 
       // Reverse debtor balance if credit order
       if (order.is_credit && order.debtor_id) {
-        db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_credit = MAX(0, total_credit - ?) WHERE id = ?`)
-          .run(order.total, order.total, order.debtor_id)
-        db.prepare(`INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note) VALUES (?, ?, 'note', 0, 0, ?, 'Order refunded/voided')`)
-          .run(uuid(), order.debtor_id, id)
+        db.prepare(`
+          INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note)
+          VALUES (?, ?, 'debt', ?, 0, ?, ?)
+        `).run(uuid(), order.debtor_id, -order.total, id, 'Credit order refunded/voided')
+        recalculateDebtorTotals(db, order.debtor_id)
       }
     })()
 
@@ -348,10 +349,11 @@ export function registerOrderHandlers() {
       if (action === 'refund' && isFullRefund) {
         db.prepare(`UPDATE orders SET status = 'void' WHERE id = ?`).run(orderId)
         if (order.is_credit && order.debtor_id) {
-          db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_credit = MAX(0, total_credit - ?) WHERE id = ?`)
-            .run(order.total, order.total, order.debtor_id)
-          db.prepare(`INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note) VALUES (?, ?, 'note', 0, 0, ?, 'Order fully refunded/voided')`)
-            .run(uuid(), order.debtor_id, orderId)
+          db.prepare(`
+            INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note)
+            VALUES (?, ?, 'debt', ?, 0, ?, ?)
+          `).run(uuid(), order.debtor_id, -order.total, orderId, 'Credit order fully refunded/voided')
+          recalculateDebtorTotals(db, order.debtor_id)
         }
       } else if (action === 'refund') {
         // Partial — append a note, reverse partial debtor balance if credit
@@ -359,10 +361,11 @@ export function registerOrderHandlers() {
         db.prepare(`UPDATE orders SET note = COALESCE(NULLIF(note,'') || ' | ', '') || ? WHERE id = ?`)
           .run(noteAppend, orderId)
         if (order.is_credit && order.debtor_id) {
-          db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_credit = MAX(0, total_credit - ?) WHERE id = ?`)
-            .run(refundTotal, refundTotal, order.debtor_id)
-          db.prepare(`INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note) VALUES (?, ?, 'note', 0, 0, ?, ?)`)
-            .run(uuid(), order.debtor_id, orderId, `Partial refund: ₱${refundTotal.toFixed(2)}`)
+          db.prepare(`
+            INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, order_id, note)
+            VALUES (?, ?, 'debt', ?, 0, ?, ?)
+          `).run(uuid(), order.debtor_id, -refundTotal, orderId, `Credit order partial refund: ₱${refundTotal.toFixed(2)}`)
+          recalculateDebtorTotals(db, order.debtor_id)
         }
       } else {
         const noteAppend = `Damaged items logged (${refundItems.length} item${refundItems.length > 1 ? 's' : ''})`

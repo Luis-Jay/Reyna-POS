@@ -8,6 +8,7 @@ type SalesPayload = {
   debtorTransactions?: any[]
   orders?: any[]
   orderItems?: any[]
+  stockMovements?: any[]
 }
 
 Deno.serve(async (req) => {
@@ -43,6 +44,7 @@ Deno.serve(async (req) => {
       const debtorTransactions = Array.isArray(payload.debtorTransactions) ? payload.debtorTransactions : []
       const orders = Array.isArray(payload.orders) ? payload.orders : []
       const orderItems = Array.isArray(payload.orderItems) ? payload.orderItems : []
+      const stockMovements = Array.isArray(payload.stockMovements) ? payload.stockMovements : []
 
       if (debtors.length > 0) {
         const valid = debtors.filter(d => typeof d.id === 'string' && d.id.trim())
@@ -55,6 +57,7 @@ Deno.serve(async (req) => {
             balance: d.balance ?? 0,
             total_credit: d.total_credit ?? 0,
             total_paid: d.total_paid ?? 0,
+            credit_limit: d.credit_limit ?? 0,
             due_date: d.due_date ?? null,
             follow_up_date: d.follow_up_date ?? null,
             last_reminder_at: d.last_reminder_at ?? null,
@@ -134,6 +137,25 @@ Deno.serve(async (req) => {
         if (error) return json({ error: `Failed to sync debtor transactions: ${error.message}` }, 500)
       }
 
+      if (stockMovements.length > 0) {
+        const valid = stockMovements.filter(m => typeof m.id === 'string' && m.id.trim())
+        const { error } = await supabase.from('sales_stock_movements').upsert(
+          valid.map(m => ({
+            id: m.id,
+            business_id: businessId,
+            product_id: m.product_id,
+            type: m.type,
+            quantity: m.quantity ?? 0,
+            note: m.note ?? null,
+            reference_id: m.reference_id ?? null,
+            user_id: m.user_id ?? null,
+            created_at: m.created_at ?? new Date().toISOString(),
+          })),
+          { onConflict: 'id' }
+        )
+        if (error) return json({ error: `Failed to sync stock movements: ${error.message}` }, 500)
+      }
+
       return json({ success: true })
     }
 
@@ -146,14 +168,16 @@ Deno.serve(async (req) => {
       { data: debtorTransactions, error: debtorTransactionsError },
       { data: orders, error: ordersError },
       { data: orderItems, error: orderItemsError },
+      { data: stockMovements, error: stockMovementsError },
     ] = await Promise.all([
       supabase.from('sales_debtors').select('*').eq('business_id', businessId),
       supabase.from('sales_debtor_transactions').select('*').eq('business_id', businessId),
       supabase.from('sales_orders').select('*').eq('business_id', businessId),
       supabase.from('sales_order_items').select('*').eq('business_id', businessId),
+      supabase.from('sales_stock_movements').select('*').eq('business_id', businessId),
     ])
 
-    const firstError = debtorsError || debtorTransactionsError || ordersError || orderItemsError
+    const firstError = debtorsError || debtorTransactionsError || ordersError || orderItemsError || stockMovementsError
     if (firstError) {
       return json({ error: firstError.message }, 500)
     }
@@ -163,6 +187,7 @@ Deno.serve(async (req) => {
       debtorTransactions: debtorTransactions ?? [],
       orders: orders ?? [],
       orderItems: orderItems ?? [],
+      stockMovements: stockMovements ?? [],
     })
   } catch (err) {
     console.error(err)

@@ -45,12 +45,16 @@ export default function DebtorDetailPage() {
   }, [])
 
   const handleTx = async (type: 'payment' | 'debt' | 'note') => {
-    await window.api.debtors.addTransaction({
+    const result = await window.api.debtors.addTransaction({
       debtor_id: id,
       type,
       amount: parseFloat(amount) || 0,
       note: note || null,
     })
+    if (!result?.success) {
+      alert(result?.error || 'Failed to save debtor transaction.')
+      return
+    }
     setModal(null)
     setAmount('')
     setNote('')
@@ -116,6 +120,12 @@ export default function DebtorDetailPage() {
     payment: <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center"><ArrowDown size={14} className="text-green-500" /></div>,
     note: <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center"><FileText size={14} className="text-gray-500" /></div>,
   }[type] || null)
+
+  const txLabel = (tx: DebtorTransaction) => {
+    if (tx.type === 'note') return 'Note'
+    if (tx.type === 'payment') return 'Payment'
+    return tx.amount < 0 ? 'Debt Adjustment' : 'Added Debt'
+  }
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -276,14 +286,14 @@ export default function DebtorDetailPage() {
             <div key={tx.id} className="bg-white rounded-xl p-4 flex items-center gap-3 shadow-sm">
               {txIcon(tx.type)}
               <div className="flex-1">
-                <p className="font-medium text-gray-800 capitalize">{tx.type === 'debt' ? 'Added Debt' : tx.type === 'payment' ? 'Payment' : 'Note'}</p>
+                <p className="font-medium text-gray-800 capitalize">{txLabel(tx)}</p>
                 {tx.note && <p className="text-sm text-gray-500">{tx.note}</p>}
                 <p className="text-xs text-gray-400">{formatDate(tx.created_at)}</p>
               </div>
               {tx.type !== 'note' && (
                 <div className="text-right">
                   <p className={`font-bold ${tx.type === 'payment' ? 'text-green-500' : 'text-red-500'}`}>
-                    {tx.type === 'payment' ? '-' : '+'}₱{tx.amount.toFixed(2)}
+                    {tx.type === 'payment' ? '-' : tx.amount < 0 ? '-' : '+'}₱{Math.abs(tx.amount).toFixed(2)}
                   </p>
                   {tx.profit > 0 && <p className="text-xs text-green-500">+₱{tx.profit.toFixed(2)}</p>}
                 </div>

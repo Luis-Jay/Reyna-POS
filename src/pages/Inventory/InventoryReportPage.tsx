@@ -54,14 +54,52 @@ export default function InventoryReportPage() {
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   })
 
+  const formatMoney = (value: number) => `₱${value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+  const formatBatchDate = (value?: string | null) => {
+    if (!value) return '—'
+    return new Date(value).toLocaleDateString('en-PH')
+  }
+
+  const getBatchEntries = (row: ReportRow) => {
+    if (row.price_tiers?.length) return row.price_tiers
+    return [{
+      id: `fallback-${row.product_id}`,
+      quantity: row.quantity,
+      unit_cost: row.base_cost,
+      retail_price: row.retail_price,
+      wholesale_price: row.wholesale_price,
+      received_at: '',
+      note: 'Current stock pricing',
+    }]
+  }
+
+  const getRowCostValue = (row: ReportRow) => getBatchEntries(row)
+    .reduce((sum, tier) => sum + (tier.quantity * tier.unit_cost), 0)
+
+  const getRowRetailValue = (row: ReportRow) => getBatchEntries(row)
+    .reduce((sum, tier) => sum + (tier.quantity * tier.retail_price), 0)
+
   const batchSummary = (row: ReportRow) => {
     if (!row.price_tiers?.length) {
-      return `1 tier • ${row.quantity} pcs @ ₱${row.retail_price.toFixed(2)}`
+      return `1 batch • ${row.quantity} pcs • Cost ${formatMoney(row.base_cost)} • Retail ${formatMoney(row.retail_price)}`
     }
     return row.price_tiers
-      .map(tier => `${tier.quantity} pcs @ ₱${tier.retail_price.toFixed(2)}`)
+      .map(tier => `${tier.quantity} pcs • Cost ${formatMoney(tier.unit_cost)} • Retail ${formatMoney(tier.retail_price)} • ${formatBatchDate(tier.received_at)}`)
       .join(' | ')
   }
+
+  const batchDetailsHtml = (row: ReportRow) => getBatchEntries(row)
+    .map(tier => `${tier.quantity} pcs • Cost ${formatMoney(tier.unit_cost)} • Retail ${formatMoney(tier.retail_price)} • Wholesale ${formatMoney(tier.wholesale_price)} • Received ${formatBatchDate(tier.received_at)}`)
+    .join('<br />')
+
+  const batchDetailsText = (row: ReportRow) => getBatchEntries(row)
+    .map(tier => `${tier.quantity} pcs | Cost ${formatMoney(tier.unit_cost)} | Retail ${formatMoney(tier.retail_price)} | Wholesale ${formatMoney(tier.wholesale_price)} | Received ${formatBatchDate(tier.received_at)}`)
+    .join(' || ')
+
+  const totalQty = rows.reduce((s, r) => s + r.quantity, 0)
+  const totalCostValue = rows.reduce((s, r) => s + getRowCostValue(r), 0)
+  const totalRetailValue = rows.reduce((s, r) => s + getRowRetailValue(r), 0)
 
   const handlePrint = () => {
     const logoHtml = settings.store_logo_data
@@ -74,10 +112,11 @@ export default function InventoryReportPage() {
         <td>${r.product_name}</td>
         <td>${r.category_name ?? '—'}</td>
         <td style="text-align:right">${r.quantity}</td>
-        <td style="text-align:right">₱${r.base_cost.toFixed(2)}</td>
-        <td style="text-align:right">₱${r.retail_price.toFixed(2)}</td>
-        <td style="text-align:right">₱${r.wholesale_price.toFixed(2)}</td>
-        <td>${batchSummary(r)}</td>
+        <td style="text-align:right">${formatMoney(r.base_cost)}</td>
+        <td style="text-align:right">${formatMoney(r.retail_price)}</td>
+        <td style="text-align:right">${formatMoney(r.wholesale_price)}</td>
+        <td style="text-align:right">${formatMoney(getRowCostValue(r))}</td>
+        <td>${batchDetailsHtml(r)}</td>
       </tr>
     `).join('')
 
@@ -102,7 +141,8 @@ export default function InventoryReportPage() {
             <th style="text-align:right">Cost (₱)</th>
             <th style="text-align:right">Retail Price (₱)</th>
             <th style="text-align:right">Wholesale (₱)</th>
-            <th>Price Tiers</th>
+            <th style="text-align:right">Batch Cost Value (₱)</th>
+            <th>Batch Details</th>
           </tr>
         </thead>
         <tbody>${tableRows}</tbody>
@@ -111,15 +151,15 @@ export default function InventoryReportPage() {
       <table style="width:auto;margin-top:12px;">
         <tr>
           <td style="padding:6px 16px 6px 0;font-size:11px;color:#555;">Total Items in Stock</td>
-          <td style="padding:6px 0;font-size:11px;font-weight:bold;">${rows.reduce((s, r) => s + r.quantity, 0).toLocaleString('en-PH')}</td>
+          <td style="padding:6px 0;font-size:11px;font-weight:bold;">${totalQty.toLocaleString('en-PH')}</td>
         </tr>
         <tr>
           <td style="padding:6px 16px 6px 0;font-size:11px;color:#555;">Total Value at Cost</td>
-          <td style="padding:6px 0;font-size:11px;font-weight:bold;">₱${rows.reduce((s, r) => s + r.quantity * r.base_cost, 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+          <td style="padding:6px 0;font-size:11px;font-weight:bold;">${formatMoney(totalCostValue)}</td>
         </tr>
         <tr>
           <td style="padding:6px 16px 6px 0;font-size:11px;color:#555;">Total Value at Retail</td>
-          <td style="padding:6px 0;font-size:11px;font-weight:bold;">₱${rows.reduce((s, r) => s + r.quantity * r.retail_price, 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td>
+          <td style="padding:6px 0;font-size:11px;font-weight:bold;">${formatMoney(totalRetailValue)}</td>
         </tr>
       </table>
     `
@@ -135,19 +175,42 @@ export default function InventoryReportPage() {
   }
 
   const handleExcel = () => {
-    exportToExcel([{
-      name: 'Inventory Report',
-      rows: rows.map(r => ({
-        'Product Code': r.barcode ?? '',
-        'Description':  r.product_name,
-        'Category':     r.category_name ?? '',
-        'Total Qty':    r.quantity,
-        'Cost (₱)':     r.base_cost,
-        'Retail Price (₱)': r.retail_price,
-        'Wholesale (₱)': r.wholesale_price,
-        'Price Tiers': batchSummary(r),
-      })),
-    }], `Inventory_Report_${new Date().toISOString().slice(0, 10)}`)
+    exportToExcel([
+      {
+        name: 'Inventory Report',
+        rows: rows.map(r => ({
+          'Product Code': r.barcode ?? '',
+          'Description':  r.product_name,
+          'Category':     r.category_name ?? '',
+          'Total Qty':    r.quantity,
+          'Current Cost (₱)': r.base_cost,
+          'Retail Price (₱)': r.retail_price,
+          'Wholesale (₱)': r.wholesale_price,
+          'Batch Cost Value (₱)': getRowCostValue(r),
+          'Batch Retail Value (₱)': getRowRetailValue(r),
+          'Batch Details': batchDetailsText(r),
+        })),
+      },
+      {
+        name: 'Batch Details',
+        rows: rows.flatMap(r =>
+          getBatchEntries(r).map((tier, index) => ({
+            'Product Code': r.barcode ?? '',
+            'Description': r.product_name,
+            'Category': r.category_name ?? '',
+            'Batch #': index + 1,
+            'Qty Remaining': tier.quantity,
+            'Unit Cost (₱)': tier.unit_cost,
+            'Retail Price (₱)': tier.retail_price,
+            'Wholesale (₱)': tier.wholesale_price,
+            'Batch Cost Value (₱)': tier.quantity * tier.unit_cost,
+            'Batch Retail Value (₱)': tier.quantity * tier.retail_price,
+            'Received Date': formatBatchDate(tier.received_at),
+            'Note': tier.note ?? '',
+          }))
+        ),
+      },
+    ], `Inventory_Report_${new Date().toISOString().slice(0, 10)}`)
   }
 
   const handlePdf = async () => {
@@ -157,10 +220,11 @@ export default function InventoryReportPage() {
         <td>${r.product_name}</td>
         <td>${r.category_name ?? '—'}</td>
         <td style="text-align:right">${r.quantity}</td>
-        <td style="text-align:right">₱${r.base_cost.toFixed(2)}</td>
-        <td style="text-align:right">₱${r.retail_price.toFixed(2)}</td>
-        <td style="text-align:right">₱${r.wholesale_price.toFixed(2)}</td>
-        <td>${batchSummary(r)}</td>
+        <td style="text-align:right">${formatMoney(r.base_cost)}</td>
+        <td style="text-align:right">${formatMoney(r.retail_price)}</td>
+        <td style="text-align:right">${formatMoney(r.wholesale_price)}</td>
+        <td style="text-align:right">${formatMoney(getRowCostValue(r))}</td>
+        <td>${batchDetailsHtml(r)}</td>
       </tr>
     `).join('')
 
@@ -181,7 +245,8 @@ export default function InventoryReportPage() {
               <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Cost</th>
               <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Retail</th>
               <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Wholesale</th>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Price Tiers</th>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Batch Cost Value</th>
+              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Batch Details</th>
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
@@ -254,7 +319,8 @@ export default function InventoryReportPage() {
                       <th className="text-right px-3 py-2 font-medium">Cost (₱)</th>
                       <th className="text-right px-3 py-2 font-medium">Retail Price (₱)</th>
                       <th className="text-right px-3 py-2 font-medium">Wholesale (₱)</th>
-                      <th className="text-left px-3 py-2 font-medium">Price Tiers</th>
+                      <th className="text-right px-3 py-2 font-medium">Batch Cost Value (₱)</th>
+                      <th className="text-left px-3 py-2 font-medium">Batch Details</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -267,7 +333,20 @@ export default function InventoryReportPage() {
                         <td className="px-3 py-1.5 text-gray-600 text-right">{r.base_cost.toFixed(2)}</td>
                         <td className="px-3 py-1.5 text-gray-800 text-right">{r.retail_price.toFixed(2)}</td>
                         <td className="px-3 py-1.5 text-gray-600 text-right">{r.wholesale_price.toFixed(2)}</td>
-                        <td className="px-3 py-1.5 text-[11px] text-gray-500">{batchSummary(r)}</td>
+                        <td className="px-3 py-1.5 text-right text-gray-700">{getRowCostValue(r).toFixed(2)}</td>
+                        <td className="px-3 py-1.5 text-[11px] text-gray-500">
+                          <div className="space-y-1.5">
+                            {getBatchEntries(r).map(tier => (
+                              <div key={tier.id} className="rounded-md bg-gray-50 px-2 py-1">
+                                <span className="font-medium text-gray-700">{tier.quantity} pcs</span>{' '}
+                                <span>• Cost {formatMoney(tier.unit_cost)}</span>{' '}
+                                <span>• Retail {formatMoney(tier.retail_price)}</span>{' '}
+                                <span>• Wholesale {formatMoney(tier.wholesale_price)}</span>{' '}
+                                <span>• Received {formatBatchDate(tier.received_at)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -278,9 +357,6 @@ export default function InventoryReportPage() {
 
                 {/* Totals summary */}
                 {rows.length > 0 && (() => {
-                  const totalCostValue    = rows.reduce((s, r) => s + r.quantity * r.base_cost, 0)
-                  const totalRetailValue  = rows.reduce((s, r) => s + r.quantity * r.retail_price, 0)
-                  const totalQty          = rows.reduce((s, r) => s + r.quantity, 0)
                   const fmt = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                   return (
                     <div className="mt-4 grid grid-cols-3 gap-3">

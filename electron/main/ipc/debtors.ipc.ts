@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
+import { getDebtorBalanceSnapshot, recalculateDebtorTotals } from '../services/debtors.service'
 
 export function registerDebtorHandlers() {
   ipcMain.handle(IPC.DEBTORS.GET_ALL, (_, filters?: any) => {
@@ -69,22 +70,44 @@ export function registerDebtorHandlers() {
   ipcMain.handle(IPC.DEBTORS.ADD_TRANSACTION, (_, tx: any) => {
     const db = getDb()
     const id = uuid()
+    const debtor = db.prepare(`SELECT id FROM debtors WHERE id = ? AND deleted_at IS NULL`).get(tx.debtor_id) as { id?: string } | undefined
+    if (!debtor?.id) {
+      return { success: false, error: 'Debtor not found.' }
+    }
+
+    const rawAmount = Number(tx.amount || 0)
+    const amount = Number.isFinite(rawAmount) ? rawAmount : 0
+    if (tx.type !== 'note' && amount <= 0) {
+      return { success: false, error: 'Amount must be greater than zero.' }
+    }
+
     const txn = db.transaction(() => {
+      let effectiveAmount = amount
+      if (tx.type === 'payment') {
+        const snapshot = getDebtorBalanceSnapshot(db, tx.debtor_id)
+        effectiveAmount = Math.min(snapshot.balance, amount)
+        if (effectiveAmount <= 0) {
+          throw new Error('This debtor has no outstanding balance left to pay.')
+        }
+      }
+
       db.prepare(`
         INSERT INTO debtor_transactions (id, debtor_id, type, amount, profit, note, order_id, user_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(id, tx.debtor_id, tx.type, tx.amount || 0, tx.profit || 0,
+      `).run(id, tx.debtor_id, tx.type, tx.type === 'note' ? 0 : effectiveAmount, tx.profit || 0,
              tx.note || null, tx.order_id || null, tx.user_id || null)
 
-      if (tx.type === 'debt') {
-        db.prepare(`UPDATE debtors SET balance = balance + ?, total_credit = total_credit + ? WHERE id = ?`)
-          .run(tx.amount, tx.amount, tx.debtor_id)
-      } else if (tx.type === 'payment') {
-        db.prepare(`UPDATE debtors SET balance = MAX(0, balance - ?), total_paid = total_paid + ? WHERE id = ?`)
-          .run(tx.amount, tx.amount, tx.debtor_id)
+      if (tx.type === 'debt' || tx.type === 'payment') {
+        recalculateDebtorTotals(db, tx.debtor_id)
       }
     })
-    txn()
+
+    try {
+      txn()
+    } catch (error) {
+      return { success: false, error: error instanceof Error ? error.message : String(error) }
+    }
+
     scheduleAutoSync()
     return { success: true, id }
   })

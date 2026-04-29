@@ -80,8 +80,8 @@ export default function ActivationPage({ onActivated }: { onActivated: () => voi
         setStep('error')
         setErrorMsg(result.error || 'Failed to open payment page. Check your internet connection.')
       } else if (result.alreadyActivated) {
-        const status = await window.api.activation.getStatus()
-        if (status.activated && status.expiresAt) {
+        if (result.expiresAt) {
+          await window.api.activation.markActivated(result.expiresAt)
           setStep('success')
           window.setTimeout(() => {
             onActivated()
