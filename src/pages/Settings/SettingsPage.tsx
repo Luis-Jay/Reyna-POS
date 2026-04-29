@@ -1,38 +1,173 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
-import { VariationGroup } from '../../types'
-import { Plus, Trash2, X } from 'lucide-react'
+import { VariationGroup, UserPermissions } from '../../types'
+import { Plus, Trash2, X, Upload, ChevronDown, ChevronUp } from 'lucide-react'
+import { useAuthStore } from '../../stores/auth.store'
+
+const PERMISSION_LABELS: Array<{ key: keyof UserPermissions; label: string; desc: string }> = [
+  { key: 'can_manage_products', label: 'Manage Products', desc: 'Add, edit, delete products' },
+  { key: 'can_manage_inventory', label: 'Manage Inventory', desc: 'View & adjust stock levels' },
+  { key: 'can_manage_debtors', label: 'Manage Debtors', desc: 'Add debtors, record payments' },
+  { key: 'can_access_reports', label: 'View Reports & Analytics', desc: 'Analytics, reports, financials' },
+  { key: 'can_access_expenses', label: 'View Expenses', desc: 'Track operating expenses' },
+  { key: 'can_access_cashier_monitoring', label: 'Cashier Monitoring', desc: 'Time-in/out, shift reports' },
+]
 
 export default function SettingsPage() {
+  const navigate = useNavigate()
+  const logout = useAuthStore(s => s.logout)
   const [settings, setSettings] = useState<Record<string, string>>({})
   const [groups, setGroups] = useState<VariationGroup[]>([])
   const [newGroupName, setNewGroupName] = useState('')
   const [newOption, setNewOption] = useState<Record<string, { name: string; price: string; cost: string }>>({})
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const logoInputRef = useRef<HTMLInputElement>(null)
   const [printerStatus, setPrinterStatus] = useState<any>(null)
+  const [printers, setPrinters] = useState<any[]>([])
+  const [syncStatus, setSyncStatus] = useState<any>(null)
+  const [users, setUsers] = useState<any[]>([])
+  const [expandedUser, setExpandedUser] = useState<string | null>(null)
+  const [userPerms, setUserPerms] = useState<Record<string, UserPermissions>>({})
+  const [savingPerms, setSavingPerms] = useState<string | null>(null)
+  const [showAddUser, setShowAddUser] = useState(false)
+  const [newUserForm, setNewUserForm] = useState({ name: '', pin: '', role: 'cashier' })
+  const [addingUser, setAddingUser] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const [syncMessage, setSyncMessage] = useState('')
+  const [smsCredits, setSmsCredits] = useState<number | null>(null)
+  const [cloudEmail, setCloudEmail] = useState<string | null>(null)
+
+  const persistSettings = async (nextSettings: Record<string, string>) => {
+    const normalizedSettings = Object.fromEntries(
+      Object.entries(nextSettings).map(([key, value]) => [key, value == null ? '' : String(value)])
+    )
+
+    await window.api.settings.setMany(normalizedSettings)
+    await window.api.printer.setConfig({
+      enabled: normalizedSettings['thermal_enabled'] === 'true',
+      paperSize: normalizedSettings['paper_size'] || '58mm',
+      interface: normalizedSettings['printer_interface'] || '',
+    })
+
+    return await window.api.settings.getAll()
+  }
 
   const load = async () => {
-    const [s, g, ps] = await Promise.all([
+    const [s, g, ps, printerList, sync, userList] = await Promise.all([
       window.api.settings.getAll(),
       window.api.variations.getGroups(),
       window.api.printer.getStatus(),
+      window.api.printer.listPrinters(),
+      window.api.sync.getStatus(),
+      window.api.auth.getUsers(),
     ])
     setSettings(s)
     setGroups(g)
     setPrinterStatus(ps)
+    setPrinters(Array.isArray(printerList) ? printerList : [])
+    setSyncStatus(sync)
+    setUsers(userList)
+    const perms: Record<string, UserPermissions> = {}
+    for (const u of userList) {
+      try { perms[u.id] = u.permissions ? JSON.parse(u.permissions) : {} }
+      catch { perms[u.id] = {} }
+    }
+    setUserPerms(perms)
+    window.api.sms.getCredits().then((res: any) => {
+      if (res?.credits !== null && res?.credits !== undefined) setSmsCredits(res.credits)
+    }).catch(() => {})
+    // Load current cloud account email (web only)
+    if (typeof (window.api.auth as any).getCloudEmail === 'function') {
+      ;(window.api.auth as any).getCloudEmail().then((email: string | null) => {
+        setCloudEmail(email)
+      }).catch(() => {})
+    }
+  }
+
+  const handleSavePermissions = async (userId: string) => {
+    setSavingPerms(userId)
+    await window.api.auth.updateUser(userId, { permissions: userPerms[userId] || {} })
+    setSavingPerms(null)
+  }
+
+  const togglePerm = (userId: string, key: keyof UserPermissions) => {
+    setUserPerms(prev => ({
+      ...prev,
+      [userId]: { ...prev[userId], [key]: !prev[userId]?.[key] },
+    }))
+  }
+
+  const handleAddUser = async () => {
+    if (!newUserForm.name.trim() || !newUserForm.pin.trim()) return
+    setAddingUser(true)
+    await window.api.auth.createUser({ name: newUserForm.name.trim(), pin: newUserForm.pin.trim(), role: newUserForm.role })
+    setNewUserForm({ name: '', pin: '', role: 'cashier' })
+    setShowAddUser(false)
+    setAddingUser(false)
+    load()
+  }
+
+  const handleToggleActive = async (userId: string, current: number) => {
+    await window.api.auth.updateUser(userId, { is_active: current ? 0 : 1 })
+    load()
   }
 
   useEffect(() => { load() }, [])
 
+  useEffect(() => {
+    const unsubscribe = window.api.on.syncStatus((status) => {
+      setSyncStatus(status)
+    })
+
+    return unsubscribe
+  }, [])
+
   const set = (key: string, value: string) => setSettings(s => ({ ...s, [key]: value }))
+
+  const setAndSave = async (key: string, value: string) => {
+    const nextSettings = { ...settings, [key]: value }
+    setSettings(nextSettings)
+    setSaving(true)
+    try {
+      const persistedSettings = await persistSettings(nextSettings)
+      setSettings(persistedSettings)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (error) {
+      setSettings(settings)
+      alert(`Failed to save settings: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => set('store_logo_data', reader.result as string)
+    reader.readAsDataURL(file)
+  }
+
+  const handleRemoveLogo = () => {
+    set('store_logo_data', '')
+    if (logoInputRef.current) logoInputRef.current.value = ''
+  }
 
   const handleSave = async () => {
     setSaving(true)
-    await window.api.settings.setMany(settings)
-    setSaving(false)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+    try {
+      const persistedSettings = await persistSettings(settings)
+      setSettings(persistedSettings)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch (error) {
+      alert(`Failed to save settings: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleAddGroup = async () => {
@@ -74,7 +209,22 @@ export default function SettingsPage() {
 
   const handleTestPrint = async () => {
     const result = await window.api.printer.testPage()
+    if (!result.success) {
+      alert(result.error || 'Printer test failed.')
+    }
     setPrinterStatus(await window.api.printer.getStatus())
+  }
+
+  const handleForceSync = async () => {
+    setSyncing(true)
+    setSyncMessage('')
+    try {
+      const result = await window.api.sync.force()
+      setSyncMessage(result.message || (result.success ? 'Sync completed.' : 'Sync failed.'))
+      setSyncStatus(await window.api.sync.getStatus())
+    } finally {
+      setSyncing(false)
+    }
   }
 
   const handleReset = async () => {
@@ -82,6 +232,17 @@ export default function SettingsPage() {
     if (!confirm('This cannot be undone. Type YES to confirm.')) return
     await window.api.backup.reset()
     window.location.reload()
+  }
+
+  const handleSwitchAccount = async () => {
+    if (!confirm('Disconnect this device from the current cloud account and go back to the sign-in/setup screen?')) return
+    try {
+      await window.api.auth.cloudLogout()
+      logout()
+      window.location.reload()
+    } catch (error) {
+      alert(`Failed to logout from cloud: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   const Toggle = ({ setting, label }: { setting: string; label: string }) => (
@@ -96,15 +257,25 @@ export default function SettingsPage() {
     </div>
   )
 
-  const Select = ({ setting, label, options }: { setting: string; label: string; options: string[] }) => (
+  const Select = ({ setting, label, options }: { setting: string; label: string; options: Array<{ label: string; value: string }> }) => (
     <div className="flex items-center justify-between py-3">
       <span className="text-sm text-gray-700">{label}</span>
-      <select value={settings[setting] || options[0]} onChange={e => set(setting, e.target.value)}
+      <select value={settings[setting] ?? options[0]?.value ?? ''} onChange={e => setAndSave(setting, e.target.value)}
         className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]">
-        {options.map(o => <option key={o}>{o}</option>)}
+        {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
     </div>
   )
+
+  const yesNo = [
+    { label: 'Yes', value: 'true' },
+    { label: 'No', value: 'false' },
+  ]
+
+  const noYes = [
+    { label: 'No', value: 'false' },
+    { label: 'Yes', value: 'true' },
+  ]
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -113,30 +284,337 @@ export default function SettingsPage() {
         <div className="max-w-2xl mx-auto p-4 space-y-4">
           {/* Store info */}
           <Section title="Store">
+            {/* Logo upload */}
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Store Logo</label>
+              {settings['store_logo_data'] ? (
+                <div className="flex items-center gap-3 mb-2">
+                  <img src={settings['store_logo_data']} alt="Store logo" className="h-16 w-16 object-contain rounded-xl border border-gray-200 bg-gray-50" />
+                  <button onClick={handleRemoveLogo} className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1">
+                    <X size={12} /> Remove
+                  </button>
+                </div>
+              ) : (
+                <div className="mb-2 flex h-16 w-16 items-center justify-center rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 text-gray-300">
+                  <Upload size={20} />
+                </div>
+              )}
+              <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoUpload} className="hidden" />
+              <button onClick={() => logoInputRef.current?.click()}
+                className="text-sm text-[#1a8eff] hover:underline">
+                {settings['store_logo_data'] ? 'Change Logo' : 'Upload Logo'}
+              </button>
+              <p className="mt-1 text-xs text-gray-500">Used on receipts and reports. PNG or JPG recommended.</p>
+            </div>
             <div className="py-3">
               <label className="block text-sm font-medium text-gray-700 mb-1">Store Name</label>
               <input value={settings['store_name'] || ''} onChange={e => set('store_name', e.target.value)}
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
             </div>
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Store Address</label>
+              <input value={settings['store_address'] || ''} onChange={e => set('store_address', e.target.value)}
+                placeholder="123 Main St, Barangay..."
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
+            </div>
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">TIN (Tax Identification Number)</label>
+              <input
+                value={settings['store_tin'] || ''}
+                onChange={e => {
+                  // Strip non-digits, limit to 12 digits, auto-insert dashes: 000-000-000-000
+                  const digits = e.target.value.replace(/\D/g, '').slice(0, 12)
+                  const formatted = digits
+                    .replace(/^(\d{3})(\d)/, '$1-$2')
+                    .replace(/^(\d{3}-\d{3})(\d)/, '$1-$2')
+                    .replace(/^(\d{3}-\d{3}-\d{3})(\d)/, '$1-$2')
+                  set('store_tin', formatted)
+                }}
+                placeholder="000-000-000-000"
+                maxLength={15}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
+              <p className="mt-1 text-xs text-gray-500">Printed on official receipts.</p>
+            </div>
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Store Contact Number</label>
+              <input value={settings['store_phone'] || ''} onChange={e => set('store_phone', e.target.value)}
+                placeholder="+639123456789"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
+              <p className="mt-1 text-xs text-gray-500">Used for your store profile and optional Pro SMS reminders if you subscribe later.</p>
+            </div>
+          </Section>
+
+          {/* Receipt Customization */}
+          <Section title="Receipt Customization">
+            <p className="pt-3 text-xs text-gray-500">Store name, address, and TIN are pulled from the Store section above.</p>
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Receipt Footer Message</label>
+              <input
+                value={settings['receipt_footer'] || ''}
+                onChange={e => set('receipt_footer', e.target.value)}
+                placeholder="Thank you for shopping with us!"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+              />
+              <p className="mt-1 text-xs text-gray-500">Printed at the bottom of every receipt.</p>
+            </div>
+          </Section>
+
+          <Section title="Reyna Pro">
+            <p className="py-3 text-sm text-gray-600">
+              Payment is only for Pro-only features like sending SMS reminders to debtors and auto-generated financial reports such as trial balance, income statement, and profit and loss.
+            </p>
+            <button
+              onClick={() => navigate('/pro')}
+              className="mb-4 w-full rounded-xl bg-[#1a8eff] py-3 text-sm font-semibold text-white hover:bg-[#0077e6]"
+            >
+              Manage Pro Subscription
+            </button>
           </Section>
 
           {/* Feature Controls */}
           <Section title="Feature Controls">
             <SectionInner label="Inventory & Profit">
-              <Select setting="inventory_enabled" label="Enable Inventory, Profit & Cost Tracking" options={['Yes','No']} />
+              <Select setting="inventory_enabled" label="Enable Inventory, Profit & Cost Tracking" options={yesNo} />
+              <Select setting="batch_pricing_enabled" label="Batch Price Management (Pro)" options={noYes} />
             </SectionInner>
             <SectionInner label="Cashier Permissions">
-              <Select setting="cashier_manage_debtors" label="Allow Cashier to Manage Debtors" options={['No','Yes']} />
+              <Select setting="cashier_manage_debtors" label="Allow Cashier to Manage Debtors" options={noYes} />
             </SectionInner>
             <SectionInner label="Buyer Online Ordering Page">
-              <Select setting="buyer_page_enabled" label="Enable Buyer Page" options={['Yes','No']} />
-              <Select setting="oos_blocking" label="Out-of-Stock Blocking for buyers" options={['Yes','No']} />
-              <Select setting="sound_alerts" label="New Order Placed Sound Alerts" options={['Yes','No']} />
-              <Select setting="store_closed" label="Store is Closed for Buyers" options={['Open','Closed']} />
+              <Select setting="buyer_page_enabled" label="Enable Buyer Page" options={yesNo} />
+              <Select setting="oos_blocking" label="Out-of-Stock Blocking for buyers" options={yesNo} />
+              <Select setting="sound_alerts" label="New Order Placed Sound Alerts" options={yesNo} />
+              <Select
+                setting="store_closed"
+                label="Store is Closed for Buyers"
+                options={[
+                  { label: 'Open', value: 'false' },
+                  { label: 'Closed', value: 'true' },
+                ]}
+              />
             </SectionInner>
             <SectionInner label="AI Features">
-              <Select setting="ai_image_recognition" label="Enable AI Image Recognition" options={['Yes','No']} />
+              <Select setting="ai_image_recognition" label="Enable AI Image Recognition" options={yesNo} />
             </SectionInner>
+            <SectionInner label="VAT / Tax">
+              <Select setting="vat_enabled" label="Enable VAT on Sales" options={noYes} />
+              {settings['vat_enabled'] === 'true' && (
+                <div className="flex items-center justify-between py-3">
+                  <div>
+                    <span className="text-sm text-gray-700">VAT Rate (%)</span>
+                    <p className="text-xs text-gray-400">Philippines standard VAT is 12%</p>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={settings['vat_rate'] || '12'}
+                    onChange={e => set('vat_rate', e.target.value)}
+                    className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                  />
+                </div>
+              )}
+            </SectionInner>
+            <SectionInner label="Loyalty / Sukipoints">
+              <Select setting="loyalty_enabled" label="Enable Loyalty Program" options={noYes} />
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <span className="text-sm text-gray-700">Points per ₱1 spent</span>
+                  <p className="text-xs text-gray-400">e.g. 1 = earn 1 pt per peso</p>
+                </div>
+                <input
+                  type="number"
+                  value={settings['loyalty_rate'] || '1'}
+                  onChange={e => set('loyalty_rate', e.target.value)}
+                  className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+              </div>
+              <div className="flex items-center justify-between py-3">
+                <div>
+                  <span className="text-sm text-gray-700">Points to redeem ₱1</span>
+                  <p className="text-xs text-gray-400">e.g. 10 = spend 10 pts to get ₱1 off</p>
+                </div>
+                <input
+                  type="number"
+                  value={settings['loyalty_redeem_rate'] || '1'}
+                  onChange={e => set('loyalty_redeem_rate', e.target.value)}
+                  className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-center focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+              </div>
+            </SectionInner>
+          </Section>
+
+          {/* User Management */}
+          <Section title="User Management">
+            <div className="py-2 space-y-3">
+              {users.map(u => (
+                <div key={u.id} className="border border-gray-100 rounded-xl overflow-hidden">
+                  <div
+                    className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
+                    onClick={() => setExpandedUser(expandedUser === u.id ? null : u.id)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold ${u.role === 'admin' ? 'bg-[#1a8eff]' : 'bg-slate-500'}`}>
+                        {u.name[0]?.toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">{u.name}</p>
+                        <p className="text-xs text-gray-400 capitalize">{u.role} {!u.is_active ? '· Inactive' : ''}</p>
+                        {u.role !== 'admin' && (() => {
+                          const perms = userPerms[u.id] || {}
+                          const enabled = PERMISSION_LABELS.filter(p => perms[p.key]).map(p => p.label)
+                          return enabled.length > 0
+                            ? <p className="text-xs text-[#1a8eff] mt-0.5">{enabled.length}/{PERMISSION_LABELS.length} features enabled</p>
+                            : <p className="text-xs text-gray-300 mt-0.5">No extra access</p>
+                        })()}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {u.role !== 'admin' && (
+                        <button
+                          onClick={e => { e.stopPropagation(); handleToggleActive(u.id, u.is_active) }}
+                          className={`text-xs px-2 py-1 rounded-full font-medium ${u.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}
+                        >
+                          {u.is_active ? 'Active' : 'Inactive'}
+                        </button>
+                      )}
+                      {u.role !== 'admin' && (
+                        expandedUser === u.id
+                          ? <ChevronUp size={16} className="text-gray-400" />
+                          : <ChevronDown size={16} className="text-gray-400" />
+                      )}
+                    </div>
+                  </div>
+                  {expandedUser === u.id && u.role !== 'admin' && (
+                    <div className="border-t border-gray-100 bg-gray-50 px-4 py-3 space-y-2">
+                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Feature Permissions</p>
+                      {PERMISSION_LABELS.map(({ key, label, desc }) => (
+                        <div key={key} className="flex items-center justify-between py-1">
+                          <div>
+                            <p className="text-sm text-gray-700">{label}</p>
+                            <p className="text-xs text-gray-400">{desc}</p>
+                          </div>
+                          <button
+                            onClick={() => togglePerm(u.id, key)}
+                            className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${userPerms[u.id]?.[key] ? 'bg-[#1a8eff]' : 'bg-gray-200'}`}
+                          >
+                            <div className={`absolute w-4 h-4 bg-white rounded-full shadow top-0.5 transition-transform ${userPerms[u.id]?.[key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() => handleSavePermissions(u.id)}
+                        disabled={savingPerms === u.id}
+                        className="mt-2 w-full bg-[#1a8eff] text-white py-2 rounded-xl text-sm font-semibold hover:bg-[#0077e6] disabled:opacity-50"
+                      >
+                        {savingPerms === u.id ? 'Saving...' : 'Save Permissions'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Add User */}
+            {showAddUser ? (
+              <div className="border border-gray-200 rounded-xl p-4 space-y-3 mt-2">
+                <p className="text-sm font-semibold text-gray-700">New Cashier</p>
+                <input
+                  value={newUserForm.name}
+                  onChange={e => setNewUserForm(f => ({ ...f, name: e.target.value }))}
+                  placeholder="Name"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+                <input
+                  value={newUserForm.pin}
+                  onChange={e => setNewUserForm(f => ({ ...f, pin: e.target.value }))}
+                  placeholder="PIN"
+                  type="password"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                />
+                <select
+                  value={newUserForm.role}
+                  onChange={e => setNewUserForm(f => ({ ...f, role: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                >
+                  <option value="cashier">Cashier</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowAddUser(false)} className="flex-1 border border-gray-200 text-gray-600 py-2 rounded-xl text-sm">Cancel</button>
+                  <button onClick={handleAddUser} disabled={addingUser} className="flex-1 bg-[#1a8eff] text-white py-2 rounded-xl text-sm font-semibold disabled:opacity-50">
+                    {addingUser ? 'Adding...' : 'Add User'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAddUser(true)}
+                className="mt-2 flex items-center gap-2 text-sm text-[#1a8eff] hover:underline"
+              >
+                <Plus size={14} /> Add New Cashier
+              </button>
+            )}
+          </Section>
+
+          <Section title="Cloud Sync">
+            <div className="py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Connection</p>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {syncStatus?.message || 'Checking cloud sync status...'}
+                  </p>
+                </div>
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                  syncStatus?.status === 'connected'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-amber-100 text-amber-700'
+                }`}>
+                  {syncStatus?.status === 'connected' ? 'Connected' : 'Not Signed In'}
+                </span>
+              </div>
+              <p className="mt-3 text-xs text-gray-500">
+                Pending local records: <span className="font-semibold text-gray-700">{syncStatus?.pending ?? 0}</span>
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                Auto-sync: <span className="font-semibold text-gray-700">{syncStatus?.syncing ? 'Syncing now' : 'Enabled'}</span>
+                {syncStatus?.lastSyncedAt ? ` • Last synced ${new Date(syncStatus.lastSyncedAt).toLocaleString()}` : ''}
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                Current cloud sync scope: cashiers, categories, variations, products, inventory, completed orders, and debtor balances. Product images still stay local on each device.
+              </p>
+              {syncMessage && <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">{syncMessage}</p>}
+            </div>
+            <div className="pb-3">
+              <button
+                onClick={handleForceSync}
+                disabled={syncing}
+                className="w-full rounded-xl bg-slate-800 py-3 text-sm font-semibold text-white hover:bg-slate-900 disabled:opacity-60"
+              >
+                {syncing ? 'Syncing Now...' : 'Sync Now'}
+              </button>
+            </div>
+          </Section>
+
+          {/* SMS Credits */}
+          <Section title="SMS Credits">
+            <div className="py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">Available Credits</p>
+                  <p className="mt-1 text-xs text-gray-500">Each SMS reminder sent to a debtor uses 1 credit.</p>
+                </div>
+                <span className={`text-2xl font-bold ${smsCredits === null ? 'text-gray-400' : smsCredits > 10 ? 'text-emerald-600' : smsCredits > 0 ? 'text-amber-600' : 'text-red-500'}`}>
+                  {smsCredits === null ? '—' : smsCredits}
+                </span>
+              </div>
+              {smsCredits !== null && smsCredits <= 10 && (
+                <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  {smsCredits === 0 ? 'You have no SMS credits. Contact your provider to top up.' : `Low balance — only ${smsCredits} credit${smsCredits === 1 ? '' : 's'} remaining.`}
+                </p>
+              )}
+            </div>
           </Section>
 
           {/* Thermal Printer */}
@@ -153,6 +631,22 @@ export default function SettingsPage() {
                 ))}
               </div>
             </div>
+            <div className="py-3">
+              <label className="block text-sm font-medium text-gray-700 mb-2">System Printer</label>
+              <select
+                value={settings['printer_interface'] || ''}
+                onChange={e => set('printer_interface', e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+              >
+                <option value="">Use print dialog default</option>
+                {printers.map(printer => (
+                  <option key={printer.name} value={`system:${printer.name}`}>{printer.name}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                Leave this blank to use the system print dialog default printer.
+              </p>
+            </div>
             {printerStatus && (
               <div className="border border-gray-200 rounded-xl p-4 mb-3">
                 <div className="flex justify-between items-center mb-1">
@@ -163,8 +657,21 @@ export default function SettingsPage() {
                 </div>
                 {printerStatus.type && <p className="text-xs text-gray-500">Type: {printerStatus.type}</p>}
                 {printerStatus.device && <p className="text-xs text-gray-500">Device: {printerStatus.device}</p>}
+                {printerStatus.error && <p className="mt-1 text-xs text-red-500">{printerStatus.error}</p>}
               </div>
             )}
+            <div className="pb-3">
+              <p className="text-xs font-medium text-gray-600">Detected System Printers</p>
+              {printers.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  {printers.slice(0, 5).map(printer => (
+                    <p key={printer.name} className="text-xs text-gray-500">{printer.name}</p>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-gray-500">No printers detected by Electron yet.</p>
+              )}
+            </div>
             <div className="flex gap-3 pb-3">
               <button onClick={handleTestPrint}
                 className="flex-1 bg-green-500 text-white py-2.5 rounded-xl font-medium text-sm hover:bg-green-600">
@@ -231,10 +738,9 @@ export default function SettingsPage() {
 
           {/* Advanced */}
           <Section title="Advanced">
-            <p className="text-xs text-gray-500 py-2">Use these actions if you encounter issues with AI search or have changed the underlying AI model.</p>
-            <button className="w-full bg-orange-500 text-white py-3 rounded-xl font-semibold hover:bg-orange-600 mb-2">
-              🔁 Refine AI Search
-            </button>
+            <p className="text-xs text-gray-500 py-2">
+              Use these tools for support and recovery. AI search maintenance is not implemented in this desktop build.
+            </p>
             <div className="flex gap-2">
               <button onClick={() => window.api.backup.export()} className="flex-1 bg-[#1a8eff] text-white py-2.5 rounded-xl text-sm font-medium hover:bg-[#0077e6]">
                 Export Backup
@@ -243,6 +749,24 @@ export default function SettingsPage() {
                 Import Backup
               </button>
             </div>
+          </Section>
+
+          <Section title="Account">
+            {cloudEmail && (
+              <div className="py-3 flex items-center gap-2 text-sm text-gray-700 border-b border-gray-100 mb-2">
+                <span className="text-gray-400">Signed in as</span>
+                <span className="font-semibold text-gray-900">{cloudEmail}</span>
+              </div>
+            )}
+            <p className="py-3 text-sm text-gray-600">
+              Disconnect this device from the current cloud account if you want to sign in with a different email.
+            </p>
+            <button
+              onClick={handleSwitchAccount}
+              className="mb-4 w-full rounded-xl bg-slate-800 py-3 text-sm font-semibold text-white hover:bg-slate-900"
+            >
+              Switch Cloud Account
+            </button>
           </Section>
 
           {/* Danger Zone */}
@@ -254,7 +778,7 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          <p className="text-center text-xs text-gray-400 pb-4">Powered by Reyna POS</p>
+          <p className="text-center text-xs text-gray-400 pb-4">Powered by Reyna Advanced POS</p>
         </div>
       </div>
     </div>

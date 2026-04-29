@@ -1,6 +1,12 @@
 node_modules
 dist
 build
+!build/
+build/*
+!build/entitlements.mac.plist
 electron/dist
 .DS_Store
 *.log
+.claude/
+.vscode/
+.vercel

@@ -1,11 +1,21 @@
 // ─── Auth ────────────────────────────────────────────────────────────────────
 export type UserRole = 'admin' | 'cashier'
 
+export interface UserPermissions {
+  can_access_reports?: boolean
+  can_manage_inventory?: boolean
+  can_access_expenses?: boolean
+  can_access_cashier_monitoring?: boolean
+  can_manage_debtors?: boolean
+  can_manage_products?: boolean
+}
+
 export interface User {
   id: string
   name: string
   role: UserRole
   is_active: number
+  permissions?: string  // JSON string
   created_at: string
 }
 
@@ -45,6 +55,8 @@ export interface Product {
   category_id?: string
   category_name?: string
   base_price: number
+  retail_price: number
+  wholesale_price?: number
   base_cost: number
   markup_pct?: number
   has_variations: number
@@ -77,16 +89,24 @@ export interface CartItem {
   id: string           // unique cart line id
   product_id?: string
   name: string
-  price: number
+  price: number        // effective price (may be tier price)
+  base_price: number   // original product price, for reverting tiers
   cost: number
   quantity: number
   subtotal: number
   is_custom: boolean
   image_path?: string
+  price_type?: 'retail' | 'wholesale'
 }
 
 // ─── Orders ──────────────────────────────────────────────────────────────────
 export type OrderStatus = 'pending' | 'completed' | 'cancelled' | 'void'
+export type PaymentMethod = 'cash' | 'gcash' | 'card'
+
+export interface PaymentEntry {
+  method: PaymentMethod
+  amount: number
+}
 
 export interface Order {
   id: string
@@ -98,6 +118,7 @@ export interface Order {
   total: number
   payment_amount?: number
   change_amount?: number
+  payment_breakdown?: PaymentEntry[]
   is_credit: number
   debtor_id?: string
   user_id?: string
@@ -135,6 +156,12 @@ export interface InventoryItem {
   product_id: string
   product_name: string
   product_image?: string
+  image_path?: string
+  barcode?: string | null
+  base_price?: number
+  base_cost?: number
+  retail_price?: number
+  wholesale_price?: number
   quantity: number
   low_threshold: number
   monthly_sold: number
@@ -162,6 +189,9 @@ export interface Debtor {
   balance: number
   total_credit: number
   total_paid: number
+  due_date?: string
+  follow_up_date?: string
+  last_reminder_at?: string
   created_at: string
   deleted_at?: string
   // Runtime
@@ -199,7 +229,9 @@ export interface RecentOrder {
 export interface AnalyticsReport {
   total_sales: number
   net_profit: number
+  net_income: number
   total_cost: number
+  total_expenses: number
   order_count: number
   avg_sale: number
   debt_outstanding: number
@@ -212,6 +244,21 @@ export interface DailyStat {
   sales: number
   profit: number
   cost: number
+  expenses?: number
+  net_income?: number
+}
+
+export interface AnalyticsRange {
+  preset?: 'today' | 'yesterday' | 'last_7_days' | 'last_month' | 'this_month'
+  from?: string
+  to?: string
+}
+
+export interface CashflowPoint {
+  date: string
+  sales: number
+  expenses: number
+  net_income: number
 }
 
 export interface HourlyStat {
@@ -238,9 +285,44 @@ export interface InventoryValuation {
   total_cost: number
 }
 
+export interface FinancialStatementLine {
+  label: string
+  amount: number
+  type: 'debit' | 'credit' | 'value'
+}
+
+export interface FinancialStatements {
+  period: {
+    from: string
+    to: string
+  }
+  profit_and_loss: {
+    revenue: number
+    cost_of_goods_sold: number
+    gross_profit: number
+    net_profit: number
+  }
+  income_statement: {
+    net_sales: number
+    cost_of_sales: number
+    gross_income: number
+    operating_expenses: number
+    net_income: number
+    note: string
+  }
+  trial_balance: {
+    lines: FinancialStatementLine[]
+    total_debits: number
+    total_credits: number
+    note: string
+  }
+}
+
 // ─── Settings ────────────────────────────────────────────────────────────────
 export interface AppSettings {
   store_name: string
+  store_phone: string
+  setup_completed: string
   thermal_enabled: string
   paper_size: string
   printer_interface: string

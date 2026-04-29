@@ -31,6 +31,8 @@ INSERT OR IGNORE INTO variation_options (id, group_id, name, price, cost, sort_o
 -- Default settings
 INSERT OR IGNORE INTO settings (key, value) VALUES
   ('store_name',           'Reyna Store'),
+  ('store_phone',          ''),
+  ('setup_completed',      'false'),
   ('thermal_enabled',      'false'),
   ('paper_size',           '58mm'),
   ('printer_interface',    ''),

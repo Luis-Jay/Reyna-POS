@@ -9,20 +9,33 @@ export default function DebtorsPage() {
   const navigate = useNavigate()
   const [debtors, setDebtors] = useState<Debtor[]>([])
   const [search, setSearch] = useState('')
-  const [sort, setSort] = useState('High to Low')
+  const [tab, setTab] = useState<'all' | 'balance' | 'overdue' | 'az'>('all')
   const [showAdd, setShowAdd] = useState(false)
   const [newName, setNewName] = useState('')
   const [newPhone, setNewPhone] = useState('')
 
+  const sortForTab = (t: typeof tab) =>
+    t === 'az' ? 'A-Z' : t === 'balance' || t === 'overdue' ? 'High to Low' : 'High to Low'
+
   const load = async () => {
-    const data = await window.api.debtors.getAll({ search, sort })
+    const data = await window.api.debtors.getAll({ search, sort: sortForTab(tab) })
     setDebtors(data)
   }
 
-  useEffect(() => { load() }, [search, sort])
+  useEffect(() => { load() }, [search, tab])
 
   const withBalance = debtors.filter(d => d.balance > 0)
   const totalOutstanding = debtors.reduce((s, d) => s + d.balance, 0)
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date())
+  const overdueCount = debtors.filter(d => d.balance > 0 && d.due_date && d.due_date < today).length
+  const followUpCount = debtors.filter(d => d.follow_up_date && d.follow_up_date <= today).length
+  const visibleDebtors = debtors.filter(d =>
+    tab === 'balance'
+      ? d.balance > 0
+      : tab === 'overdue'
+        ? d.balance > 0 && !!d.due_date && d.due_date < today
+        : true
+  )
 
   const handleAdd = async () => {
     if (!newName.trim()) return
@@ -44,7 +57,7 @@ export default function DebtorsPage() {
 
       <div className="flex-1 overflow-y-auto">
         {/* Summary */}
-        <div className="grid grid-cols-2 gap-4 p-4">
+        <div className="grid grid-cols-2 gap-4 p-4 xl:grid-cols-4">
           <div className="bg-white rounded-xl p-4 border-l-4 border-red-400">
             <p className="text-xs text-gray-500 uppercase tracking-wide">Total Outstanding</p>
             <p className="text-2xl font-bold text-red-500">₱{totalOutstanding.toFixed(2)}</p>
@@ -53,39 +66,58 @@ export default function DebtorsPage() {
             <p className="text-xs text-gray-500 uppercase tracking-wide">With Balance</p>
             <p className="text-2xl font-bold text-gray-800">{withBalance.length} <span className="text-sm font-normal text-gray-400">people</span></p>
           </div>
+          <div className="bg-white rounded-xl p-4 border-l-4 border-amber-400">
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Overdue</p>
+            <p className="text-2xl font-bold text-amber-600">{overdueCount}</p>
+          </div>
+          <div className="bg-white rounded-xl p-4 border-l-4 border-blue-400">
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Follow Up Today</p>
+            <p className="text-2xl font-bold text-blue-600">{followUpCount}</p>
+          </div>
         </div>
 
         {/* Controls */}
-        <div className="px-4 pb-3 flex gap-3">
+        <div className="px-4 pb-2 flex gap-3">
           <div className="flex-1 relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search debtors..."
               className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
           </div>
-          <select value={sort} onChange={e => setSort(e.target.value)}
-            className="border border-gray-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]">
-            <option>High to Low</option>
-            <option>Low to High</option>
-            <option>A-Z</option>
-          </select>
+        </div>
+
+        {/* Filter tabs */}
+        <div className="px-4 pb-3 flex gap-2">
+          {([
+            { key: 'all',     label: 'All' },
+            { key: 'balance', label: 'With Balance' },
+            { key: 'overdue', label: 'Overdue' },
+            { key: 'az',      label: 'A–Z' },
+          ] as const).map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+                tab === t.key ? 'bg-[#1a8eff] text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'
+              }`}>{t.label}</button>
+          ))}
         </div>
 
         {/* List */}
         <div className="px-4 grid grid-cols-2 gap-3">
-          {debtors.map(d => (
+          {visibleDebtors.map(d => (
             <button key={d.id} onClick={() => navigate(`/debtors/${d.id}`)}
               className="bg-white rounded-xl p-4 text-left hover:shadow-md transition-shadow border border-gray-100">
               <p className="font-semibold text-gray-800">{d.name}</p>
               <p className={`text-xl font-bold ${d.balance > 0 ? 'text-red-500' : 'text-green-500'}`}>
                 ₱{d.balance.toFixed(2)}
               </p>
+              {d.due_date && <p className="text-xs text-gray-500 mt-1">Due: {formatShortDate(d.due_date)}</p>}
+              {d.follow_up_date && <p className="text-xs text-blue-500 mt-1">Follow up: {formatShortDate(d.follow_up_date)}</p>}
               {d.last_activity && (
                 <p className="text-xs text-gray-400 mt-1">Last activity: {formatShortDate(d.last_activity)}</p>
               )}
             </button>
           ))}
-          {debtors.length === 0 && (
+          {visibleDebtors.length === 0 && (
             <p className="col-span-2 text-gray-400 text-sm text-center py-8">No debtors found</p>
           )}
         </div>

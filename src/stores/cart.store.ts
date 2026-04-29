@@ -8,6 +8,7 @@ interface CartState {
   discount: number
   addItem: (item: Omit<CartItem, 'id' | 'subtotal'>) => void
   updateQuantity: (id: string, quantity: number) => void
+  updateItemWithPrice: (id: string, quantity: number, price: number) => void
   removeItem: (id: string) => void
   setCustomerName: (name: string) => void
   setDiscount: (amount: number) => void
@@ -26,7 +27,13 @@ export const useCartStore = create<CartState>((set, get) => ({
     const { items } = get()
     // If same product + not custom, merge qty
     if (item.product_id && !item.is_custom) {
-      const existing = items.find(i => i.product_id === item.product_id && !i.is_custom)
+      const existing = items.find(
+        i =>
+          i.product_id === item.product_id &&
+          !i.is_custom &&
+          (i.price_type ?? 'retail') === (item.price_type ?? 'retail') &&
+          i.price === item.price
+      )
       if (existing) {
         set({
           items: items.map(i =>
@@ -40,6 +47,7 @@ export const useCartStore = create<CartState>((set, get) => ({
     }
     const newItem: CartItem = {
       ...item,
+      base_price: item.base_price ?? item.price,
       id: uuid(),
       subtotal: item.quantity * item.price,
     }
@@ -54,6 +62,18 @@ export const useCartStore = create<CartState>((set, get) => ({
     set({
       items: get().items.map(i =>
         i.id === id ? { ...i, quantity, subtotal: quantity * i.price } : i
+      ),
+    })
+  },
+
+  updateItemWithPrice: (id, quantity, price) => {
+    if (quantity <= 0) {
+      get().removeItem(id)
+      return
+    }
+    set({
+      items: get().items.map(i =>
+        i.id === id ? { ...i, quantity, price, subtotal: quantity * price } : i
       ),
     })
   },

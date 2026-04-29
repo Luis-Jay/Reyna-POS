@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS products (
   barcode             TEXT UNIQUE,
   category_id         TEXT REFERENCES categories(id),
   base_price          REAL NOT NULL DEFAULT 0,
+  retail_price        REAL NOT NULL DEFAULT 0,
+  wholesale_price     REAL,
   base_cost           REAL NOT NULL DEFAULT 0,
   markup_pct          REAL,
   has_variations      INTEGER NOT NULL DEFAULT 0,
@@ -69,6 +71,7 @@ CREATE TABLE IF NOT EXISTS inventory (
   low_threshold   REAL NOT NULL DEFAULT 5,
   updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_inventory_product_unique ON inventory(product_id);
 
 CREATE TABLE IF NOT EXISTS stock_movements (
   id            TEXT PRIMARY KEY,

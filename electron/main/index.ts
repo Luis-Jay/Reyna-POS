@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, dialog, protocol, shell } from 'electron'
 import path from 'path'
-import { getDb, closeDb } from './db'
+import fs from 'fs'
+import { getDb, closeDb, getCurrentProductImagesDir } from './db'
 import { registerProductHandlers } from './ipc/products.ipc'
 import { registerCategoryHandlers } from './ipc/categories.ipc'
 import { registerVariationHandlers } from './ipc/variations.ipc'
@@ -11,13 +12,85 @@ import { registerAnalyticsHandlers } from './ipc/analytics.ipc'
 import { registerSettingsHandlers } from './ipc/settings.ipc'
 import { registerAuthHandlers } from './ipc/auth.ipc'
 import { registerPrinterHandlers } from './ipc/printer.ipc'
-import { registerSyncHandlers } from './ipc/sync.ipc'
+import { registerSyncHandlers, startAutoSync, scheduleAutoSync } from './ipc/sync.ipc'
+import { initRealtime } from './realtime'
 import { registerBackupHandlers } from './ipc/backup.ipc'
+import { registerActivationHandlers } from './ipc/activation.ipc'
+import { registerExpenseHandlers } from './ipc/expenses.ipc'
+import { registerShiftHandlers } from './ipc/shifts.ipc'
+import { registerPriceTierHandlers } from './ipc/pricetiers.ipc'
+import { registerLoyaltyHandlers } from './ipc/loyalty.ipc'
+import { registerSmsHandlers } from './ipc/sms.ipc'
+import { registerProductOrderHandlers } from './ipc/product-orders.ipc'
 import { BarcodeService } from './services/barcode.service'
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+const appIconPath = path.join(__dirname, '..', '..', '..', '..', 'assets', 'icons', 'icon.png')
 
 let mainWindow: BrowserWindow | null = null
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'product-image',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+    },
+  },
+])
+
+function registerLocalImageProtocol() {
+  protocol.handle('product-image', (request) => {
+    const imagePath = decodeURIComponent(new URL(request.url).searchParams.get('path') || '')
+    if (!imagePath) {
+      return new Response('Missing image path', { status: 400 })
+    }
+
+    try {
+      const allowedDir = getCurrentProductImagesDir()
+      const allowedDirReal = fs.realpathSync(allowedDir)
+      // image_path in DB is stored as an absolute path; resolve relative paths against allowedDir
+      const candidate = path.isAbsolute(imagePath) ? imagePath : path.resolve(allowedDir, imagePath)
+      const candidateReal = fs.realpathSync(candidate)
+      if (!candidateReal.startsWith(allowedDirReal + path.sep) && candidateReal !== allowedDirReal) {
+        return new Response('Forbidden', { status: 403 })
+      }
+
+      const ext = path.extname(candidateReal).toLowerCase()
+      const contentType =
+        ext === '.png' ? 'image/png' :
+        ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' :
+        ext === '.webp' ? 'image/webp' :
+        ext === '.gif' ? 'image/gif' :
+        'application/octet-stream'
+
+      if (fs.constants.O_NOFOLLOW === undefined && fs.lstatSync(candidateReal).isSymbolicLink()) {
+        return new Response('Forbidden', { status: 403 })
+      }
+
+      // Use file descriptor with O_NOFOLLOW to prevent symlink swap (with Windows fallback)
+      const openFlags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0)
+      const fd = fs.openSync(candidateReal, openFlags)
+
+      try {
+        const file = fs.readFileSync(fd)
+        return new Response(file, {
+          status: 200,
+          headers: {
+            'Content-Type': contentType,
+            'Cache-Control': 'no-cache',
+          },
+        })
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch {
+      return new Response('Image not found', { status: 404 })
+    }
+  })
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -32,14 +105,14 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: false,
+      devTools: isDev,
     },
     show: false,
-    icon: path.join(__dirname, '..', '..', '..', '..', 'assets', 'icons', 'icon.png'),
+    icon: appIconPath,
   })
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
   } else {
     // electron/dist/electron/main → ../../../.. → project root → dist/renderer
     mainWindow.loadFile(path.join(__dirname, '..', '..', '..', '..', 'dist', 'renderer', 'index.html'))
@@ -59,8 +132,13 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'darwin') {
+    app.dock.setIcon(appIconPath)
+  }
+
   // Init DB on startup
   getDb()
+  registerLocalImageProtocol()
 
   // Register all IPC handlers
   registerProductHandlers()
@@ -75,6 +153,15 @@ app.whenReady().then(() => {
   registerPrinterHandlers()
   registerSyncHandlers()
   registerBackupHandlers()
+  registerActivationHandlers()
+  registerExpenseHandlers()
+  registerShiftHandlers()
+  registerPriceTierHandlers()
+  registerLoyaltyHandlers()
+  registerSmsHandlers()
+  registerProductOrderHandlers()
+  startAutoSync()
+  initRealtime(() => scheduleAutoSync('realtime', 500))
 
   createWindow()
 

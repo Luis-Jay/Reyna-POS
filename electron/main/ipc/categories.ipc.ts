@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { scheduleAutoSync } from './sync.ipc'
 
 export function registerCategoryHandlers() {
   ipcMain.handle(IPC.CATEGORIES.GET_ALL, () => {
@@ -14,16 +15,19 @@ export function registerCategoryHandlers() {
     const maxOrder: any = db.prepare(`SELECT MAX(sort_order) as m FROM categories`).get()
     db.prepare(`INSERT INTO categories (id, name, sort_order) VALUES (?, ?, ?)`)
       .run(id, name, (maxOrder?.m || 0) + 1)
+    scheduleAutoSync()
     return { success: true, id }
   })
 
   ipcMain.handle(IPC.CATEGORIES.UPDATE, (_, id: string, name: string) => {
     getDb().prepare(`UPDATE categories SET name = ? WHERE id = ?`).run(name, id)
+    scheduleAutoSync()
     return { success: true }
   })
 
   ipcMain.handle(IPC.CATEGORIES.DELETE, (_, id: string) => {
     getDb().prepare(`UPDATE categories SET deleted_at = datetime('now') WHERE id = ?`).run(id)
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -35,6 +39,7 @@ export function registerCategoryHandlers() {
       })
     })
     tx()
+    scheduleAutoSync()
     return { success: true }
   })
 }
