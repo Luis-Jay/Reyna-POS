@@ -19,23 +19,36 @@ export default function TopBar({ title, back, actions }: TopBarProps) {
   }
 
   return (
-    <div className="brand-gradient relative h-16 shrink-0 overflow-hidden border-b border-white/15">
+    <div className="brand-gradient relative shrink-0 overflow-hidden border-b border-white/15">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.18),transparent_30%)]" />
-      <div className="relative flex h-full items-center gap-3 px-5">
-      {back && (
-        <button onClick={() => navigate(back)} className="rounded-full border border-white/15 bg-white/10 p-2 text-white transition hover:bg-white/20">
-          <ArrowLeft size={20} />
-        </button>
-      )}
-      <div className="min-w-0 flex-1">
-        <h1 className="truncate text-lg font-semibold text-white">{title}</h1>
-        <p className="text-xs uppercase tracking-[0.24em] text-emerald-50/75">Reyna Advanced POS</p>
-      </div>
-      <div className="hidden items-center gap-2 md:flex">{actions}</div>
-      <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-semibold tracking-[0.18em] text-white/90">{user?.name?.toUpperCase()}</span>
-      <button onClick={handleLogout} className="rounded-full border border-white/15 bg-white/10 p-2 text-white transition hover:bg-white/20">
-        <LogOut size={18} />
-      </button>
+      <div className="relative px-3 py-3 sm:px-5 sm:py-0">
+        <div className="flex min-h-[64px] items-center gap-2 sm:gap-3">
+          {back && (
+            <button onClick={() => navigate(back)} className="shrink-0 rounded-full border border-white/15 bg-white/10 p-2 text-white transition hover:bg-white/20">
+              <ArrowLeft size={20} />
+            </button>
+          )}
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-base sm:text-lg font-semibold text-white">{title}</h1>
+            <p className="text-[11px] sm:text-xs uppercase tracking-[0.24em] text-emerald-50/75">Reyna Advanced POS</p>
+          </div>
+          {actions && (
+            <div className="hidden md:flex items-center gap-2">
+              {actions}
+            </div>
+          )}
+          <span className="shrink-0 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] sm:text-xs font-semibold tracking-[0.18em] text-white/90">
+            {user?.name?.toUpperCase()}
+          </span>
+          <button onClick={handleLogout} className="shrink-0 rounded-full border border-white/15 bg-white/10 p-2 text-white transition hover:bg-white/20">
+            <LogOut size={18} />
+          </button>
+        </div>
+        {actions && (
+          <div className="mt-1 flex gap-2 overflow-x-auto pb-2 md:hidden">
+            {actions}
+          </div>
+        )}
       </div>
     </div>
   )
