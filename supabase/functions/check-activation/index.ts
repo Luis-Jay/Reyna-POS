@@ -99,8 +99,8 @@ Deno.serve(async (req) => {
         .eq('user_id', user.id)
 
       if (updateError) {
+        // Log but don't fail — the subscription itself is valid
         console.error('Failed to update installation_id:', updateError)
-        return json({ activated: false, error: 'Failed to update activation record' }, 500)
       }
     }
 

@@ -1,6 +1,18 @@
 import { supabase, SUPABASE_FUNCTIONS_URL } from '../supabase'
 import { getAccessToken } from './context'
 
+function readCachedActivation() {
+  const cached = localStorage.getItem('reyna_activation')
+  if (!cached) return { activated: false }
+  try {
+    const act = JSON.parse(cached)
+    if (act.expires_at && new Date(act.expires_at) > new Date()) {
+      return { activated: true, expires_at: act.expires_at }
+    }
+  } catch {}
+  return { activated: false }
+}
+
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ6aGpmc2dqa2J2Y3NwZm5jeWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyODI4ODQsImV4cCI6MjA5MDg1ODg4NH0.gw-mgJWF3yoCRlQIW6IVcrHbiVvqcNSO2i8yzis1aDM'
 
 function getOrCreateInstallId(): string {
@@ -18,38 +30,24 @@ export const activationApi = {
 
   getStatus: async () => {
     try {
-      const token = await getAccessToken()
-      if (!token) {
-        // Check local activation cache
-        const cached = localStorage.getItem('reyna_activation')
-        if (cached) {
-          const act = JSON.parse(cached)
-          if (act.expires_at && new Date(act.expires_at) > new Date()) {
-            return { activated: true, expires_at: act.expires_at }
-          }
-        }
-        return { activated: false }
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return readCachedActivation()
+
+      // Query activations table directly — owner_read RLS allows this
+      const { data } = await supabase
+        .from('activations')
+        .select('expires_at')
+        .eq('user_id', user.id)
+        .single()
+
+      if (data?.expires_at && new Date(data.expires_at) > new Date()) {
+        localStorage.setItem('reyna_activation', JSON.stringify({ expires_at: data.expires_at }))
+        return { activated: true, expires_at: data.expires_at }
       }
 
-      const res = await fetch(`${SUPABASE_FUNCTIONS_URL}/check-activation`, {
-        headers: { Authorization: `Bearer ${token}`, apikey: ANON_KEY },
-      })
-      const data = await res.json()
-      if (data.activated) {
-        localStorage.setItem('reyna_activation', JSON.stringify({ expires_at: data.expires_at }))
-      }
-      return data
+      return readCachedActivation()
     } catch {
-      const cached = localStorage.getItem('reyna_activation')
-      if (cached) {
-        try {
-          const act = JSON.parse(cached)
-          if (act.expires_at && new Date(act.expires_at) > new Date()) {
-            return { activated: true, expires_at: act.expires_at }
-          }
-        } catch {}
-      }
-      return { activated: false }
+      return readCachedActivation()
     }
   },
 
@@ -64,18 +62,46 @@ export const activationApi = {
           Authorization: `Bearer ${token}`,
           apikey: ANON_KEY,
         },
-        body: JSON.stringify({ installation_id: installId }),
+        body: JSON.stringify({
+          installationId: installId,
+          installation_id: installId,
+        }),
       })
       const data = await res.json()
       if (!res.ok) return { success: false, error: data.error || 'Failed to create invoice' }
-      return { success: true, invoiceUrl: data.invoice_url, invoiceId: data.invoice_id }
+      return {
+        success: true,
+        alreadyActivated: data.alreadyActivated === true,
+        invoiceUrl: data.invoiceUrl || data.invoice_url,
+        invoiceId: data.invoiceId || data.invoice_id,
+      }
     } catch (err: any) {
       return { success: false, error: err?.message }
     }
   },
 
   checkStatus: async () => {
-    return activationApi.getStatus()
+    try {
+      const token = await getAccessToken()
+      if (!token) return activationApi.getStatus()
+
+      // Call Edge Function to verify Xendit payment and update the DB record
+      const installId = getOrCreateInstallId()
+      const res = await fetch(`${SUPABASE_FUNCTIONS_URL}/check-activation?id=${encodeURIComponent(installId)}`, {
+        headers: { Authorization: `Bearer ${token}`, apikey: ANON_KEY },
+      })
+      if (!res.ok) return activationApi.getStatus()
+      const data = await res.json()
+      if (data.activated) {
+        const expiresAt = data.expiresAt || data.expires_at
+        if (expiresAt) localStorage.setItem('reyna_activation', JSON.stringify({ expires_at: expiresAt }))
+      }
+      // If Edge Function says not activated, double-check directly in DB (in case of installationId update error)
+      if (!data.activated) return activationApi.getStatus()
+      return data
+    } catch {
+      return activationApi.getStatus()
+    }
   },
 
   markActivated: async (expiresAt: string) => {
