@@ -209,7 +209,7 @@ async function repairMissingCloudBusiness(accessToken: string) {
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function ensureAdminIdIsUUID(): string {
+export function ensureAdminIdIsUUID(): string {
   const db = getDb()
   const admin: any = db.prepare(`
     SELECT id FROM users WHERE role = 'admin' AND deleted_at IS NULL ORDER BY created_at ASC LIMIT 1
@@ -228,6 +228,9 @@ function ensureAdminIdIsUUID(): string {
       db.prepare(`UPDATE stock_movements SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
       db.prepare(`UPDATE debtor_transactions SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
       db.prepare(`UPDATE audit_log SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
+      db.prepare(`UPDATE expenses SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
+      db.prepare(`UPDATE cashier_shifts SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
+      db.prepare(`UPDATE return_events SET user_id = ? WHERE user_id = ?`).run(nextId, oldId)
     } finally {
       db.pragma('foreign_keys = ON')
     }
@@ -279,6 +282,7 @@ export function registerAuthHandlers() {
     const token = await getValidCloudToken()
     if (token) {
       try {
+        ensureAdminIdIsUUID()
         const users = db.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
         await axios.post(
           `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
@@ -306,6 +310,7 @@ export function registerAuthHandlers() {
     const token = await getValidCloudToken()
     if (token) {
       try {
+        ensureAdminIdIsUUID()
         const users = db.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
         await axios.post(
           `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
@@ -514,6 +519,7 @@ export function registerAuthHandlers() {
     if (!token) return { success: false, error: 'Not signed in to cloud' }
 
     try {
+      ensureAdminIdIsUUID()
       const users = getDb().prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
       await axios.post(
         `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,

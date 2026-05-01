@@ -3,7 +3,7 @@ import axios from 'axios'
 import fs from 'fs'
 import path from 'path'
 import { getCurrentProductImagesDir, getDb } from '../db'
-import { getValidCloudToken } from './auth.ipc'
+import { ensureAdminIdIsUUID, getValidCloudToken } from './auth.ipc'
 import { broadcastDataUpdated, updateRealtimeAuth } from '../realtime'
 import { IPC } from '../../../shared/ipc-channels'
 import { recalculateAllDebtorTotals } from '../services/debtors.service'
@@ -848,6 +848,7 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
   try {
     const db = getDb()
     let sharedSyncWarning: string | null = null
+    ensureAdminIdIsUUID()
     const users = db.prepare(`
       SELECT id, name, pin, role, is_active
       FROM users
