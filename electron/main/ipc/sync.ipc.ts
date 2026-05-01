@@ -48,12 +48,16 @@ function readImageAsDataUrl(imagePath?: string | null): string | null {
   return `data:${mime};base64,${buffer.toString('base64')}`
 }
 
+function isRemoteImageUrl(value?: string | null): boolean {
+  return typeof value === 'string' && /^https?:\/\//i.test(value)
+}
+
 function getCatalogSnapshot() {
   const db = getDb()
   const products = db.prepare(`
     SELECT
       id, name, description, image_path, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct,
-      has_variations, variation_group_id, allow_fractions, track_inventory, is_active,
+      has_variations, variation_group_id, allow_fractions, track_inventory, is_active, image_url,
       sort_order, monthly_sold, created_at, updated_at, deleted_at, image_uploaded
     FROM products
   `).all() as any[]
@@ -77,6 +81,7 @@ function getCatalogSnapshot() {
     `).all(),
     products: products.map(p => ({
       ...p,
+      image_url: p.image_url ?? null,
       // Only include image data if it hasn't been uploaded to cloud storage yet
       image_data: p.image_uploaded ? null : readImageAsDataUrl(p.image_path),
     })),
@@ -297,24 +302,29 @@ function applyCatalogSnapshot(snapshot: any): Array<{ productId: string; url: st
     }
 
     for (const product of snapshot.products || []) {
-      const existing = db.prepare(`SELECT image_path FROM products WHERE id = ?`).get(product.id) as { image_path?: string } | undefined
+      const existing = db.prepare(`SELECT image_path, image_url FROM products WHERE id = ?`).get(product.id) as { image_path?: string; image_url?: string } | undefined
       // Prefer base64 image_data (same-session push); fall back to existing local path.
       // If neither exists but a cloud image_url is available, queue an async download.
-      let imagePath: string | null = persistProductImage(product.id, product.image_data) ?? existing?.image_path ?? null
+      let imagePath: string | null =
+        persistProductImage(product.id, product.image_data) ??
+        (existing?.image_path && !isRemoteImageUrl(existing.image_path) ? existing.image_path : null)
       if (!imagePath && product.image_url) {
+        imagePath = product.image_url
         pendingImageDownloads.push({ productId: product.id, url: product.image_url })
       }
+      const imageUploaded = product.image_data || product.image_url || (imagePath && !isRemoteImageUrl(imagePath)) ? 1 : 0
       db.prepare(`
         INSERT INTO products (
-          id, name, description, image_path, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct,
+          id, name, description, image_path, image_url, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct,
           has_variations, variation_group_id, allow_fractions, track_inventory, is_active, sort_order,
-          monthly_sold, created_at, updated_at, deleted_at
+          monthly_sold, created_at, updated_at, deleted_at, image_uploaded
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           description = excluded.description,
           image_path = excluded.image_path,
+          image_url = excluded.image_url,
           barcode = excluded.barcode,
           category_id = excluded.category_id,
           base_price = excluded.base_price,
@@ -331,12 +341,14 @@ function applyCatalogSnapshot(snapshot: any): Array<{ productId: string; url: st
           monthly_sold = excluded.monthly_sold,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
-          deleted_at = excluded.deleted_at
+          deleted_at = excluded.deleted_at,
+          image_uploaded = excluded.image_uploaded
       `).run(
         product.id,
         product.name,
         product.description ?? null,
         imagePath,
+        product.image_url ?? existing?.image_url ?? null,
         product.barcode ?? null,
         product.category_id ?? null,
         product.retail_price ?? product.base_price ?? 0,
@@ -354,6 +366,7 @@ function applyCatalogSnapshot(snapshot: any): Array<{ productId: string; url: st
         product.created_at ?? new Date().toISOString(),
         product.updated_at ?? new Date().toISOString(),
         product.deleted_at ?? null,
+        imageUploaded,
       )
     }
 
@@ -399,7 +412,7 @@ async function downloadProductImages(downloads: Array<{ productId: string; url: 
       const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg'
       const filePath = path.join(imagesDir, `${productId}.${ext}`)
       fs.writeFileSync(filePath, Buffer.from(res.data))
-      db.prepare(`UPDATE products SET image_path = ? WHERE id = ?`).run(filePath, productId)
+      db.prepare(`UPDATE products SET image_path = ?, image_url = ?, image_uploaded = 1 WHERE id = ?`).run(filePath, url, productId)
     } catch {
       // Non-fatal — image will be retried on next sync
     }
@@ -868,18 +881,16 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
       { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
     )
 
-    // Mark images as uploaded so we don't re-send them on every sync
-    const imageUploadedIds = localCatalog.products.filter((p: any) => p.image_data).map((p: any) => p.id)
-    if (imageUploadedIds.length > 0) {
-      db.prepare(`UPDATE products SET image_uploaded = 1 WHERE id IN (${imageUploadedIds.map(() => '?').join(',')})`).run(...imageUploadedIds)
-    }
-
     const remoteCatalog = await axios.get(
       `${SUPABASE_FUNCTIONS_URL}/sync-catalog`,
       { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
     )
 
     const pendingImages = applyCatalogSnapshot(remoteCatalog.data)
+    const imageUploadedIds = localCatalog.products.filter((p: any) => p.image_data).map((p: any) => p.id)
+    if (imageUploadedIds.length > 0) {
+      db.prepare(`UPDATE products SET image_uploaded = 1 WHERE id IN (${imageUploadedIds.map(() => '?').join(',')})`).run(...imageUploadedIds)
+    }
     if (pendingImages.length > 0) void downloadProductImages(pendingImages)
 
     const localSales = getSalesSnapshot()

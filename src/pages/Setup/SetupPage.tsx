@@ -83,7 +83,7 @@ function NewAccountForm({ onComplete, onSwitchMode }: { onComplete: () => void; 
                 Welcome to Reyna Advanced POS
               </h1>
               <p className="mt-4 max-w-xl text-lg leading-relaxed text-white/82">
-                Create your account and set up your store. Cloud login works across devices, while sales and inventory stay local on each device for now.
+                Create your account and set up your store. Cloud login and shared business data work across devices when you sign in with the same owner account.
               </p>
               <div className="mt-8 grid gap-4">
                 {[

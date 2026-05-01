@@ -51,6 +51,7 @@ export interface Product {
   name: string
   description?: string
   image_path?: string
+  image_url?: string
   barcode?: string
   category_id?: string
   category_name?: string

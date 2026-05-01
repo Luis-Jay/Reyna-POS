@@ -528,6 +528,10 @@ ALTER TABLE product_orders ADD COLUMN wholesale_price REAL;
     sql: `ALTER TABLE products ADD COLUMN image_uploaded INTEGER NOT NULL DEFAULT 0;`,
   },
   {
+    name: '022_product_image_url.sql',
+    sql: `ALTER TABLE products ADD COLUMN image_url TEXT;`,
+  },
+  {
     name: '020_return_events.sql',
     sql: `
 CREATE TABLE IF NOT EXISTS return_events (

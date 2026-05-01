@@ -582,7 +582,7 @@ export default function SettingsPage() {
                 {syncStatus?.lastSyncedAt ? ` • Last synced ${new Date(syncStatus.lastSyncedAt).toLocaleString()}` : ''}
               </p>
               <p className="mt-1 text-xs text-gray-500">
-                Current cloud sync scope: cashiers, categories, variations, products, inventory, completed orders, and debtor balances. Product images still stay local on each device.
+                Current cloud sync scope: cashiers, categories, variations, products, product images, inventory, completed orders, and debtor balances.
               </p>
               {syncMessage && <p className="mt-3 rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700">{syncMessage}</p>}
             </div>

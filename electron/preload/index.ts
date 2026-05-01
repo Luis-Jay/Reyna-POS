@@ -3,7 +3,10 @@ import { IPC } from '../../shared/ipc-channels'
 
 const api = {
   assets: {
-    getProductImageUrl: (filePath: string) => `product-image://local?path=${encodeURIComponent(filePath)}`,
+    getProductImageUrl: (filePath: string) =>
+      /^https?:\/\//i.test(filePath)
+        ? filePath
+        : `product-image://local?path=${encodeURIComponent(filePath)}`,
   },
 
   // ─── Products ──────────────────────────────────────────────────────────────
