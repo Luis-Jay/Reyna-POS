@@ -3,11 +3,11 @@ import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { randomUUID } from 'crypto'
 import { addStockBatch } from '../services/stock-batches.service'
+import { scheduleAutoSync } from './sync.ipc'
 
 export function registerProductOrderHandlers() {
-  const db = getDb()
-
   ipcMain.handle(IPC.PRODUCT_ORDERS.GET_ALL, () => {
+    const db = getDb()
     return db.prepare(`
       SELECT po.*, p.name AS product_name, p.barcode, p.base_cost,
              p.retail_price AS current_retail_price,
@@ -20,6 +20,7 @@ export function registerProductOrderHandlers() {
   })
 
   ipcMain.handle(IPC.PRODUCT_ORDERS.GET_PENDING, () => {
+    const db = getDb()
     return db.prepare(`
       SELECT po.*, p.name AS product_name, p.barcode,
              p.retail_price AS current_retail_price,
@@ -33,6 +34,7 @@ export function registerProductOrderHandlers() {
   })
 
   ipcMain.handle(IPC.PRODUCT_ORDERS.CREATE, (_e, data: any) => {
+    const db = getDb()
     const id = randomUUID()
     db.prepare(`
       INSERT INTO product_orders (
@@ -41,10 +43,12 @@ export function registerProductOrderHandlers() {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(id, data.product_id, data.vendor_name || null, data.quantity, data.unit_cost || 0,
            data.retail_price ?? null, data.wholesale_price ?? null, data.expected_at || null, data.notes || null)
+    scheduleAutoSync()
     return { id }
   })
 
   ipcMain.handle(IPC.PRODUCT_ORDERS.RECEIVE, (_e, id: string) => {
+    const db = getDb()
     const order = db.prepare('SELECT * FROM product_orders WHERE id = ?').get(id) as any
     if (!order || order.status !== 'pending') return { ok: false }
 
@@ -79,11 +83,14 @@ export function registerProductOrderHandlers() {
         .run(id)
     })()
 
+    scheduleAutoSync()
     return { ok: true }
   })
 
   ipcMain.handle(IPC.PRODUCT_ORDERS.CANCEL, (_e, id: string) => {
+    const db = getDb()
     db.prepare(`UPDATE product_orders SET status = 'cancelled' WHERE id = ? AND status = 'pending'`).run(id)
+    scheduleAutoSync()
     return { ok: true }
   })
 }

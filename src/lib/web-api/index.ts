@@ -17,6 +17,7 @@ import { backupApi } from './backup'
 import { smsApi } from './sms'
 import { loyaltyApi } from './loyalty'
 import { productOrdersApi } from './product-orders'
+import { documentsApi } from './documents'
 
 // Barcode scanner support via keyboard wedge (most USB barcode scanners work this way)
 type BarcodeCallback = (code: string) => void
@@ -66,6 +67,7 @@ export function createWebApi() {
     settings: settingsApi,
     auth: authApi,
     printer: printerApi,
+    documents: documentsApi,
     sync: syncApi,
     activation: activationApi,
     backup: backupApi,

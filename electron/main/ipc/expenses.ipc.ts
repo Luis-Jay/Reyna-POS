@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { scheduleAutoSync } from './sync.ipc'
 
 export const EXPENSE_CATEGORIES = [
   'Utilities', 'Rent', 'Salaries', 'Supplies',
@@ -23,17 +24,20 @@ export function registerExpenseHandlers() {
     const id = uuid()
     getDb().prepare(`INSERT INTO expenses (id, category, description, amount, date) VALUES (?, ?, ?, ?, ?)`)
       .run(id, data.category || 'Other', data.description || '', data.amount, data.date)
+    scheduleAutoSync()
     return { success: true, id }
   })
 
   ipcMain.handle(IPC.EXPENSES.UPDATE, (_, id: string, data: { category?: string; description?: string; amount?: number; date?: string }) => {
     getDb().prepare(`UPDATE expenses SET category = COALESCE(?, category), description = COALESCE(?, description), amount = COALESCE(?, amount), date = COALESCE(?, date) WHERE id = ?`)
       .run(data.category, data.description, data.amount, data.date, id)
+    scheduleAutoSync()
     return { success: true }
   })
 
   ipcMain.handle(IPC.EXPENSES.DELETE, (_, id: string) => {
     getDb().prepare(`DELETE FROM expenses WHERE id = ?`).run(id)
+    scheduleAutoSync()
     return { success: true }
   })
 

@@ -371,7 +371,7 @@ export function registerProductHandlers() {
       const filePath = path.join(imagesDir, filename)
       fs.writeFileSync(filePath, Buffer.from(base64, 'base64'))
 
-      getDb().prepare(`UPDATE products SET image_path = ? WHERE id = ?`).run(filePath, productId)
+      getDb().prepare(`UPDATE products SET image_path = ?, image_uploaded = 0 WHERE id = ?`).run(filePath, productId)
       scheduleAutoSync()
       return { success: true, path: filePath }
     } catch (err: any) {

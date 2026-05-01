@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { scheduleAutoSync } from './sync.ipc'
 
 export function registerShiftHandlers() {
   ipcMain.handle(IPC.SHIFTS.TIME_IN, (_, data: { userId: string; startMoney: number; note?: string }) => {
@@ -15,6 +16,7 @@ export function registerShiftHandlers() {
     const id = uuid()
     db.prepare(`INSERT INTO cashier_shifts (id, user_id, start_money, note) VALUES (?, ?, ?, ?)`)
       .run(id, data.userId, data.startMoney, data.note || null)
+    scheduleAutoSync()
     return { success: true, id }
   })
 
@@ -26,6 +28,7 @@ export function registerShiftHandlers() {
 
     db.prepare(`UPDATE cashier_shifts SET time_out = datetime('now'), end_money = ?, note = COALESCE(?, note) WHERE id = ?`)
       .run(data.endMoney, data.note || null, data.shiftId)
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -62,6 +65,7 @@ export function registerShiftHandlers() {
       .run(id, data.shiftId, data.description, data.amount)
     db.prepare(`UPDATE cashier_shifts SET petty_cash_total = petty_cash_total + ? WHERE id = ?`)
       .run(data.amount, data.shiftId)
+    scheduleAutoSync()
     return { success: true, id }
   })
 

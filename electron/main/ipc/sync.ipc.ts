@@ -20,6 +20,19 @@ type SyncResult = {
   message: string
 }
 
+const SHARED_SETTINGS_EXCLUDED_KEYS = new Set([
+  'cloud_user_id',
+  'cloud_access_token',
+  'cloud_refresh_token',
+  'installation_id',
+  'thermal_enabled',
+  'paper_size',
+  'printer_interface',
+  'cloud_sync_url',
+  'cloud_sync_enabled',
+  'sms_credits',
+])
+
 let syncInFlight: Promise<SyncResult> | null = null
 let autoSyncTimer: NodeJS.Timeout | null = null
 let autoSyncInterval: NodeJS.Timeout | null = null
@@ -41,7 +54,7 @@ function getCatalogSnapshot() {
     SELECT
       id, name, description, image_path, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct,
       has_variations, variation_group_id, allow_fractions, track_inventory, is_active,
-      sort_order, monthly_sold, created_at, updated_at, deleted_at
+      sort_order, monthly_sold, created_at, updated_at, deleted_at, image_uploaded
     FROM products
   `).all() as any[]
 
@@ -64,7 +77,8 @@ function getCatalogSnapshot() {
     `).all(),
     products: products.map(p => ({
       ...p,
-      image_data: readImageAsDataUrl(p.image_path),
+      // Only include image data if it hasn't been uploaded to cloud storage yet
+      image_data: p.image_uploaded ? null : readImageAsDataUrl(p.image_path),
     })),
     inventory: db.prepare(`
       SELECT id, product_id, quantity, low_threshold, updated_at
@@ -121,16 +135,80 @@ function getSalesSnapshot() {
       payment_breakdown: order.payment_breakdown ? JSON.parse(order.payment_breakdown) : [],
     })),
     orderItems: db.prepare(`
-      SELECT
-        id, order_id, product_id, name, price, cost, quantity, subtotal, is_custom
-      FROM order_items
+      SELECT oi.id, oi.order_id, oi.product_id, oi.name, oi.price, oi.cost, oi.quantity, oi.subtotal, oi.is_custom
+      FROM order_items oi
+      JOIN orders o ON o.id = oi.order_id
+      WHERE o.synced = 0
+    `).all(),
+  }
+}
+
+function getSharedSettingsSnapshot() {
+  const db = getDb()
+  const rows = db.prepare(`SELECT key, value FROM settings`).all() as Array<{ key: string; value: string }>
+  return rows
+    .filter(row => !SHARED_SETTINGS_EXCLUDED_KEYS.has(row.key))
+    .map(row => ({ key: row.key, value: row.value ?? '' }))
+}
+
+function getSharedBusinessSnapshot() {
+  const db = getDb()
+
+  return {
+    expenses: db.prepare(`
+      SELECT id, category, description, amount, date, user_id, created_at
+      FROM expenses
+      ORDER BY date DESC, created_at DESC
+    `).all(),
+    cashierShifts: db.prepare(`
+      SELECT id, user_id, start_money, end_money, time_in, time_out, petty_cash_total, note, created_at
+      FROM cashier_shifts
+      ORDER BY time_in DESC, created_at DESC
+    `).all(),
+    pettyCash: db.prepare(`
+      SELECT id, shift_id, description, amount, created_at
+      FROM petty_cash
+      ORDER BY created_at ASC
+    `).all(),
+    loyaltyAccounts: db.prepare(`
+      SELECT id, name, phone, points, total_earned, total_redeemed, created_at, deleted_at
+      FROM loyalty_accounts
+      ORDER BY created_at ASC
+    `).all(),
+    loyaltyTransactions: db.prepare(`
+      SELECT id, account_id, type, points, order_id, note, created_at
+      FROM loyalty_transactions
+      ORDER BY created_at ASC
+    `).all(),
+    productOrders: db.prepare(`
+      SELECT id, product_id, vendor_name, quantity, unit_cost, retail_price, wholesale_price,
+             status, expected_at, notes, received_at, created_at
+      FROM product_orders
+      ORDER BY created_at DESC
+    `).all(),
+    savedOrders: db.prepare(`
+      SELECT id, name, items_json, total, created_at
+      FROM saved_orders
+      ORDER BY created_at DESC
     `).all(),
     stockMovements: db.prepare(`
-      SELECT
-        id, product_id, type, quantity, note, reference_id, user_id, created_at
+      SELECT id, product_id, type, quantity, reference_id, note, user_id, created_at
       FROM stock_movements
-      WHERE synced = 0
+      ORDER BY created_at ASC
     `).all(),
+    stockBatches: db.prepare(`
+      SELECT id, product_id, initial_quantity, remaining_quantity, unit_cost, retail_price,
+             wholesale_price, source_order_id, note, received_at, created_at
+      FROM stock_batches
+      ORDER BY received_at ASC, created_at ASC
+    `).all(),
+    returnEvents: db.prepare(`
+      SELECT id, order_id, order_item_id, product_id, item_name, event_type, quantity,
+             amount, cost_amount, note, user_id, created_at
+      FROM return_events
+      ORDER BY created_at DESC
+    `).all(),
+    settings: getSharedSettingsSnapshot(),
   }
 }
 
@@ -467,35 +545,214 @@ function applySalesSnapshot(snapshot: any) {
       )
     }
 
-    for (const stockMovement of snapshot.stockMovements || []) {
-      db.prepare(`
-        INSERT INTO stock_movements (id, product_id, type, quantity, note, reference_id, user_id, created_at, synced)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
-        ON CONFLICT(id) DO UPDATE SET
-          product_id = excluded.product_id,
-          type = excluded.type,
-          quantity = excluded.quantity,
-          note = excluded.note,
-          reference_id = excluded.reference_id,
-          user_id = excluded.user_id,
-          created_at = excluded.created_at,
-          synced = 1
-      `).run(
-        stockMovement.id,
-        stockMovement.product_id,
-        stockMovement.type,
-        stockMovement.quantity ?? 0,
-        stockMovement.note ?? null,
-        stockMovement.reference_id ?? null,
-        stockMovement.user_id ?? null,
-        stockMovement.created_at ?? new Date().toISOString(),
-      )
-    }
-
   })
 
   tx()
   recalculateAllDebtorTotals(db)
+}
+
+function applySharedBusinessSnapshot(snapshot: any) {
+  const db = getDb()
+  const tx = db.transaction(() => {
+    db.prepare(`DELETE FROM petty_cash`).run()
+    db.prepare(`DELETE FROM cashier_shifts`).run()
+    db.prepare(`DELETE FROM loyalty_transactions`).run()
+    db.prepare(`DELETE FROM loyalty_accounts`).run()
+    db.prepare(`DELETE FROM saved_orders`).run()
+    db.prepare(`DELETE FROM stock_batches`).run()
+    db.prepare(`DELETE FROM product_orders`).run()
+    db.prepare(`DELETE FROM return_events`).run()
+    db.prepare(`DELETE FROM stock_movements`).run()
+    db.prepare(`DELETE FROM expenses`).run()
+
+    for (const row of snapshot.expenses || []) {
+      db.prepare(`
+        INSERT INTO expenses (id, category, description, amount, date, user_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        row.id,
+        row.category ?? 'Other',
+        row.description ?? '',
+        row.amount ?? 0,
+        row.date ?? new Date().toISOString().slice(0, 10),
+        row.user_id ?? null,
+        row.created_at ?? new Date().toISOString(),
+      )
+    }
+
+    for (const row of snapshot.cashierShifts || []) {
+      db.prepare(`
+        INSERT INTO cashier_shifts (id, user_id, start_money, end_money, time_in, time_out, petty_cash_total, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        row.id,
+        row.user_id,
+        row.start_money ?? 0,
+        row.end_money ?? null,
+        row.time_in ?? new Date().toISOString(),
+        row.time_out ?? null,
+        row.petty_cash_total ?? 0,
+        row.note ?? null,
+        row.created_at ?? new Date().toISOString(),
+      )
+    }
+
+    for (const row of snapshot.pettyCash || []) {
+      db.prepare(`
+        INSERT INTO petty_cash (id, shift_id, description, amount, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        row.id,
+        row.shift_id,
+        row.description ?? '',
+        row.amount ?? 0,
+        row.created_at ?? new Date().toISOString(),
+      )
+    }
+
+    for (const row of snapshot.loyaltyAccounts || []) {
+      db.prepare(`
+        INSERT INTO loyalty_accounts (id, name, phone, points, total_earned, total_redeemed, created_at, deleted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        row.id,
+        row.name,
+        row.phone ?? null,
+        row.points ?? 0,
+        row.total_earned ?? 0,
+        row.total_redeemed ?? 0,
+        row.created_at ?? new Date().toISOString(),
+        row.deleted_at ?? null,
+      )
+    }
+
+    for (const row of snapshot.loyaltyTransactions || []) {
+      db.prepare(`
+        INSERT INTO loyalty_transactions (id, account_id, type, points, order_id, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        row.id,
+        row.account_id,
+        row.type,
+        row.points ?? 0,
+        row.order_id ?? null,
+        row.note ?? null,
+        row.created_at ?? new Date().toISOString(),
+      )
+    }
+
+    for (const row of snapshot.productOrders || []) {
+      db.prepare(`
+        INSERT INTO product_orders (
+          id, product_id, vendor_name, quantity, unit_cost, status,
+          expected_at, notes, received_at, created_at, retail_price, wholesale_price
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        row.id,
+        row.product_id,
+        row.vendor_name ?? null,
+        row.quantity ?? 0,
+        row.unit_cost ?? 0,
+        row.status ?? 'pending',
+        row.expected_at ?? null,
+        row.notes ?? null,
+        row.received_at ?? null,
+        row.created_at ?? new Date().toISOString(),
+        row.retail_price ?? null,
+        row.wholesale_price ?? null,
+      )
+    }
+
+    for (const row of snapshot.stockBatches || []) {
+      db.prepare(`
+        INSERT INTO stock_batches (
+          id, product_id, initial_quantity, remaining_quantity, unit_cost, retail_price,
+          wholesale_price, source_order_id, note, received_at, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        row.id,
+        row.product_id,
+        row.initial_quantity ?? 0,
+        row.remaining_quantity ?? 0,
+        row.unit_cost ?? 0,
+        row.retail_price ?? 0,
+        row.wholesale_price ?? null,
+        row.source_order_id ?? null,
+        row.note ?? null,
+        row.received_at ?? new Date().toISOString(),
+        row.created_at ?? new Date().toISOString(),
+      )
+    }
+
+    for (const row of snapshot.savedOrders || []) {
+      db.prepare(`
+        INSERT INTO saved_orders (id, name, items_json, total, created_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        row.id,
+        row.name,
+        row.items_json ?? '[]',
+        row.total ?? 0,
+        row.created_at ?? new Date().toISOString(),
+      )
+    }
+
+    for (const row of snapshot.stockMovements || []) {
+      db.prepare(`
+        INSERT INTO stock_movements (id, product_id, type, quantity, reference_id, note, user_id, created_at, synced)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+      `).run(
+        row.id,
+        row.product_id,
+        row.type,
+        row.quantity ?? 0,
+        row.reference_id ?? null,
+        row.note ?? null,
+        row.user_id ?? null,
+        row.created_at ?? new Date().toISOString(),
+      )
+    }
+
+    for (const row of snapshot.returnEvents || []) {
+      db.prepare(`
+        INSERT INTO return_events (
+          id, order_id, order_item_id, product_id, item_name,
+          event_type, quantity, amount, cost_amount, note, user_id, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        row.id,
+        row.order_id,
+        row.order_item_id ?? null,
+        row.product_id ?? null,
+        row.item_name,
+        row.event_type,
+        row.quantity ?? 0,
+        row.amount ?? 0,
+        row.cost_amount ?? 0,
+        row.note ?? null,
+        row.user_id ?? null,
+        row.created_at ?? new Date().toISOString(),
+      )
+    }
+
+    const sharedKeys = getSharedSettingsSnapshot().map(row => row.key)
+    if (sharedKeys.length > 0) {
+      db.prepare(`DELETE FROM settings WHERE key IN (${sharedKeys.map(() => '?').join(',')})`).run(...sharedKeys)
+    }
+    for (const row of snapshot.settings || []) {
+      if (!row?.key || SHARED_SETTINGS_EXCLUDED_KEYS.has(row.key)) continue
+      db.prepare(`
+        INSERT INTO settings (key, value, updated_at)
+        VALUES (?, ?, datetime('now'))
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+      `).run(row.key, row.value ?? '')
+    }
+  })
+
+  tx()
 }
 
 function getPendingCount() {
@@ -542,10 +799,10 @@ function buildSyncMessage(tokenPresent: boolean) {
   }
 
   if (lastSyncedAt) {
-    return 'Cloud account is connected. Auto-sync is enabled for catalog, cashiers, sales, inventory, and debtor records.'
+    return 'Cloud account is connected. Auto-sync is enabled for shared business data across devices.'
   }
 
-  return 'Cloud account is connected. Auto-sync is enabled for catalog, cashiers, sales, inventory, and debtor records.'
+  return 'Cloud account is connected. Auto-sync is enabled for shared business data across devices.'
 }
 
 async function getSyncStatusPayload() {
@@ -590,6 +847,7 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
 
   try {
     const db = getDb()
+    let sharedSyncWarning: string | null = null
     const users = db.prepare(`
       SELECT id, name, pin, role, is_active
       FROM users
@@ -606,38 +864,71 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
     await axios.post(
       `${SUPABASE_FUNCTIONS_URL}/sync-catalog`,
       localCatalog,
-      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
     )
+
+    // Mark images as uploaded so we don't re-send them on every sync
+    const imageUploadedIds = localCatalog.products.filter((p: any) => p.image_data).map((p: any) => p.id)
+    if (imageUploadedIds.length > 0) {
+      db.prepare(`UPDATE products SET image_uploaded = 1 WHERE id IN (${imageUploadedIds.map(() => '?').join(',')})`).run(...imageUploadedIds)
+    }
 
     const remoteCatalog = await axios.get(
       `${SUPABASE_FUNCTIONS_URL}/sync-catalog`,
-      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
     )
 
     const pendingImages = applyCatalogSnapshot(remoteCatalog.data)
     if (pendingImages.length > 0) void downloadProductImages(pendingImages)
 
-    const syncStart = new Date().toISOString()
     const localSales = getSalesSnapshot()
+    const localShared = getSharedBusinessSnapshot()
 
     // Capture IDs of records being synced
     const syncedOrderIds = localSales.orders.map((o: any) => o.id)
     const syncedDebtorTransactionIds = localSales.debtorTransactions.map((dt: any) => dt.id)
     const syncedDebtorIds = localSales.debtors.map((d: any) => d.id)
-    const syncedStockMovementIds = localSales.stockMovements.map((sm: any) => sm.id)
 
     await axios.post(
       `${SUPABASE_FUNCTIONS_URL}/sync-sales`,
       localSales,
-      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
     )
 
+    try {
+      await axios.post(
+        `${SUPABASE_FUNCTIONS_URL}/sync-shared`,
+        localShared,
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
+      )
+    } catch (err: any) {
+      const message = err?.response?.data?.error || err?.message || 'Shared business sync is unavailable.'
+      console.warn('[sync] shared POST skipped:', message)
+      sharedSyncWarning = message
+    }
+
+    // Pull only records newer than last sync to keep payload small
+    const sinceParam = lastSyncedAt ? `?since=${encodeURIComponent(lastSyncedAt)}` : ''
     const remoteSales = await axios.get(
-      `${SUPABASE_FUNCTIONS_URL}/sync-sales`,
-      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+      `${SUPABASE_FUNCTIONS_URL}/sync-sales${sinceParam}`,
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
     )
+    let remoteShared: { data: any } | null = null
+    try {
+      remoteShared = await axios.get(
+        `${SUPABASE_FUNCTIONS_URL}/sync-shared`,
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 30000 }
+      )
+    } catch (err: any) {
+      const message = err?.response?.data?.error || err?.message || 'Shared business sync is unavailable.'
+      console.warn('[sync] shared GET skipped:', message)
+      sharedSyncWarning = sharedSyncWarning || message
+    }
 
     applySalesSnapshot(remoteSales.data)
+    if (remoteShared?.data) {
+      applySharedBusinessSnapshot(remoteShared.data)
+    }
 
     // Mark the records that were sent as synced
     if (syncedOrderIds.length > 0) {
@@ -649,9 +940,7 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
     if (syncedDebtorIds.length > 0) {
       db.prepare(`UPDATE debtors SET synced = 1 WHERE id IN (${syncedDebtorIds.map(() => '?').join(',')})`).run(...syncedDebtorIds)
     }
-    if (syncedStockMovementIds.length > 0) {
-      db.prepare(`UPDATE stock_movements SET synced = 1 WHERE id IN (${syncedStockMovementIds.map(() => '?').join(',')})`).run(...syncedStockMovementIds)
-    }
+    db.prepare(`UPDATE stock_movements SET synced = 1 WHERE synced = 0`).run()
 
     lastSyncedAt = new Date().toISOString()
     lastSyncError = null
@@ -663,7 +952,9 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
 
     return {
       success: true,
-      message: 'Cashiers, catalog, inventory, stock history, orders, and debtors synced successfully across connected devices.',
+      message: sharedSyncWarning
+        ? `Core cloud sync succeeded, but shared business sync is still unavailable: ${sharedSyncWarning}`
+        : 'Shared business data synced successfully across connected devices.',
     }
   } catch (err: any) {
     const message = err?.response?.data?.error || err?.message || 'Failed to sync with the cloud service.'

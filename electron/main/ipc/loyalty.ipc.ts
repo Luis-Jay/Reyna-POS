@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { scheduleAutoSync } from './sync.ipc'
 
 export function registerLoyaltyHandlers() {
   ipcMain.handle(IPC.LOYALTY.GET_ALL, (_, search?: string) => {
@@ -29,6 +30,7 @@ export function registerLoyaltyHandlers() {
     getDb().prepare(`
       INSERT INTO loyalty_accounts (id, name, phone) VALUES (?, ?, ?)
     `).run(id, data.name, data.phone || null)
+    scheduleAutoSync()
     return { success: true, id }
   })
 
@@ -43,6 +45,7 @@ export function registerLoyaltyHandlers() {
         VALUES (?, ?, 'earn', ?, ?, ?)
       `).run(uuid(), accountId, points, orderId || null, note || null)
     })()
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -61,6 +64,7 @@ export function registerLoyaltyHandlers() {
         VALUES (?, ?, 'redeem', ?, ?, ?)
       `).run(uuid(), accountId, points, orderId || null, note || null)
     })()
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -73,6 +77,7 @@ export function registerLoyaltyHandlers() {
         VALUES (?, ?, 'adjust', ?, ?)
       `).run(uuid(), accountId, points, note || null)
     })()
+    scheduleAutoSync()
     return { success: true }
   })
 
@@ -84,6 +89,7 @@ export function registerLoyaltyHandlers() {
 
   ipcMain.handle(IPC.LOYALTY.DELETE, (_, accountId: string) => {
     getDb().prepare(`UPDATE loyalty_accounts SET deleted_at = datetime('now') WHERE id = ?`).run(accountId)
+    scheduleAutoSync()
     return { success: true }
   })
 }

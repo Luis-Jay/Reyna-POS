@@ -1,0 +1,2 @@
+-- Placeholder to match an existing remote migration version.
+-- This keeps local migration history aligned so new migrations can be pushed.

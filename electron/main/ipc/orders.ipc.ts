@@ -231,6 +231,7 @@ export function registerOrderHandlers() {
     const id = uuid()
     db.prepare(`INSERT INTO saved_orders (id, name, items_json, total) VALUES (?, ?, ?, ?)`)
       .run(id, data.name, JSON.stringify(data.items), data.total)
+    scheduleAutoSync()
     return { success: true, id }
   })
 
@@ -240,6 +241,7 @@ export function registerOrderHandlers() {
 
   ipcMain.handle(IPC.ORDERS.DELETE_SAVED, (_, id: string) => {
     getDb().prepare(`DELETE FROM saved_orders WHERE id = ?`).run(id)
+    scheduleAutoSync()
     return { success: true }
   })
 

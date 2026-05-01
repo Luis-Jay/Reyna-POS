@@ -11,24 +11,6 @@ if (!(window as any).api) {
   ;(window as any).api = createWebApi()
 }
 
-function hasElectronApi() {
-  return typeof window !== 'undefined' && 'api' in window
-}
-
-function BrowserUnsupported() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-950 px-6 text-slate-50">
-      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center shadow-2xl">
-        <p className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-400">Reyna POS</p>
-        <h1 className="mt-4 text-3xl font-semibold">Desktop app only</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-300">
-          The web version has been removed. Open Reyna POS through the installed desktop app to continue.
-        </p>
-      </div>
-    </div>
-  )
-}
-
 const originalConsoleInfo = console.info
 console.info = (...args: unknown[]) => {
   const [firstArg] = args
@@ -44,6 +26,6 @@ console.info = (...args: unknown[]) => {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {hasElectronApi() ? <App /> : <BrowserUnsupported />}
+    <App />
   </React.StrictMode>
 )

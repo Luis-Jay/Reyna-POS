@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../stores/auth.store'
 import { ArrowLeft, LogOut } from 'lucide-react'
+import { APP_VERSION } from '../../lib/app-meta'
 
 interface TopBarProps {
   title: string
@@ -30,7 +31,12 @@ export default function TopBar({ title, back, actions }: TopBarProps) {
           )}
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-base sm:text-lg font-semibold text-white">{title}</h1>
-            <p className="text-[11px] sm:text-xs uppercase tracking-[0.24em] text-emerald-50/75">Reyna Advanced POS</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-[11px] sm:text-xs uppercase tracking-[0.24em] text-emerald-50/75">Reyna Advanced POS</p>
+              <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] font-semibold tracking-[0.12em] text-emerald-50/90">
+                Latest v{APP_VERSION}
+              </span>
+            </div>
           </div>
           {actions && (
             <div className="hidden md:flex items-center gap-2">

@@ -4,6 +4,7 @@ import axios from 'axios'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { getValidCloudToken, refreshAccessToken } from './auth.ipc'
+import { scheduleAutoSync } from './sync.ipc'
 
 // Supabase project URL — replace with your actual Supabase project ref
 // Format: https://<your-project-ref>.supabase.co/functions/v1
@@ -172,6 +173,7 @@ export function registerActivationHandlers() {
     const db = getDb()
     db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('activated', 'true')`).run()
     db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('expires_at', ?)`).run(expiresAt)
+    scheduleAutoSync()
     return { success: true }
   })
 }

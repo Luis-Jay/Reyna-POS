@@ -4,6 +4,7 @@ import { ShoppingCart, BarChart2, Package, Clock, Settings, List, Tag, UserX, Fi
 import { DashboardSnapshot } from '../../types'
 import { formatDate } from '../../utils/format'
 import { useAuthStore } from '../../stores/auth.store'
+import { APP_VERSION } from '../../lib/app-meta'
 
 type DashboardSyncState = {
   status?: string
@@ -73,7 +74,12 @@ export default function DashboardPage() {
         <div className="relative flex w-full items-end gap-4">
           <div className="flex-1">
             <p className="mb-1 text-xs font-semibold uppercase tracking-[0.28em] text-emerald-50/80">Operations Overview</p>
-            <h1 className="text-3xl font-semibold tracking-tight text-white">Admin Dashboard</h1>
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-3xl font-semibold tracking-tight text-white">Admin Dashboard</h1>
+              <span className="rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] text-emerald-50/90">
+                Latest v{APP_VERSION}
+              </span>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {cloudBusinessName && (

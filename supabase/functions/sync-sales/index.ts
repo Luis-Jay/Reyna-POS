@@ -8,7 +8,6 @@ type SalesPayload = {
   debtorTransactions?: any[]
   orders?: any[]
   orderItems?: any[]
-  stockMovements?: any[]
 }
 
 Deno.serve(async (req) => {
@@ -137,25 +136,6 @@ Deno.serve(async (req) => {
         if (error) return json({ error: `Failed to sync debtor transactions: ${error.message}` }, 500)
       }
 
-      if (stockMovements.length > 0) {
-        const valid = stockMovements.filter(m => typeof m.id === 'string' && m.id.trim())
-        const { error } = await supabase.from('sales_stock_movements').upsert(
-          valid.map(m => ({
-            id: m.id,
-            business_id: businessId,
-            product_id: m.product_id,
-            type: m.type,
-            quantity: m.quantity ?? 0,
-            note: m.note ?? null,
-            reference_id: m.reference_id ?? null,
-            user_id: m.user_id ?? null,
-            created_at: m.created_at ?? new Date().toISOString(),
-          })),
-          { onConflict: 'id' }
-        )
-        if (error) return json({ error: `Failed to sync stock movements: ${error.message}` }, 500)
-      }
-
       return json({ success: true })
     }
 
@@ -163,21 +143,28 @@ Deno.serve(async (req) => {
       return json({ error: 'Method not allowed' }, 405)
     }
 
+    const url = new URL(req.url)
+    const since = url.searchParams.get('since')
+    // Default to last 90 days on first sync; subsequent syncs pass their last sync time
+    const cutoff = since ?? new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
+
     const [
       { data: debtors, error: debtorsError },
       { data: debtorTransactions, error: debtorTransactionsError },
       { data: orders, error: ordersError },
-      { data: orderItems, error: orderItemsError },
-      { data: stockMovements, error: stockMovementsError },
     ] = await Promise.all([
       supabase.from('sales_debtors').select('*').eq('business_id', businessId),
-      supabase.from('sales_debtor_transactions').select('*').eq('business_id', businessId),
-      supabase.from('sales_orders').select('*').eq('business_id', businessId),
-      supabase.from('sales_order_items').select('*').eq('business_id', businessId),
-      supabase.from('sales_stock_movements').select('*').eq('business_id', businessId),
+      supabase.from('sales_debtor_transactions').select('*').eq('business_id', businessId).gte('created_at', cutoff),
+      supabase.from('sales_orders').select('*').eq('business_id', businessId).gte('created_at', cutoff),
     ])
 
-    const firstError = debtorsError || debtorTransactionsError || ordersError || orderItemsError || stockMovementsError
+    // Only fetch items for the orders being returned
+    const orderIds = (orders ?? []).map((o: any) => o.id)
+    const { data: orderItems, error: orderItemsError } = orderIds.length > 0
+      ? await supabase.from('sales_order_items').select('*').in('order_id', orderIds)
+      : { data: [], error: null }
+
+    const firstError = debtorsError || debtorTransactionsError || ordersError || orderItemsError
     if (firstError) {
       return json({ error: firstError.message }, 500)
     }
@@ -187,7 +174,6 @@ Deno.serve(async (req) => {
       debtorTransactions: debtorTransactions ?? [],
       orders: orders ?? [],
       orderItems: orderItems ?? [],
-      stockMovements: stockMovements ?? [],
     })
   } catch (err) {
     console.error(err)

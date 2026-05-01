@@ -18,6 +18,9 @@ verify_jwt = false
 [functions.sync-sales]
 verify_jwt = false
 
+[functions.sync-shared]
+verify_jwt = false
+
 [functions.business-setup]
 verify_jwt = false
 
