@@ -1,3 +1,4 @@
+import { v4 as uuid } from 'uuid'
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
 
@@ -6,7 +7,7 @@ export const priceTiersApi = {
     try {
       const businessId = await getBusinessId()
       const { data } = await supabase
-        .from('price_tiers')
+        .from('catalog_product_price_tiers')
         .select('*')
         .eq('product_id', productId)
         .eq('business_id', businessId)
@@ -21,17 +22,20 @@ export const priceTiersApi = {
     try {
       const businessId = await getBusinessId()
       // Replace all tiers for this product
-      await supabase.from('price_tiers')
+      await supabase.from('catalog_product_price_tiers')
         .delete().eq('product_id', productId).eq('business_id', businessId)
 
       if (tiers.length > 0) {
-        await supabase.from('price_tiers').insert(
+        await supabase.from('catalog_product_price_tiers').insert(
           tiers.map(t => ({
+            id: uuid(),
             business_id: businessId,
             product_id: productId,
             min_qty: t.min_qty,
             price: t.price,
             label: t.label || null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
           }))
         )
       }
@@ -44,7 +48,7 @@ export const priceTiersApi = {
   delete: async (productId: string) => {
     try {
       const businessId = await getBusinessId()
-      await supabase.from('price_tiers')
+      await supabase.from('catalog_product_price_tiers')
         .delete().eq('product_id', productId).eq('business_id', businessId)
       return { success: true }
     } catch {

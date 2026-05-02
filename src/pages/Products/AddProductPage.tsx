@@ -340,9 +340,14 @@ export default function AddProductPage() {
               >
                 <ImageIcon size={14} />
                 <span className="sm:hidden">Choose from Gallery</span>
-                <span className="hidden sm:inline">Upload image</span>
+                <span className="hidden sm:inline">{imagePreview ? 'Replace image' : 'Upload image'}</span>
               </button>
             </div>
+            <p className="text-center text-xs text-gray-400">
+              {imagePreview
+                ? (isEdit ? 'This product already has a photo. Use the buttons above to replace it.' : 'Photo selected. You can replace it before saving.')
+                : 'Add a photo so this product is easier to spot on the selling floor.'}
+            </p>
           </div>
 
           {/* Form fields */}

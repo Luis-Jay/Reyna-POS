@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Product } from '../../types'
-import { Check, Plus, Tag, Type, Barcode, DollarSign, LayoutGrid, X, Upload, Wand2 } from 'lucide-react'
+import { Check, Plus, Tag, Type, Barcode, DollarSign, LayoutGrid, X, Upload, Wand2, ImageIcon } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
 
 type Tab = 'prices' | 'names' | 'barcodes' | 'costs'
@@ -285,6 +285,15 @@ export default function BulkEditPricesPage() {
                       />
                     </div>
                   )}
+                  <div className="mt-3 flex justify-end" onClick={e => e.stopPropagation()}>
+                    <button
+                      onClick={() => navigate(`/products/${p.id}/edit`)}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                    >
+                      <ImageIcon size={13} />
+                      Edit Photo
+                    </button>
+                  </div>
                 </div>
               )
             })}

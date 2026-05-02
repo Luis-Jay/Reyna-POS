@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
 import { InventoryItem, VariationGroup } from '../../types'
-import { Plus, FileText, ShoppingCart, X, PackageCheck, Clock, FileSpreadsheet, Printer } from 'lucide-react'
+import { Plus, FileText, ShoppingCart, X, PackageCheck, Clock, FileSpreadsheet, Printer, ImageIcon } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
 import { exportToExcel, exportToPdf } from '../../utils/export'
 
@@ -414,6 +414,15 @@ export default function InventoryPage() {
                       {tier.quantity} pcs • R ₱{tier.retail_price.toFixed(2)} • W ₱{tier.wholesale_price.toFixed(2)}
                     </span>
                   ))}
+                </div>
+                <div className="mt-3">
+                  <button
+                    onClick={() => navigate(`/products/${item.product_id}/edit`)}
+                    className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                  >
+                    <ImageIcon size={13} />
+                    Edit Photo
+                  </button>
                 </div>
               </div>
 

@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import { v4 as uuid } from 'uuid'
 import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
+import { scheduleAutoSync } from './sync.ipc'
 
 export function registerPriceTierHandlers() {
   ipcMain.handle(IPC.PRICE_TIERS.GET, (_, productId: string) => {
@@ -19,11 +20,13 @@ export function registerPriceTierHandlers() {
           .run(uuid(), productId, t.min_qty, t.price, t.label || null)
       }
     })()
+    scheduleAutoSync()
     return { success: true }
   })
 
   ipcMain.handle(IPC.PRICE_TIERS.DELETE, (_, productId: string) => {
     getDb().prepare(`DELETE FROM product_price_tiers WHERE product_id = ?`).run(productId)
+    scheduleAutoSync()
     return { success: true }
   })
 }

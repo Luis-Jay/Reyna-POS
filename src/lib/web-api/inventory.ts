@@ -13,6 +13,7 @@ function normalizeInventoryRow(product: any) {
   const inventory = product.catalog_inventory?.[0]
   const quantity = Number(inventory?.quantity ?? 0)
   const lowThreshold = Number(inventory?.low_threshold ?? 5)
+  const trackInventory = !!product.track_inventory
 
   return {
     id: inventory?.id ?? `missing-${product.id}`,
@@ -31,6 +32,10 @@ function normalizeInventoryRow(product: any) {
     status: stockStatus(quantity, lowThreshold),
     category_name: product.catalog_categories?.name ?? null,
     description: product.description ?? null,
+    has_variations: product.has_variations ? 1 : 0,
+    variation_group_id: product.variation_group_id ?? null,
+    variation_group_name: product.catalog_variation_groups?.name ?? null,
+    track_inventory: trackInventory ? 1 : 0,
   }
 }
 
@@ -38,7 +43,13 @@ async function fetchProducts(businessId: string) {
   // Try with image_url first; fall back without it if the column doesn't exist yet
   const full = await supabase
     .from('catalog_products')
-    .select('id, name, image_url, image_data, barcode, base_price, base_cost, retail_price, wholesale_price, monthly_sold, description, updated_at, is_active, deleted_at, track_inventory')
+    .select(`
+      id, name, image_url, image_data, barcode, base_price, base_cost, retail_price,
+      wholesale_price, monthly_sold, description, updated_at, is_active, deleted_at,
+      track_inventory, has_variations, variation_group_id,
+      catalog_categories(name),
+      catalog_variation_groups(name)
+    `)
     .eq('business_id', businessId)
   if (!full.error) return full
 
@@ -46,7 +57,13 @@ async function fetchProducts(businessId: string) {
   console.warn('[inventory] catalog_products query failed, retrying without image_url:', full.error.message)
   return supabase
     .from('catalog_products')
-    .select('id, name, image_data, barcode, base_price, base_cost, retail_price, wholesale_price, monthly_sold, description, updated_at, is_active, deleted_at, track_inventory')
+    .select(`
+      id, name, image_data, barcode, base_price, base_cost, retail_price, wholesale_price,
+      monthly_sold, description, updated_at, is_active, deleted_at, track_inventory,
+      has_variations, variation_group_id,
+      catalog_categories(name),
+      catalog_variation_groups(name)
+    `)
     .eq('business_id', businessId)
 }
 
@@ -79,15 +96,15 @@ export const inventoryApi = {
       }))
 
       let rows = merged
-        .filter(p => !p.deleted_at && p.is_active && p.track_inventory)
+        .filter(p => !p.deleted_at && p.is_active)
         .map(normalizeInventoryRow)
 
       if (filter === 'Low Stock' || filter === 'low') {
-        rows = rows.filter(r => r.status === 'low' || r.status === 'critical' || r.status === 'out')
+        rows = rows.filter(r => r.track_inventory && (r.status === 'low' || r.status === 'critical' || r.status === 'out'))
       } else if (filter === 'Out of Stock' || filter === 'out') {
-        rows = rows.filter(r => r.status === 'out')
+        rows = rows.filter(r => r.track_inventory && r.status === 'out')
       } else if (filter === 'Critical' || filter === 'critical') {
-        rows = rows.filter(r => r.status === 'critical')
+        rows = rows.filter(r => r.track_inventory && r.status === 'critical')
       } else if (filter === 'Fast Moving') {
         rows = [...rows].sort((a, b) => (b.monthly_sold ?? 0) - (a.monthly_sold ?? 0))
       } else {
