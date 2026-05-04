@@ -209,7 +209,14 @@ export default function InventoryPage() {
       })
     } else {
       if (qty < 0) return
-      await window.api.inventory.setStock(productId, qty)
+      const uc = parseFloat(stockUnitCost)
+      const rp = parseFloat(stockRetailPrice)
+      const wp = parseFloat(stockWholesalePrice)
+      await window.api.inventory.setStock(productId, qty, undefined, {
+        unit_cost:       isNaN(uc) ? undefined : uc,
+        retail_price:    isNaN(rp) ? undefined : rp,
+        wholesale_price: isNaN(wp) ? undefined : wp,
+      })
     }
     closeEdit()
     load()
@@ -218,16 +225,10 @@ export default function InventoryPage() {
   const handleSaveProductSetup = async (productId: string) => {
     setSavingSetup(true)
     try {
-      const newCost = parseFloat(stockUnitCost)
-      const newRetail = parseFloat(stockRetailPrice)
-      const newWholesale = parseFloat(stockWholesalePrice)
       await window.api.products.update(productId, {
         has_variations: setupHasVariations,
         variation_group_id: setupHasVariations ? (setupVariationGroupId || null) : null,
         track_inventory: setupTrackInventory,
-        ...(!isNaN(newCost)     && { base_cost: newCost }),
-        ...(!isNaN(newRetail)   && { retail_price: newRetail, base_price: newRetail }),
-        ...(!isNaN(newWholesale) && { wholesale_price: newWholesale }),
       })
 
       const validTiers = setupPriceTiers
@@ -465,11 +466,17 @@ export default function InventoryPage() {
                     >{editMode === 'add' ? 'Add' : 'Set'}</button>
                     <button onClick={closeEdit} className="text-gray-400 hover:text-gray-600 px-1">✕</button>
                   </div>
-                  {editMode === 'add' && (
+                  {(editMode === 'add' || editMode === 'set') && (
                     <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
                       <div className="mb-2">
-                        <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-800">Incoming Batch Pricing</p>
-                        <p className="text-[11px] text-emerald-700/80">These values are saved only when you enter a quantity and tap Add. Defaults come from the latest saved batch.</p>
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-800">
+                          {editMode === 'add' ? 'Incoming Batch Pricing' : 'New Stock Pricing'}
+                        </p>
+                        <p className="text-[11px] text-emerald-700/80">
+                          {editMode === 'add'
+                            ? 'These values are saved only when you enter a quantity and tap Add. Defaults come from the latest saved batch.'
+                            : 'If stock increased, the added qty will be recorded as a new batch with these prices.'}
+                        </p>
                       </div>
                       <div className="grid grid-cols-3 gap-2">
                         <label className="block">

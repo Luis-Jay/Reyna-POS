@@ -116,7 +116,7 @@ export function registerInventoryHandlers() {
     return { success: true }
   })
 
-  ipcMain.handle(IPC.INVENTORY.SET_STOCK, (_, productId: string, qty: number, note?: string) => {
+  ipcMain.handle(IPC.INVENTORY.SET_STOCK, (_, productId: string, qty: number, note?: string, pricing?: any) => {
     const db = getDb()
     const tx = db.transaction(() => {
       const inv: any = db.prepare(`SELECT * FROM inventory WHERE product_id = ?`).get(productId)
@@ -136,6 +136,9 @@ export function registerInventoryHandlers() {
       if (diff > 0) {
         addStockBatch(db, productId, {
           quantity: diff,
+          unitCost: pricing?.unit_cost,
+          retailPrice: pricing?.retail_price,
+          wholesalePrice: pricing?.wholesale_price,
           note: note || `Set stock to ${qty}`,
         })
       } else if (diff < 0) {
