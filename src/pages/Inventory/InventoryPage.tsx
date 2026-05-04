@@ -171,14 +171,16 @@ export default function InventoryPage() {
   const openEdit = async (item: InventoryItem) => {
     const requestId = editRequestRef.current + 1
     editRequestRef.current = requestId
-    const activeTier = item.price_tiers?.[0]
+    const latestTier = item.price_tiers?.length
+      ? item.price_tiers[item.price_tiers.length - 1]
+      : null
     setEditingId(item.product_id)
     activeEditProductIdRef.current = item.product_id
     setEditMode('add')
     setStockQty('')
-    setStockUnitCost(String(activeTier?.unit_cost ?? item.base_cost ?? 0))
-    setStockRetailPrice(String(activeTier?.retail_price ?? item.retail_price ?? item.base_price ?? 0))
-    setStockWholesalePrice(String(activeTier?.wholesale_price ?? item.wholesale_price ?? item.retail_price ?? item.base_price ?? 0))
+    setStockUnitCost(String(latestTier?.unit_cost ?? item.base_cost ?? 0))
+    setStockRetailPrice(String(latestTier?.retail_price ?? item.retail_price ?? item.base_price ?? 0))
+    setStockWholesalePrice(String(latestTier?.wholesale_price ?? item.wholesale_price ?? item.retail_price ?? item.base_price ?? 0))
     setSetupHasVariations(!!item.has_variations)
     setSetupVariationGroupId(item.variation_group_id || '')
     setSetupTrackInventory(item.track_inventory !== 0)
@@ -197,10 +199,13 @@ export default function InventoryPage() {
     const qty = parseFloat(stockQty)
     if (isNaN(qty)) return
     if (editMode === 'add') {
+      const uc = parseFloat(stockUnitCost)
+      const rp = parseFloat(stockRetailPrice)
+      const wp = parseFloat(stockWholesalePrice)
       await window.api.inventory.addStock(productId, qty, undefined, {
-        unit_cost: parseFloat(stockUnitCost) || 0,
-        retail_price: parseFloat(stockRetailPrice) || 0,
-        wholesale_price: parseFloat(stockWholesalePrice) || parseFloat(stockRetailPrice) || 0,
+        unit_cost:       isNaN(uc) ? 0 : uc,
+        retail_price:    isNaN(rp) ? 0 : rp,
+        wholesale_price: isNaN(wp) ? (isNaN(rp) ? 0 : rp) : wp,
       })
     } else {
       if (qty < 0) return
@@ -213,10 +218,16 @@ export default function InventoryPage() {
   const handleSaveProductSetup = async (productId: string) => {
     setSavingSetup(true)
     try {
+      const newCost = parseFloat(stockUnitCost)
+      const newRetail = parseFloat(stockRetailPrice)
+      const newWholesale = parseFloat(stockWholesalePrice)
       await window.api.products.update(productId, {
         has_variations: setupHasVariations,
         variation_group_id: setupHasVariations ? (setupVariationGroupId || null) : null,
         track_inventory: setupTrackInventory,
+        ...(!isNaN(newCost)     && { base_cost: newCost }),
+        ...(!isNaN(newRetail)   && { retail_price: newRetail, base_price: newRetail }),
+        ...(!isNaN(newWholesale) && { wholesale_price: newWholesale }),
       })
 
       const validTiers = setupPriceTiers
@@ -411,7 +422,7 @@ export default function InventoryPage() {
                     received_at: item.updated_at,
                   }]).map(tier => (
                     <span key={tier.id} className="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-600">
-                      {tier.quantity} pcs • R ₱{tier.retail_price.toFixed(2)} • W ₱{tier.wholesale_price.toFixed(2)}
+                      {tier.quantity} pcs • C ₱{tier.unit_cost.toFixed(2)} • R ₱{tier.retail_price.toFixed(2)} • W ₱{tier.wholesale_price.toFixed(2)}
                     </span>
                   ))}
                 </div>
@@ -455,34 +466,49 @@ export default function InventoryPage() {
                     <button onClick={closeEdit} className="text-gray-400 hover:text-gray-600 px-1">✕</button>
                   </div>
                   {editMode === 'add' && (
-                    <div className="grid grid-cols-3 gap-2">
-                      <input
-                        value={stockUnitCost}
-                        onChange={e => setStockUnitCost(e.target.value)}
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="Cost"
-                        className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs focus:outline-none"
-                      />
-                      <input
-                        value={stockRetailPrice}
-                        onChange={e => setStockRetailPrice(e.target.value)}
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="Retail"
-                        className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs focus:outline-none"
-                      />
-                      <input
-                        value={stockWholesalePrice}
-                        onChange={e => setStockWholesalePrice(e.target.value)}
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="Wholesale"
-                        className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-center text-xs focus:outline-none"
-                      />
+                    <div className="w-full rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+                      <div className="mb-2">
+                        <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-800">Incoming Batch Pricing</p>
+                        <p className="text-[11px] text-emerald-700/80">These values are saved only when you enter a quantity and tap Add. Defaults come from the latest saved batch.</p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Cost</span>
+                          <input
+                            value={stockUnitCost}
+                            onChange={e => setStockUnitCost(e.target.value)}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center text-xs focus:outline-none"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Retail</span>
+                          <input
+                            value={stockRetailPrice}
+                            onChange={e => setStockRetailPrice(e.target.value)}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center text-xs focus:outline-none"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-slate-500">Wholesale</span>
+                          <input
+                            value={stockWholesalePrice}
+                            onChange={e => setStockWholesalePrice(e.target.value)}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-center text-xs focus:outline-none"
+                          />
+                        </label>
+                      </div>
                     </div>
                   )}
                   <div className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-left">

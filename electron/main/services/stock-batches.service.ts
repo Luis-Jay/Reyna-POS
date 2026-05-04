@@ -95,9 +95,9 @@ export function addStockBatch(db: Database.Database, productId: string, data: Ba
   const product = getProductPricing(db, productId)
   if (!product) return
 
-  const retailPrice = data.retailPrice ?? product.retail_price ?? 0
-  const wholesalePrice = data.wholesalePrice ?? product.wholesale_price ?? retailPrice
-  const unitCost = data.unitCost ?? product.base_cost ?? 0
+  const retailPrice = data.retailPrice != null ? data.retailPrice : (product.retail_price ?? 0)
+  const wholesalePrice = data.wholesalePrice != null ? data.wholesalePrice : (product.wholesale_price ?? retailPrice)
+  const unitCost = data.unitCost != null ? data.unitCost : (product.base_cost ?? 0)
 
   db.prepare(`
     INSERT INTO stock_batches (

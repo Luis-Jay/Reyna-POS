@@ -91,9 +91,15 @@ export const productOrdersApi = {
   receive: async (id: string) => {
     try {
       const businessId = await getBusinessId()
-      const { data: order } = await supabase
-        .from('product_orders').select('*').eq('id', id).single()
+      const { data: order } = await supabase.from('product_orders').select('*').eq('id', id).single()
       if (!order || order.status !== 'pending') return { ok: false }
+
+      const { data: product } = await supabase
+        .from('catalog_products')
+        .select('id, base_cost, retail_price, wholesale_price')
+        .eq('id', order.product_id)
+        .eq('business_id', businessId)
+        .maybeSingle()
 
       // Update inventory
       const { data: inv } = await supabase
@@ -111,13 +117,31 @@ export const productOrdersApi = {
         })
       }
 
-      // Update product prices if provided
-      if (order.retail_price != null || order.wholesale_price != null || order.unit_cost != null) {
-        const priceUpdate: any = { updated_at: new Date().toISOString() }
-        if (order.retail_price != null) priceUpdate.retail_price = order.retail_price
-        if (order.wholesale_price != null) priceUpdate.wholesale_price = order.wholesale_price
-        if (order.unit_cost != null) priceUpdate.base_cost = order.unit_cost
-        await supabase.from('catalog_products').update(priceUpdate)
+      const unitCost = Number(order.unit_cost ?? product?.base_cost ?? 0)
+      const retailPrice = Number(order.retail_price ?? product?.retail_price ?? 0)
+      const wholesalePrice = Number(order.wholesale_price ?? product?.wholesale_price ?? retailPrice)
+
+      await supabase.from('stock_batches').insert({
+        id: uuid(),
+        business_id: businessId,
+        product_id: order.product_id,
+        initial_quantity: order.quantity,
+        remaining_quantity: order.quantity,
+        unit_cost: unitCost,
+        retail_price: retailPrice,
+        wholesale_price: wholesalePrice,
+        source_order_id: order.id,
+        note: `Received order from ${order.vendor_name || 'vendor'}`,
+      })
+
+      if ((inv?.quantity ?? 0) <= 0) {
+        await supabase.from('catalog_products').update({
+          base_cost: unitCost,
+          retail_price: retailPrice,
+          base_price: retailPrice,
+          wholesale_price: wholesalePrice,
+          updated_at: new Date().toISOString(),
+        })
           .eq('id', order.product_id).eq('business_id', businessId)
       }
 
