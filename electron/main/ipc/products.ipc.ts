@@ -129,37 +129,43 @@ export function registerProductHandlers() {
   // UPDATE
   ipcMain.handle(IPC.PRODUCTS.UPDATE, (_, id: string, data: any) => {
     const db = getDb()
-    db.prepare(`
-      UPDATE products SET
-        name = COALESCE(?, name),
-        description = COALESCE(?, description),
-        image_path = COALESCE(?, image_path),
-        barcode = ?,
-        category_id = ?,
-        base_price = COALESCE(?, base_price),
-        retail_price = COALESCE(?, retail_price),
-        wholesale_price = COALESCE(?, wholesale_price),
-        base_cost = COALESCE(?, base_cost),
-        markup_pct = ?,
-        has_variations = COALESCE(?, has_variations),
-        variation_group_id = ?,
-        allow_fractions = COALESCE(?, allow_fractions),
-        track_inventory = COALESCE(?, track_inventory),
-        updated_at = datetime('now')
-      WHERE id = ?
-    `).run(data.name, data.description, data.image_path,
-           data.barcode !== undefined ? data.barcode : undefined,
-           data.category_id !== undefined ? data.category_id : undefined,
-           data.retail_price ?? data.base_price,
-           data.retail_price ?? data.base_price,
-           data.wholesale_price,
-           data.base_cost,
-           data.markup_pct !== undefined ? data.markup_pct : null,
-           data.has_variations != null ? (data.has_variations ? 1 : 0) : null,
-           data.variation_group_id !== undefined ? data.variation_group_id : undefined,
-           data.allow_fractions != null ? (data.allow_fractions ? 1 : 0) : null,
-           data.track_inventory != null ? (data.track_inventory ? 1 : 0) : null,
-           id)
+    const tx = db.transaction(() => {
+      db.prepare(`
+        UPDATE products SET
+          name = COALESCE(?, name),
+          description = COALESCE(?, description),
+          image_path = COALESCE(?, image_path),
+          barcode = ?,
+          category_id = ?,
+          base_price = COALESCE(?, base_price),
+          retail_price = COALESCE(?, retail_price),
+          wholesale_price = COALESCE(?, wholesale_price),
+          base_cost = COALESCE(?, base_cost),
+          markup_pct = ?,
+          has_variations = COALESCE(?, has_variations),
+          variation_group_id = ?,
+          allow_fractions = COALESCE(?, allow_fractions),
+          track_inventory = COALESCE(?, track_inventory),
+          updated_at = datetime('now')
+        WHERE id = ?
+      `).run(data.name, data.description, data.image_path,
+             data.barcode !== undefined ? data.barcode : undefined,
+             data.category_id !== undefined ? data.category_id : undefined,
+             data.retail_price ?? data.base_price,
+             data.retail_price ?? data.base_price,
+             data.wholesale_price,
+             data.base_cost,
+             data.markup_pct !== undefined ? data.markup_pct : null,
+             data.has_variations != null ? (data.has_variations ? 1 : 0) : null,
+             data.variation_group_id !== undefined ? data.variation_group_id : undefined,
+             data.allow_fractions != null ? (data.allow_fractions ? 1 : 0) : null,
+             data.track_inventory != null ? (data.track_inventory ? 1 : 0) : null,
+             id)
+
+      // Keep product defaults editable without rewriting historical stock batches.
+      // New restocks should create their own batch with their own cost/prices.
+    })
+    tx()
     scheduleAutoSync()
     return { success: true }
   })

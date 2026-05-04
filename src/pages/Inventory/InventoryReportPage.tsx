@@ -62,16 +62,35 @@ export default function InventoryReportPage() {
   }
 
   const getBatchEntries = (row: ReportRow) => {
-    if (row.price_tiers?.length) return row.price_tiers
-    return [{
-      id: `fallback-${row.product_id}`,
-      quantity: row.quantity,
-      unit_cost: row.base_cost,
-      retail_price: row.retail_price,
-      wholesale_price: row.wholesale_price,
-      received_at: '',
-      note: 'Current stock pricing',
-    }]
+    if (!row.price_tiers?.length) {
+      return [{
+        id: `fallback-${row.product_id}`,
+        quantity: row.quantity,
+        unit_cost: row.base_cost,
+        retail_price: row.retail_price,
+        wholesale_price: row.wholesale_price,
+        received_at: '',
+        note: null,
+      }]
+    }
+    // If tracked batch qty < actual inventory qty, add the untracked remainder
+    const batchTotal = row.price_tiers.reduce((sum, t) => sum + t.quantity, 0)
+    const untracked = Math.round((row.quantity - batchTotal) * 1000) / 1000
+    if (untracked > 0.001) {
+      return [
+        ...row.price_tiers,
+        {
+          id: `untracked-${row.product_id}`,
+          quantity: untracked,
+          unit_cost: row.base_cost,
+          retail_price: row.retail_price,
+          wholesale_price: row.wholesale_price,
+          received_at: '',
+          note: 'Prior stock',
+        },
+      ]
+    }
+    return row.price_tiers
   }
 
   const getRowCostValue = (row: ReportRow) => getBatchEntries(row)
@@ -101,24 +120,40 @@ export default function InventoryReportPage() {
   const totalCostValue = rows.reduce((s, r) => s + getRowCostValue(r), 0)
   const totalRetailValue = rows.reduce((s, r) => s + getRowRetailValue(r), 0)
 
+  const buildDocRows = (colCount: number, tdStyle: string, subTdStyle: string) =>
+    rows.map(r => {
+      const batches = getBatchEntries(r)
+      const batchSubRows = batches.map((tier, i) => `
+        <tr>
+          <td colspan="${colCount}" style="${subTdStyle}">
+            <span style="color:#94a3b8;margin-right:4px;">↳ Batch ${i + 1}:</span>
+            ${tier.quantity} pcs &nbsp;•&nbsp; Cost ${formatMoney(tier.unit_cost)} &nbsp;•&nbsp; Retail ${formatMoney(tier.retail_price)} &nbsp;•&nbsp; Wholesale ${formatMoney(tier.wholesale_price)}${tier.received_at ? ` &nbsp;•&nbsp; Rcvd ${formatBatchDate(tier.received_at)}` : ''}${tier.note ? ` &nbsp;•&nbsp; <em>${tier.note}</em>` : ''}
+          </td>
+        </tr>`).join('')
+      return `
+        <tr>
+          <td style="${tdStyle}">${r.barcode ?? '—'}</td>
+          <td style="${tdStyle}">${r.product_name}</td>
+          <td style="${tdStyle}">${r.category_name ?? '—'}</td>
+          <td style="${tdStyle};text-align:right">${r.quantity}</td>
+          <td style="${tdStyle};text-align:right">${formatMoney(r.base_cost)}</td>
+          <td style="${tdStyle};text-align:right">${formatMoney(r.retail_price)}</td>
+          <td style="${tdStyle};text-align:right">${formatMoney(r.wholesale_price)}</td>
+          <td style="${tdStyle};text-align:right">${formatMoney(getRowCostValue(r))}</td>
+        </tr>
+        ${batchSubRows}`
+    }).join('')
+
   const handlePrint = () => {
     const logoHtml = settings.store_logo_data
       ? `<img src="${settings.store_logo_data}" style="width:80px;height:80px;object-fit:cover;border-radius:4px;" />`
       : ''
 
-    const tableRows = rows.map(r => `
-      <tr>
-        <td>${r.barcode ?? '—'}</td>
-        <td>${r.product_name}</td>
-        <td>${r.category_name ?? '—'}</td>
-        <td style="text-align:right">${r.quantity}</td>
-        <td style="text-align:right">${formatMoney(r.base_cost)}</td>
-        <td style="text-align:right">${formatMoney(r.retail_price)}</td>
-        <td style="text-align:right">${formatMoney(r.wholesale_price)}</td>
-        <td style="text-align:right">${formatMoney(getRowCostValue(r))}</td>
-        <td>${batchDetailsHtml(r)}</td>
-      </tr>
-    `).join('')
+    const tableRows = buildDocRows(
+      8,
+      'padding:5px 8px;border-bottom:1px solid #eee;font-size:11px;',
+      'padding:3px 8px 3px 20px;border-bottom:1px solid #f5f5f5;font-size:10px;color:#64748b;background:#fafafa;'
+    )
 
     const html = `
       <div style="text-align:center;margin-bottom:16px;">
@@ -131,18 +166,17 @@ export default function InventoryReportPage() {
         <span style="font-size:11px;color:#555;">Printed at: ${printedAt}</span>
         <strong style="font-size:13px;">TOTAL INVENTORY REPORT</strong>
       </div>
-      <table>
+      <table style="width:100%;border-collapse:collapse;">
         <thead>
-          <tr>
-            <th>Product Code</th>
-            <th>Description</th>
-            <th>Category</th>
-            <th style="text-align:right">Total Qty</th>
-            <th style="text-align:right">Cost (₱)</th>
-            <th style="text-align:right">Retail Price (₱)</th>
-            <th style="text-align:right">Wholesale (₱)</th>
-            <th style="text-align:right">Batch Cost Value (₱)</th>
-            <th>Batch Details</th>
+          <tr style="background:#1e293b;color:#fff;">
+            <th style="padding:7px 8px;text-align:left;font-size:11px;">Product Code</th>
+            <th style="padding:7px 8px;text-align:left;font-size:11px;">Description</th>
+            <th style="padding:7px 8px;text-align:left;font-size:11px;">Category</th>
+            <th style="padding:7px 8px;text-align:right;font-size:11px;">Total Qty</th>
+            <th style="padding:7px 8px;text-align:right;font-size:11px;">Cost (₱)</th>
+            <th style="padding:7px 8px;text-align:right;font-size:11px;">Retail (₱)</th>
+            <th style="padding:7px 8px;text-align:right;font-size:11px;">Wholesale (₱)</th>
+            <th style="padding:7px 8px;text-align:right;font-size:11px;">Cost Value (₱)</th>
           </tr>
         </thead>
         <tbody>${tableRows}</tbody>
@@ -150,27 +184,23 @@ export default function InventoryReportPage() {
       <p style="font-size:10px;color:#888;margin-top:8px;">Total products: ${rows.length}</p>
       <table style="width:auto;margin-top:12px;">
         <tr>
-          <td style="padding:6px 16px 6px 0;font-size:11px;color:#555;">Total Items in Stock</td>
-          <td style="padding:6px 0;font-size:11px;font-weight:bold;">${totalQty.toLocaleString('en-PH')}</td>
+          <td style="padding:5px 20px 5px 0;font-size:11px;color:#555;">Total Items in Stock</td>
+          <td style="padding:5px 0;font-size:11px;font-weight:bold;">${totalQty.toLocaleString('en-PH')}</td>
         </tr>
         <tr>
-          <td style="padding:6px 16px 6px 0;font-size:11px;color:#555;">Total Value at Cost</td>
-          <td style="padding:6px 0;font-size:11px;font-weight:bold;">${formatMoney(totalCostValue)}</td>
+          <td style="padding:5px 20px 5px 0;font-size:12px;color:#1d4ed8;font-weight:600;">Total Value at Cost</td>
+          <td style="padding:5px 0;font-size:13px;font-weight:700;color:#1d4ed8;">${formatMoney(totalCostValue)}</td>
         </tr>
         <tr>
-          <td style="padding:6px 16px 6px 0;font-size:11px;color:#555;">Total Value at Retail</td>
-          <td style="padding:6px 0;font-size:11px;font-weight:bold;">${formatMoney(totalRetailValue)}</td>
+          <td style="padding:5px 20px 5px 0;font-size:12px;color:#059669;font-weight:600;">Total Value at Retail</td>
+          <td style="padding:5px 0;font-size:13px;font-weight:700;color:#059669;">${formatMoney(totalRetailValue)}</td>
         </tr>
       </table>
     `
 
     void window.api.documents.printHtml({
       title: 'Inventory Report',
-      html: `
-        <section style="padding:18mm 16mm;background:#fff;color:#111;">
-          ${html}
-        </section>
-      `,
+      html: `<section style="padding:18mm 16mm;background:#fff;color:#111;">${html}</section>`,
     })
   }
 
@@ -178,18 +208,27 @@ export default function InventoryReportPage() {
     exportToExcel([
       {
         name: 'Inventory Report',
-        rows: rows.map(r => ({
-          'Product Code': r.barcode ?? '',
-          'Description':  r.product_name,
-          'Category':     r.category_name ?? '',
-          'Total Qty':    r.quantity,
-          'Current Cost (₱)': r.base_cost,
-          'Retail Price (₱)': r.retail_price,
-          'Wholesale (₱)': r.wholesale_price,
-          'Batch Cost Value (₱)': getRowCostValue(r),
-          'Batch Retail Value (₱)': getRowRetailValue(r),
-          'Batch Details': batchDetailsText(r),
-        })),
+        rows: [
+          ...rows.map(r => ({
+            'Product Code': r.barcode ?? '',
+            'Description':  r.product_name,
+            'Category':     r.category_name ?? '',
+            'Total Qty':    r.quantity,
+            'Current Cost (₱)': r.base_cost,
+            'Retail Price (₱)': r.retail_price,
+            'Wholesale (₱)': r.wholesale_price,
+            'Batch Cost Value (₱)': getRowCostValue(r),
+            'Batch Retail Value (₱)': getRowRetailValue(r),
+            'Batch Details': batchDetailsText(r),
+          })),
+          // blank separator
+          { 'Product Code': '', 'Description': '', 'Category': '', 'Total Qty': '', 'Current Cost (₱)': '', 'Retail Price (₱)': '', 'Wholesale (₱)': '', 'Batch Cost Value (₱)': '', 'Batch Retail Value (₱)': '', 'Batch Details': '' },
+          { 'Product Code': 'SUMMARY', 'Description': '', 'Category': '', 'Total Qty': '', 'Current Cost (₱)': '', 'Retail Price (₱)': '', 'Wholesale (₱)': '', 'Batch Cost Value (₱)': '', 'Batch Retail Value (₱)': '', 'Batch Details': '' },
+          { 'Product Code': 'Total Products', 'Description': rows.length, 'Category': '', 'Total Qty': '', 'Current Cost (₱)': '', 'Retail Price (₱)': '', 'Wholesale (₱)': '', 'Batch Cost Value (₱)': '', 'Batch Retail Value (₱)': '', 'Batch Details': '' },
+          { 'Product Code': 'Total Items in Stock', 'Description': totalQty, 'Category': '', 'Total Qty': '', 'Current Cost (₱)': '', 'Retail Price (₱)': '', 'Wholesale (₱)': '', 'Batch Cost Value (₱)': '', 'Batch Retail Value (₱)': '', 'Batch Details': '' },
+          { 'Product Code': 'Total Value at Cost (₱)', 'Description': totalCostValue, 'Category': '', 'Total Qty': '', 'Current Cost (₱)': '', 'Retail Price (₱)': '', 'Wholesale (₱)': '', 'Batch Cost Value (₱)': '', 'Batch Retail Value (₱)': '', 'Batch Details': '' },
+          { 'Product Code': 'Total Value at Retail (₱)', 'Description': totalRetailValue, 'Category': '', 'Total Qty': '', 'Current Cost (₱)': '', 'Retail Price (₱)': '', 'Wholesale (₱)': '', 'Batch Cost Value (₱)': '', 'Batch Retail Value (₱)': '', 'Batch Details': '' },
+        ],
       },
       {
         name: 'Batch Details',
@@ -210,47 +249,72 @@ export default function InventoryReportPage() {
           }))
         ),
       },
+      {
+        name: 'Summary',
+        rows: [
+          { 'Metric': 'Report Date', 'Value': printedAt },
+          { 'Metric': 'Store', 'Value': settings.store_name ?? '' },
+          { 'Metric': 'Total Products', 'Value': rows.length },
+          { 'Metric': 'Total Items in Stock', 'Value': totalQty },
+          { 'Metric': 'Total Value at Cost (₱)', 'Value': totalCostValue },
+          { 'Metric': 'Total Value at Retail (₱)', 'Value': totalRetailValue },
+        ],
+      },
     ], `Inventory_Report_${new Date().toISOString().slice(0, 10)}`)
   }
 
   const handlePdf = async () => {
-    const tableRows = rows.map(r => `
-      <tr>
-        <td>${r.barcode ?? '—'}</td>
-        <td>${r.product_name}</td>
-        <td>${r.category_name ?? '—'}</td>
-        <td style="text-align:right">${r.quantity}</td>
-        <td style="text-align:right">${formatMoney(r.base_cost)}</td>
-        <td style="text-align:right">${formatMoney(r.retail_price)}</td>
-        <td style="text-align:right">${formatMoney(r.wholesale_price)}</td>
-        <td style="text-align:right">${formatMoney(getRowCostValue(r))}</td>
-        <td>${batchDetailsHtml(r)}</td>
-      </tr>
-    `).join('')
+    const th = (label: string, align = 'left') =>
+      `<th style="padding:8px 10px;border-bottom:2px solid #1e293b;text-align:${align};background:#1e293b;color:#fff;font-size:11px;white-space:nowrap;">${label}</th>`
+
+    const tableRows = buildDocRows(
+      8,
+      'padding:7px 10px;border-bottom:1px solid #e2e8f0;font-size:11px;vertical-align:top;',
+      'padding:3px 10px 4px 24px;border-bottom:1px solid #f1f5f9;font-size:10px;color:#64748b;background:#f8fafc;'
+    )
 
     await exportToPdf(`Inventory Report ${new Date().toISOString().slice(0, 10)}`, `
-      <section style="padding:18mm 16mm;background:#fff;color:#111;">
-        <div style="text-align:center;margin-bottom:16px;">
-          <h1 style="margin:0;font-size:24px;">${settings.store_name ?? 'Store'}</h1>
-          <p style="margin:8px 0 0;color:#475569;">Inventory Report</p>
-          <p style="margin:6px 0 0;color:#64748b;font-size:12px;">Printed at ${printedAt}</p>
+      <section style="padding:16mm 14mm;background:#fff;color:#111;font-family:Arial,sans-serif;">
+        <div style="text-align:center;margin-bottom:18px;">
+          <h1 style="margin:0;font-size:22px;font-weight:800;">${settings.store_name ?? 'Store'}</h1>
+          <p style="margin:6px 0 0;color:#475569;font-size:13px;font-weight:600;">Inventory Report</p>
+          <p style="margin:4px 0 0;color:#94a3b8;font-size:11px;">Printed at ${printedAt}</p>
         </div>
-        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <table style="width:100%;border-collapse:collapse;">
           <thead>
             <tr>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Product Code</th>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Description</th>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Category</th>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Qty</th>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Cost</th>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Retail</th>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Wholesale</th>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:right;background:#f8fafc;">Batch Cost Value</th>
-              <th style="padding:8px;border-bottom:1px solid #cbd5e1;text-align:left;background:#f8fafc;">Batch Details</th>
+              ${th('Product Code')}
+              ${th('Description')}
+              ${th('Category')}
+              ${th('Qty', 'right')}
+              ${th('Cost (₱)', 'right')}
+              ${th('Retail (₱)', 'right')}
+              ${th('Wholesale (₱)', 'right')}
+              ${th('Cost Value (₱)', 'right')}
             </tr>
           </thead>
           <tbody>${tableRows}</tbody>
         </table>
+        <div style="margin-top:20px;border-top:2px solid #e2e8f0;padding-top:14px;">
+          <table style="width:auto;border-collapse:collapse;">
+            <tr>
+              <td style="padding:4px 28px 4px 0;font-size:11px;color:#64748b;">Total Products</td>
+              <td style="padding:4px 0;font-size:11px;font-weight:600;">${rows.length}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 28px 4px 0;font-size:11px;color:#64748b;">Total Items in Stock</td>
+              <td style="padding:4px 0;font-size:11px;font-weight:600;">${totalQty.toLocaleString('en-PH')}</td>
+            </tr>
+            <tr>
+              <td style="padding:6px 28px 4px 0;font-size:13px;color:#1d4ed8;font-weight:700;">Total Value at Cost</td>
+              <td style="padding:6px 0 4px;font-size:15px;font-weight:800;color:#1d4ed8;">${formatMoney(totalCostValue)}</td>
+            </tr>
+            <tr>
+              <td style="padding:4px 28px 4px 0;font-size:13px;color:#059669;font-weight:700;">Total Value at Retail</td>
+              <td style="padding:4px 0;font-size:15px;font-weight:800;color:#059669;">${formatMoney(totalRetailValue)}</td>
+            </tr>
+          </table>
+        </div>
       </section>
     `)
   }
