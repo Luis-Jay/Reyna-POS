@@ -42,6 +42,10 @@ export default function SettingsPage() {
   const [usbConnecting, setUsbConnecting] = useState(false)
   const [usbError, setUsbError] = useState('')
   const usbSupported = typeof navigator !== 'undefined' && 'usb' in navigator
+  const [blePrinterName, setBlePrinterName] = useState<string | null>(null)
+  const [bleConnecting, setBleConnecting] = useState(false)
+  const [bleError, setBleError] = useState('')
+  const bleSupported = typeof navigator !== 'undefined' && 'bluetooth' in navigator
 
   const persistSettings = async (nextSettings: Record<string, string>) => {
     const normalizedSettings = Object.fromEntries(
@@ -58,13 +62,19 @@ export default function SettingsPage() {
     return await window.api.settings.getAll()
   }
 
-  // Auto-connect to previously authorized USB printer on mount
+  // Auto-connect to previously authorized USB/BT printers on mount
   useEffect(() => {
     window.api.printer.autoConnectUsb?.().then((res: any) => {
       if (res?.connected && res?.device) {
         setUsbPrinterName(res.device)
         window.api.printer.getStatus().then(setPrinterStatus)
         window.api.printer.listPrinters().then((list: any[]) => setPrinters(Array.isArray(list) ? list : []))
+      }
+    }).catch(() => {})
+    ;(window.api.printer as any).autoConnectBluetooth?.().then((res: any) => {
+      if (res?.connected && res?.device) {
+        setBlePrinterName(res.device)
+        window.api.printer.getStatus().then(setPrinterStatus)
       }
     }).catch(() => {})
   }, [])
@@ -88,6 +98,25 @@ export default function SettingsPage() {
     setUsbPrinterName(null)
     setPrinterStatus(await window.api.printer.getStatus())
     setPrinters([])
+  }
+
+  const handleConnectBluetooth = async () => {
+    setBleConnecting(true)
+    setBleError('')
+    const res = await (window.api.printer as any).connectBluetooth?.()
+    setBleConnecting(false)
+    if (res?.success) {
+      setBlePrinterName(res.device || 'Bluetooth Printer')
+      setPrinterStatus(await window.api.printer.getStatus())
+    } else {
+      setBleError(res?.error || 'Failed to connect.')
+    }
+  }
+
+  const handleDisconnectBluetooth = async () => {
+    await (window.api.printer as any).disconnectBluetooth?.()
+    setBlePrinterName(null)
+    setPrinterStatus(await window.api.printer.getStatus())
   }
 
   const load = async () => {
@@ -655,11 +684,47 @@ export default function SettingsPage() {
 
           {/* Receipt Printer */}
           <Section title="Receipt Printer">
+            {/* Bluetooth Thermal Printer — Android Chrome */}
+            <div className="py-3 border-b border-gray-100">
+              <p className="text-sm font-medium text-gray-800 mb-1">Bluetooth Thermal Printer</p>
+              <p className="text-xs text-gray-500 mb-3">
+                Print receipts directly from your phone via Bluetooth. Works on Android Chrome.
+              </p>
+              {blePrinterName ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-800">🖨 {blePrinterName}</p>
+                    <p className="text-xs text-emerald-600 mt-0.5">Connected via Bluetooth — printing directly to printer</p>
+                  </div>
+                  <button
+                    onClick={handleDisconnectBluetooth}
+                    className="shrink-0 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={handleConnectBluetooth}
+                    disabled={bleConnecting || !bleSupported}
+                    className="w-full rounded-xl bg-[#1a8eff] text-white py-2.5 text-sm font-medium hover:bg-[#0077e6] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {bleConnecting ? 'Connecting…' : '📶 Connect Bluetooth Printer'}
+                  </button>
+                  {!bleSupported && (
+                    <p className="mt-2 text-xs text-amber-600">Bluetooth printing requires Android Chrome. Not supported on iOS.</p>
+                  )}
+                  {bleError && <p className="mt-2 text-xs text-red-500">{bleError}</p>}
+                </>
+              )}
+            </div>
+
             {/* USB Thermal Printer — Chrome/Edge direct connection */}
             <div className="py-3 border-b border-gray-100">
               <p className="text-sm font-medium text-gray-800 mb-1">USB Thermal Printer</p>
               <p className="text-xs text-gray-500 mb-3">
-                Direct ESC/POS connection — no print dialog. Requires Chrome or Edge.
+                Direct ESC/POS connection — no print dialog. Requires Chrome or Edge on desktop.
               </p>
               {usbPrinterName ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between gap-3">
@@ -684,7 +749,7 @@ export default function SettingsPage() {
                     {usbConnecting ? 'Connecting…' : '🔌 Connect USB Thermal Printer'}
                   </button>
                   {!usbSupported && (
-                    <p className="mt-2 text-xs text-amber-600">Web USB requires Chrome or Edge. Other browsers are not supported.</p>
+                    <p className="mt-2 text-xs text-amber-600">Web USB requires Chrome or Edge on desktop.</p>
                   )}
                   {usbError && <p className="mt-2 text-xs text-red-500">{usbError}</p>}
                 </>
@@ -707,15 +772,15 @@ export default function SettingsPage() {
               <div className="border border-gray-200 rounded-xl p-4 mb-3">
                 <div className="flex justify-between items-center mb-1">
                   <span className="text-sm font-medium text-gray-700">Status</span>
-                  <span className={`text-sm font-bold ${usbPrinterName ? 'text-emerald-600' : 'text-blue-500'}`}>
-                    {usbPrinterName ? 'USB Direct' : 'Browser Print'}
+                  <span className={`text-sm font-bold ${usbPrinterName ? 'text-emerald-600' : blePrinterName ? 'text-emerald-600' : 'text-blue-500'}`}>
+                    {usbPrinterName ? 'USB Direct' : blePrinterName ? 'Bluetooth Direct' : 'Browser Print'}
                   </span>
                 </div>
                 {printerStatus.type && <p className="text-xs text-gray-500">Mode: {printerStatus.type}</p>}
                 {printerStatus.device && <p className="text-xs text-gray-500">Device: {printerStatus.device}</p>}
                 {printerStatus.error && <p className="mt-1 text-xs text-red-500">{printerStatus.error}</p>}
-                {!usbPrinterName && (
-                  <p className="mt-1 text-xs text-gray-400">No USB printer connected. Printing will open the browser print dialog.</p>
+                {!usbPrinterName && !blePrinterName && (
+                  <p className="mt-1 text-xs text-gray-400">No hardware printer connected. Printing will open the browser print dialog.</p>
                 )}
               </div>
             )}

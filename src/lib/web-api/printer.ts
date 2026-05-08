@@ -1,5 +1,96 @@
 import { settingsApi } from './settings'
 
+// Minimal Web Bluetooth type stubs (not in standard DOM lib)
+interface BtCharacteristic {
+  properties: { writeWithoutResponse: boolean; write: boolean }
+  writeValueWithoutResponse(v: BufferSource): Promise<void>
+  writeValue(v: BufferSource): Promise<void>
+}
+interface BtService { getPrimaryService(u: string): Promise<BtService>; getCharacteristic(u: string): Promise<BtCharacteristic>; getCharacteristics(): Promise<BtCharacteristic[]> }
+interface BtServer { connected: boolean; connect(): Promise<BtServer>; disconnect(): void; getPrimaryService(u: string): Promise<BtService>; getPrimaryServices(): Promise<BtService[]> }
+interface BtDevice { name?: string; gatt?: BtServer; addEventListener(e: string, h: () => void): void; removeEventListener(e: string, h: () => void): void }
+interface BtApi {
+  requestDevice(opts: { filters?: Array<{ services?: string[] }>; acceptAllDevices?: boolean; optionalServices?: string[] }): Promise<BtDevice>
+  getDevices(): Promise<BtDevice[]>
+}
+
+// ──────────────────────────────────────────────────────────────
+// Web Bluetooth ESC/POS thermal printer support (Android Chrome)
+// ──────────────────────────────────────────────────────────────
+const WEB_BT_SUPPORTED = typeof navigator !== 'undefined' && 'bluetooth' in navigator
+const _btApi = (): BtApi | null => WEB_BT_SUPPORTED ? (navigator as any).bluetooth : null
+
+// Known BLE service/characteristic pairs for common thermal printers
+const BLE_PROFILES = [
+  { svc: '000018f0-0000-1000-8000-00805f9b34fb', ch: '00002af1-0000-1000-8000-00805f9b34fb' }, // common 58mm
+  { svc: 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', ch: 'bef8d6c9-9c21-4c9e-b632-bd58c1009f9f' }, // Xprinter/GOOJPRT
+  { svc: '0000ff00-0000-1000-8000-00805f9b34fb', ch: '0000ff02-0000-1000-8000-00805f9b34fb' }, // generic
+  { svc: '49535343-fe7d-4ae5-8fa9-9fafd205e455', ch: '49535343-8841-43f4-a8d4-ecbe34729bb3' }, // ISSC BLE
+]
+const BLE_ALL_SERVICES = BLE_PROFILES.map(p => p.svc)
+
+let _bleDevice: BtDevice | null = null
+let _bleChar: BtCharacteristic | null = null
+
+async function findBleChar(server: BtServer): Promise<BtCharacteristic | null> {
+  for (const p of BLE_PROFILES) {
+    try {
+      const svc = await server.getPrimaryService(p.svc)
+      return await svc.getCharacteristic(p.ch)
+    } catch { /* try next profile */ }
+  }
+  // Fallback: scan all services for any writable characteristic
+  try {
+    const services = await server.getPrimaryServices()
+    for (const svc of services) {
+      const chars = await svc.getCharacteristics()
+      for (const ch of chars) {
+        if (ch.properties.writeWithoutResponse || ch.properties.write) return ch
+      }
+    }
+  } catch { /* ignore */ }
+  return null
+}
+
+async function openBleDevice(device: BtDevice): Promise<boolean> {
+  try {
+    const server = await device.gatt!.connect()
+    const ch = await findBleChar(server)
+    if (!ch) { device.gatt!.disconnect(); return false }
+    _bleDevice = device
+    _bleChar = ch
+    const onDisconnect = () => {
+      if (_bleDevice === device) { _bleDevice = null; _bleChar = null }
+    }
+    device.addEventListener('gattserverdisconnected', onDisconnect)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function sendBleData(data: Uint8Array): Promise<boolean> {
+  if (!_bleChar) return false
+  try {
+    const CHUNK = 20 // safe BLE MTU — works across all printers
+    for (let i = 0; i < data.length; i += CHUNK) {
+      const chunk = data.slice(i, i + CHUNK)
+      if (_bleChar.properties.writeWithoutResponse) {
+        await _bleChar.writeValueWithoutResponse(chunk)
+      } else {
+        await _bleChar.writeValue(chunk)
+      }
+      // Small delay to avoid overflowing printer buffer
+      if (i + CHUNK < data.length) await new Promise(r => setTimeout(r, 10))
+    }
+    return true
+  } catch (err) {
+    console.error('[printer] BLE send error:', err)
+    _bleDevice = null; _bleChar = null
+    return false
+  }
+}
+
 // ──────────────────────────────────────────────────────────────
 // Web USB ESC/POS direct thermal printer support
 // Works on Chrome / Edge only (navigator.usb)
@@ -550,15 +641,16 @@ export const printerApi = {
   printReceipt: async (order: any) => {
     try {
       const store = await getStoreSettings()
-      // Use ESC/POS over USB if a thermal printer is connected
+      // USB first, then BLE, then browser fallback
       if (_usbDevice) {
-        const data = buildEscPosData(order, store)
-        const ok = await sendEscPos(data)
+        const ok = await sendEscPos(buildEscPosData(order, store))
         if (ok) return { success: true }
-        // Fall through to browser print if USB failed
       }
-      const html = buildReceiptHtml(order, store)
-      return printHtml(html)
+      if (_bleChar) {
+        const ok = await sendBleData(buildEscPosData(order, store))
+        if (ok) return { success: true }
+      }
+      return printHtml(buildReceiptHtml(order, store))
     } catch (err: any) {
       return { success: false, error: err?.message }
     }
@@ -581,32 +673,23 @@ export const printerApi = {
     try {
       const store = await getStoreSettings()
       if (_usbDevice) {
-        const data = buildEscPosData({ test: true }, store)
-        const ok = await sendEscPos(data)
+        const ok = await sendEscPos(buildEscPosData({ test: true }, store))
         if (ok) return { success: true }
       }
-      const html = buildReceiptHtml({ test: true }, store)
-      return printHtml(html)
+      if (_bleChar) {
+        const ok = await sendBleData(buildEscPosData({ test: true }, store))
+        if (ok) return { success: true }
+      }
+      return printHtml(buildReceiptHtml({ test: true }, store))
     } catch (err: any) {
       return { success: false, error: err?.message }
     }
   },
 
   getStatus: async () => {
-    if (_usbDevice) {
-      return {
-        connected: true,
-        type: 'usb-escpos',
-        device: usbDeviceName(_usbDevice),
-        error: '',
-      }
-    }
-    return {
-      connected: true,
-      type: 'browser',
-      device: 'System Printer (browser dialog)',
-      error: '',
-    }
+    if (_usbDevice) return { connected: true, type: 'usb-escpos', device: usbDeviceName(_usbDevice), error: '' }
+    if (_bleDevice) return { connected: true, type: 'bluetooth-escpos', device: _bleDevice.name || 'Bluetooth Printer', error: '' }
+    return { connected: true, type: 'browser', device: 'System Printer (browser dialog)', error: '' }
   },
 
   setConfig: async (config: any) => {
@@ -618,9 +701,8 @@ export const printerApi = {
   openDrawer: async () => ({ success: false, error: 'Cash drawer not supported in browser.' }),
 
   listPrinters: async () => {
-    if (_usbDevice) {
-      return [{ name: usbDeviceName(_usbDevice), value: 'usb', isDefault: true }]
-    }
+    if (_usbDevice) return [{ name: usbDeviceName(_usbDevice), value: 'usb', isDefault: true }]
+    if (_bleDevice) return [{ name: _bleDevice.name || 'Bluetooth Printer', value: 'bluetooth', isDefault: true }]
     return []
   },
 
@@ -665,4 +747,47 @@ export const printerApi = {
   },
 
   usbSupported: () => WEB_USB_SUPPORTED,
+
+  // Connect a Bluetooth thermal printer — must be called from a user gesture
+  connectBluetooth: async () => {
+    const bt = _btApi()
+    if (!bt) return { success: false, error: 'Web Bluetooth is not supported. Use Chrome on Android.' }
+    try {
+      const device = await bt.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: BLE_ALL_SERVICES,
+      })
+      const ok = await openBleDevice(device)
+      if (!ok) return { success: false, error: 'Connected but could not find a printer service. Make sure the printer is on and in BLE mode.' }
+      return { success: true, device: device.name || 'Bluetooth Printer' }
+    } catch (err: any) {
+      if (err?.name === 'NotFoundError') return { success: false, error: 'No device selected.' }
+      return { success: false, error: err?.message || 'Failed to connect.' }
+    }
+  },
+
+  // Disconnect the Bluetooth printer
+  disconnectBluetooth: async () => {
+    if (_bleDevice?.gatt?.connected) {
+      try { _bleDevice.gatt.disconnect() } catch { /* ignore */ }
+    }
+    _bleDevice = null; _bleChar = null
+    return { success: true }
+  },
+
+  // Re-connect to a previously authorized Bluetooth printer (no user gesture needed)
+  autoConnectBluetooth: async () => {
+    const bt = _btApi()
+    if (!bt || _bleDevice) return { connected: !!_bleDevice }
+    try {
+      const devices = await bt.getDevices()
+      for (const device of devices) {
+        const ok = await openBleDevice(device)
+        if (ok) return { connected: true, device: device.name || 'Bluetooth Printer' }
+      }
+    } catch { /* ignore */ }
+    return { connected: false }
+  },
+
+  bluetoothSupported: () => WEB_BT_SUPPORTED,
 }
