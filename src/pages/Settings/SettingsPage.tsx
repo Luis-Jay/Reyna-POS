@@ -38,6 +38,10 @@ export default function SettingsPage() {
   const [syncMessage, setSyncMessage] = useState('')
   const [smsCredits, setSmsCredits] = useState<number | null>(null)
   const [cloudEmail, setCloudEmail] = useState<string | null>(null)
+  const [usbPrinterName, setUsbPrinterName] = useState<string | null>(null)
+  const [usbConnecting, setUsbConnecting] = useState(false)
+  const [usbError, setUsbError] = useState('')
+  const usbSupported = typeof navigator !== 'undefined' && 'usb' in navigator
 
   const persistSettings = async (nextSettings: Record<string, string>) => {
     const normalizedSettings = Object.fromEntries(
@@ -52,6 +56,38 @@ export default function SettingsPage() {
     })
 
     return await window.api.settings.getAll()
+  }
+
+  // Auto-connect to previously authorized USB printer on mount
+  useEffect(() => {
+    window.api.printer.autoConnectUsb?.().then((res: any) => {
+      if (res?.connected && res?.device) {
+        setUsbPrinterName(res.device)
+        window.api.printer.getStatus().then(setPrinterStatus)
+        window.api.printer.listPrinters().then((list: any[]) => setPrinters(Array.isArray(list) ? list : []))
+      }
+    }).catch(() => {})
+  }, [])
+
+  const handleConnectUsb = async () => {
+    setUsbConnecting(true)
+    setUsbError('')
+    const res = await window.api.printer.connectUsb?.()
+    setUsbConnecting(false)
+    if (res?.success) {
+      setUsbPrinterName(res.device || 'USB Printer')
+      setPrinterStatus(await window.api.printer.getStatus())
+      setPrinters(await window.api.printer.listPrinters())
+    } else {
+      setUsbError(res?.error || 'Failed to connect.')
+    }
+  }
+
+  const handleDisconnectUsb = async () => {
+    await window.api.printer.disconnectUsb?.()
+    setUsbPrinterName(null)
+    setPrinterStatus(await window.api.printer.getStatus())
+    setPrinters([])
   }
 
   const load = async () => {
@@ -617,9 +653,44 @@ export default function SettingsPage() {
             </div>
           </Section>
 
-          {/* Thermal Printer */}
-          <Section title="Thermal Printer">
-            <Toggle setting="thermal_enabled" label="Enable Thermal Printing" />
+          {/* Receipt Printer */}
+          <Section title="Receipt Printer">
+            {/* USB Thermal Printer — Chrome/Edge direct connection */}
+            <div className="py-3 border-b border-gray-100">
+              <p className="text-sm font-medium text-gray-800 mb-1">USB Thermal Printer</p>
+              <p className="text-xs text-gray-500 mb-3">
+                Direct ESC/POS connection — no print dialog. Requires Chrome or Edge.
+              </p>
+              {usbPrinterName ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-800">🖨 {usbPrinterName}</p>
+                    <p className="text-xs text-emerald-600 mt-0.5">Connected — receipts will print directly</p>
+                  </div>
+                  <button
+                    onClick={handleDisconnectUsb}
+                    className="shrink-0 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <button
+                    onClick={handleConnectUsb}
+                    disabled={usbConnecting || !usbSupported}
+                    className="w-full rounded-xl bg-[#1a8eff] text-white py-2.5 text-sm font-medium hover:bg-[#0077e6] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {usbConnecting ? 'Connecting…' : '🔌 Connect USB Thermal Printer'}
+                  </button>
+                  {!usbSupported && (
+                    <p className="mt-2 text-xs text-amber-600">Web USB requires Chrome or Edge. Other browsers are not supported.</p>
+                  )}
+                  {usbError && <p className="mt-2 text-xs text-red-500">{usbError}</p>}
+                </>
+              )}
+            </div>
+
             <div className="py-3">
               <label className="block text-sm font-medium text-gray-700 mb-2">Paper Size</label>
               <div className="flex gap-2">
@@ -631,47 +702,24 @@ export default function SettingsPage() {
                 ))}
               </div>
             </div>
-            <div className="py-3">
-              <label className="block text-sm font-medium text-gray-700 mb-2">System Printer</label>
-              <select
-                value={settings['printer_interface'] || ''}
-                onChange={e => set('printer_interface', e.target.value)}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
-              >
-                <option value="">Use print dialog default</option>
-                {printers.map(printer => (
-                  <option key={printer.name} value={`system:${printer.name}`}>{printer.name}</option>
-                ))}
-              </select>
-              <p className="mt-1 text-xs text-gray-500">
-                Leave this blank to use the system print dialog default printer.
-              </p>
-            </div>
+
             {printerStatus && (
               <div className="border border-gray-200 rounded-xl p-4 mb-3">
                 <div className="flex justify-between items-center mb-1">
                   <span className="text-sm font-medium text-gray-700">Status</span>
-                  <span className={`text-sm font-bold ${printerStatus.connected ? 'text-green-500' : 'text-red-500'}`}>
-                    {printerStatus.connected ? 'Connected' : 'Disconnected'}
+                  <span className={`text-sm font-bold ${usbPrinterName ? 'text-emerald-600' : 'text-blue-500'}`}>
+                    {usbPrinterName ? 'USB Direct' : 'Browser Print'}
                   </span>
                 </div>
-                {printerStatus.type && <p className="text-xs text-gray-500">Type: {printerStatus.type}</p>}
+                {printerStatus.type && <p className="text-xs text-gray-500">Mode: {printerStatus.type}</p>}
                 {printerStatus.device && <p className="text-xs text-gray-500">Device: {printerStatus.device}</p>}
                 {printerStatus.error && <p className="mt-1 text-xs text-red-500">{printerStatus.error}</p>}
+                {!usbPrinterName && (
+                  <p className="mt-1 text-xs text-gray-400">No USB printer connected. Printing will open the browser print dialog.</p>
+                )}
               </div>
             )}
-            <div className="pb-3">
-              <p className="text-xs font-medium text-gray-600">Detected System Printers</p>
-              {printers.length > 0 ? (
-                <div className="mt-2 space-y-1">
-                  {printers.slice(0, 5).map(printer => (
-                    <p key={printer.name} className="text-xs text-gray-500">{printer.name}</p>
-                  ))}
-                </div>
-              ) : (
-                <p className="mt-2 text-xs text-gray-500">No printers detected by Electron yet.</p>
-              )}
-            </div>
+
             <div className="flex gap-3 pb-3">
               <button onClick={handleTestPrint}
                 className="flex-1 bg-green-500 text-white py-2.5 rounded-xl font-medium text-sm hover:bg-green-600">

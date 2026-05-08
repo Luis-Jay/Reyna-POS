@@ -1,5 +1,183 @@
 import { settingsApi } from './settings'
 
+// ──────────────────────────────────────────────────────────────
+// Web USB ESC/POS direct thermal printer support
+// Works on Chrome / Edge only (navigator.usb)
+// ──────────────────────────────────────────────────────────────
+const WEB_USB_SUPPORTED = typeof navigator !== 'undefined' && 'usb' in navigator
+
+let _usbDevice: USBDevice | null = null
+let _usbInterfaceNum = 0
+let _usbEndpointNum = 1
+
+if (WEB_USB_SUPPORTED) {
+  navigator.usb.addEventListener('disconnect', (event: any) => {
+    if (_usbDevice && event.device === _usbDevice) {
+      _usbDevice = null
+    }
+  })
+}
+
+async function findBulkOutEndpoint(device: USBDevice): Promise<{ iface: number; ep: number } | null> {
+  for (const iface of (device.configuration?.interfaces ?? [])) {
+    for (const alt of iface.alternates) {
+      for (const ep of alt.endpoints) {
+        if (ep.direction === 'out' && ep.type === 'bulk') {
+          return { iface: iface.interfaceNumber, ep: ep.endpointNumber }
+        }
+      }
+    }
+  }
+  return null
+}
+
+async function openUsbDevice(device: USBDevice): Promise<boolean> {
+  try {
+    await device.open()
+    if (device.configuration === null) await device.selectConfiguration(1)
+    const found = await findBulkOutEndpoint(device)
+    if (!found) { await device.close().catch(() => {}); return false }
+    _usbInterfaceNum = found.iface
+    _usbEndpointNum = found.ep
+    await device.claimInterface(_usbInterfaceNum)
+    _usbDevice = device
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function sendEscPos(data: Uint8Array): Promise<boolean> {
+  if (!_usbDevice) return false
+  try {
+    // Send in 4096-byte chunks to be safe across different printer firmware
+    const CHUNK = 4096
+    for (let i = 0; i < data.length; i += CHUNK) {
+      await _usbDevice.transferOut(_usbEndpointNum, data.slice(i, i + CHUNK))
+    }
+    return true
+  } catch (err) {
+    console.error('[printer] USB send error:', err)
+    _usbDevice = null
+    return false
+  }
+}
+
+function escposConcat(...arrays: Uint8Array[]): Uint8Array {
+  const total = arrays.reduce((s, a) => s + a.length, 0)
+  const out = new Uint8Array(total)
+  let off = 0
+  for (const a of arrays) { out.set(a, off); off += a.length }
+  return out
+}
+
+function buildEscPosData(order: any, store: {
+  storeName: string; storeAddress: string; storePhone: string
+  storeTin: string; receiptFooter: string; paperSize: string
+}): Uint8Array {
+  const enc = new TextEncoder()
+  const ESC = 0x1B
+  const GS = 0x1D
+  const LF = new Uint8Array([0x0A])
+  const t = (s: string) => enc.encode(s)
+  const cols = store.paperSize === '80mm' ? 42 : 32
+  const div = t('-'.repeat(cols) + '\n')
+  const nameW = cols - 14
+
+  const parts: Uint8Array[] = [
+    new Uint8Array([ESC, 0x40]),          // ESC @ init
+    new Uint8Array([ESC, 0x61, 0x01]),    // center
+    new Uint8Array([ESC, 0x45, 0x01]),    // bold on
+    new Uint8Array([GS, 0x21, 0x11]),     // 2x size
+    t(store.storeName.toUpperCase() + '\n'),
+    new Uint8Array([GS, 0x21, 0x00]),     // normal size
+    new Uint8Array([ESC, 0x45, 0x00]),    // bold off
+  ]
+
+  if (store.storeAddress) parts.push(t(store.storeAddress + '\n'))
+  if (store.storePhone) parts.push(t('Tel: ' + store.storePhone + '\n'))
+  if (store.storeTin) parts.push(t('TIN: ' + store.storeTin + '\n'))
+  parts.push(new Uint8Array([ESC, 0x61, 0x00]), div)  // left, divider
+
+  if (order?.test) {
+    parts.push(
+      new Uint8Array([ESC, 0x61, 0x01]),
+      t('\nTest page printed successfully.\n\n'),
+      t(new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' }) + '\n'),
+      new Uint8Array([ESC, 0x61, 0x00]),
+    )
+  } else {
+    const createdAt = order?.created_at
+      ? new Date(order.created_at).toLocaleString('en-PH', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : new Date().toLocaleString('en-PH', { timeZone: 'Asia/Manila' })
+
+    parts.push(
+      t('Receipt #: ' + (order?.order_number || '') + '\n'),
+      t('Date: ' + createdAt + '\n'),
+    )
+    if (order?.customer_name) parts.push(t('Customer: ' + order.customer_name + '\n'))
+    parts.push(div)
+
+    // Column header
+    parts.push(t('Name'.padEnd(nameW) + ' ' + 'Qty'.padStart(4) + ' ' + 'Price'.padStart(8) + '\n'), div)
+
+    for (const item of (order?.items || [])) {
+      const qty = Number(item.quantity || 0)
+      const qtyStr = Number.isInteger(qty) ? String(qty) : qty.toFixed(2)
+      const price = 'P' + Number(item.subtotal || 0).toFixed(2)
+      const name = String(item.name || '').substring(0, nameW).padEnd(nameW)
+      parts.push(t(name + ' ' + qtyStr.padStart(4) + ' ' + price.padStart(8) + '\n'))
+    }
+
+    parts.push(div)
+
+    const total = Number(order?.total || 0)
+    const discount = Number(order?.discount || 0)
+    if (discount > 0) parts.push(t('Discount: -P' + discount.toFixed(2) + '\n'))
+
+    // Total — bold + 2x
+    parts.push(
+      new Uint8Array([ESC, 0x45, 0x01]),
+      new Uint8Array([GS, 0x21, 0x11]),
+      t('TOTAL: P' + total.toFixed(2) + '\n'),
+      new Uint8Array([GS, 0x21, 0x00]),
+      new Uint8Array([ESC, 0x45, 0x00]),
+    )
+
+    // Payments
+    const payments = Array.isArray(order?.payment_breakdown) ? order.payment_breakdown : []
+    if (order?.is_credit) {
+      parts.push(t('Payment: Charge to Account\n'))
+    } else if (payments.length > 0) {
+      for (const p of payments) {
+        const method = p.method === 'gcash' ? 'GCASH' : p.method === 'card' ? 'CARD' : 'CASH'
+        parts.push(t(method + ': P' + Number(p.amount || 0).toFixed(2) + '\n'))
+      }
+    } else if (order?.payment_amount != null) {
+      parts.push(t('CASH: P' + Number(order.payment_amount).toFixed(2) + '\n'))
+    }
+    if (Number(order?.change_amount || 0) > 0) {
+      parts.push(t('CHANGE: P' + Number(order.change_amount).toFixed(2) + '\n'))
+    }
+    if (order?.note) parts.push(t('Note: ' + order.note + '\n'))
+    parts.push(div)
+  }
+
+  // Footer — centered
+  parts.push(
+    new Uint8Array([ESC, 0x61, 0x01]),
+    new Uint8Array([ESC, 0x45, 0x01]),
+    t('THANK YOU!\n'),
+    new Uint8Array([ESC, 0x45, 0x00]),
+    t((store.receiptFooter || '') + '\n'),
+    LF, LF, LF,                           // paper feed
+    new Uint8Array([ESC, 0x61, 0x00]),
+    new Uint8Array([GS, 0x56, 0x42, 0x00]),  // partial cut
+  )
+
+  return escposConcat(...parts)
+}
+
 // Receipt HTML builder — ported from electron/main/ipc/printer.ipc.ts
 function escapeHtml(value: any) {
   return String(value ?? '')
@@ -364,10 +542,21 @@ function buildReceiptText(order: any, store: {
   return lines.join('\n')
 }
 
+function usbDeviceName(device: USBDevice): string {
+  return device.productName || device.manufacturerName || `USB Device ${device.vendorId.toString(16)}:${device.productId.toString(16)}`
+}
+
 export const printerApi = {
   printReceipt: async (order: any) => {
     try {
       const store = await getStoreSettings()
+      // Use ESC/POS over USB if a thermal printer is connected
+      if (_usbDevice) {
+        const data = buildEscPosData(order, store)
+        const ok = await sendEscPos(data)
+        if (ok) return { success: true }
+        // Fall through to browser print if USB failed
+      }
       const html = buildReceiptHtml(order, store)
       return printHtml(html)
     } catch (err: any) {
@@ -383,7 +572,7 @@ export const printerApi = {
       await navigator.share({ title: `Receipt ${order?.order_number || ''}`, text })
       return { success: true }
     } catch (err: any) {
-      if (err?.name === 'AbortError') return { success: true } // user cancelled
+      if (err?.name === 'AbortError') return { success: true }
       return { success: false, error: err?.message }
     }
   },
@@ -391,6 +580,11 @@ export const printerApi = {
   testPage: async () => {
     try {
       const store = await getStoreSettings()
+      if (_usbDevice) {
+        const data = buildEscPosData({ test: true }, store)
+        const ok = await sendEscPos(data)
+        if (ok) return { success: true }
+      }
       const html = buildReceiptHtml({ test: true }, store)
       return printHtml(html)
     } catch (err: any) {
@@ -398,12 +592,22 @@ export const printerApi = {
     }
   },
 
-  getStatus: async () => ({
-    connected: true,
-    type: 'browser',
-    device: 'System Printer',
-    error: '',
-  }),
+  getStatus: async () => {
+    if (_usbDevice) {
+      return {
+        connected: true,
+        type: 'usb-escpos',
+        device: usbDeviceName(_usbDevice),
+        error: '',
+      }
+    }
+    return {
+      connected: true,
+      type: 'browser',
+      device: 'System Printer (browser dialog)',
+      error: '',
+    }
+  },
 
   setConfig: async (config: any) => {
     if (config.paperSize) await settingsApi.set('paper_size', config.paperSize)
@@ -413,5 +617,52 @@ export const printerApi = {
 
   openDrawer: async () => ({ success: false, error: 'Cash drawer not supported in browser.' }),
 
-  listPrinters: async () => [],
+  listPrinters: async () => {
+    if (_usbDevice) {
+      return [{ name: usbDeviceName(_usbDevice), value: 'usb', isDefault: true }]
+    }
+    return []
+  },
+
+  // Connect a USB thermal printer — must be called from a user gesture (button click)
+  connectUsb: async () => {
+    if (!WEB_USB_SUPPORTED) {
+      return { success: false, error: 'Web USB is not supported in this browser. Use Chrome or Edge.' }
+    }
+    try {
+      const device = await navigator.usb.requestDevice({ filters: [] })
+      const ok = await openUsbDevice(device)
+      if (!ok) return { success: false, error: 'Could not open printer. Make sure no other app is using it.' }
+      return { success: true, device: usbDeviceName(device) }
+    } catch (err: any) {
+      if (err?.name === 'NotFoundError') return { success: false, error: 'No device selected.' }
+      return { success: false, error: err?.message || 'Failed to connect.' }
+    }
+  },
+
+  // Release the USB device
+  disconnectUsb: async () => {
+    if (!_usbDevice) return { success: true }
+    try {
+      await _usbDevice.releaseInterface(_usbInterfaceNum)
+      await _usbDevice.close()
+    } catch { /* ignore */ }
+    _usbDevice = null
+    return { success: true }
+  },
+
+  // Re-connect to a previously authorized USB printer (no user gesture needed)
+  autoConnectUsb: async () => {
+    if (!WEB_USB_SUPPORTED || _usbDevice) return { connected: !!_usbDevice }
+    try {
+      const devices = await navigator.usb.getDevices()
+      for (const device of devices) {
+        const ok = await openUsbDevice(device)
+        if (ok) return { connected: true, device: usbDeviceName(device) }
+      }
+    } catch { /* ignore */ }
+    return { connected: false }
+  },
+
+  usbSupported: () => WEB_USB_SUPPORTED,
 }
