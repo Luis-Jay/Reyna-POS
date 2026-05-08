@@ -4,7 +4,7 @@ import { Plus, Trash2, Camera, ImageIcon } from 'lucide-react'
 import JsBarcode from 'jsbarcode'
 import TopBar from '../../components/layout/TopBar'
 import { Category, VariationGroup } from '../../types'
-import { getProductImageSrc } from '../../utils/images'
+import { getProductImageSrc, compressImage } from '../../utils/images'
 
 interface PriceTier {
   min_qty: string
@@ -101,10 +101,11 @@ export default function AddProductPage() {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = () => {
-      const dataUrl = reader.result as string
-      setImagePreview(dataUrl)
-      setImageDataUrl(dataUrl)
+    reader.onload = async () => {
+      const raw = reader.result as string
+      const compressed = await compressImage(raw)
+      setImagePreview(compressed)
+      setImageDataUrl(compressed)
     }
     reader.readAsDataURL(file)
   }
@@ -116,11 +117,12 @@ export default function AddProductPage() {
     try {
       let productId = id
       if (isEdit) {
-        await window.api.products.update(id!, {
+        const result = await window.api.products.update(id!, {
           name: form.name.trim(), barcode: form.barcode || null,
           description: form.description,
           category_id: form.category_id || null,
           retail_price: parseFloat(form.retail_price) || 0,
+          base_price: parseFloat(form.retail_price) || 0,
           wholesale_price: parseFloat(form.wholesale_price) || 0,
           base_cost: parseFloat(form.base_cost) || 0,
           has_variations: form.has_variations,
@@ -128,12 +130,14 @@ export default function AddProductPage() {
           allow_fractions: form.allow_fractions,
           track_inventory: form.track_inventory,
         })
+        if (!result?.success) throw new Error(result?.error || 'Failed to update product.')
       } else {
         const result = await window.api.products.create({
           name: form.name.trim(), barcode: form.barcode || null,
           description: form.description,
           category_id: form.category_id || null,
           retail_price: parseFloat(form.retail_price) || 0,
+          base_price: parseFloat(form.retail_price) || 0,
           wholesale_price: parseFloat(form.wholesale_price) || 0,
           base_cost: parseFloat(form.base_cost) || 0,
           has_variations: form.has_variations,
@@ -142,10 +146,12 @@ export default function AddProductPage() {
           track_inventory: form.track_inventory,
           initial_stock: parseFloat(form.initial_stock) || 0,
         })
+        if (!result?.success || !result?.id) throw new Error(result?.error || 'Failed to create product.')
         productId = result.id
       }
       if (imageDataUrl && productId) {
-        await window.api.products.saveImage(productId!, imageDataUrl)
+        const imageResult = await window.api.products.saveImage(productId!, imageDataUrl)
+        if (!imageResult?.success) throw new Error(imageResult?.error || 'Failed to save product image.')
       }
       // Save price tiers
       if (productId) {
@@ -153,9 +159,11 @@ export default function AddProductPage() {
           .filter(t => t.min_qty && t.price)
           .map(t => ({ min_qty: parseFloat(t.min_qty), price: parseFloat(t.price), label: t.label || null }))
         if (validTiers.length > 0) {
-          await window.api.priceTiers.set(productId, validTiers)
+          const tierResult = await window.api.priceTiers.set(productId, validTiers)
+          if (!tierResult?.success) throw new Error('Failed to save price tiers.')
         } else {
-          await window.api.priceTiers.delete(productId)
+          const tierResult = await window.api.priceTiers.delete(productId)
+          if (!tierResult?.success) throw new Error('Failed to clear price tiers.')
         }
       }
       navigate('/products')
@@ -167,6 +175,23 @@ export default function AddProductPage() {
   }
 
   const set = (key: string, value: any) => setForm(f => ({ ...f, [key]: value }))
+
+  const handleDelete = async () => {
+    if (!isEdit || !id) return
+    if (!confirm(`Delete "${form.name.trim() || 'this product'}"?`)) return
+
+    setSaving(true)
+    setError('')
+    try {
+      const result = await window.api.products.delete(id)
+      if (!result?.success) throw new Error(result?.error || 'Failed to delete product.')
+      navigate('/products')
+    } catch (e: any) {
+      setError(e?.message || 'Failed to delete product.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   const generateBarcodeValue = () => {
     const timestamp = Date.now().toString().slice(-10)
@@ -519,10 +544,22 @@ export default function AddProductPage() {
 
           {error && <p className="text-red-500 text-sm">{error}</p>}
 
-          <button onClick={handleSave} disabled={saving}
-            className="w-full bg-[#1a8eff] text-white py-3 rounded-xl font-semibold hover:bg-[#0077e6] disabled:opacity-50">
-            {saving ? 'Saving...' : isEdit ? 'Update Product' : 'Add Product'}
-          </button>
+          <div className={`grid gap-3 ${isEdit ? 'sm:grid-cols-[1fr_auto]' : ''}`}>
+            <button onClick={handleSave} disabled={saving}
+              className="w-full bg-[#1a8eff] text-white py-3 rounded-xl font-semibold hover:bg-[#0077e6] disabled:opacity-50">
+              {saving ? 'Saving...' : isEdit ? 'Update Product' : 'Add Product'}
+            </button>
+            {isEdit && (
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={saving}
+                className="w-full sm:w-auto border border-red-200 text-red-600 py-3 px-5 rounded-xl font-semibold hover:bg-red-50 disabled:opacity-50"
+              >
+                Delete Product
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

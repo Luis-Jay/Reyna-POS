@@ -1,22 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Product } from '../../types'
-import { Check, Plus, Tag, Type, Barcode, DollarSign, LayoutGrid, X, Upload, Wand2 } from 'lucide-react'
-import { getProductImageSrc } from '../../utils/images'
+import { Camera, Check, Plus, Tag, Type, Barcode, DollarSign, LayoutGrid, X, Upload, Wand2, ImageIcon } from 'lucide-react'
+import { getProductImageSrc, compressImage } from '../../utils/images'
 
-type Tab = 'prices' | 'names' | 'barcodes' | 'costs'
+type Tab = 'prices' | 'names' | 'barcodes' | 'costs' | 'photos'
 
 const TABS: { key: Tab; label: string; short: string; icon: React.ReactNode; color: string }[] = [
-  { key: 'prices',   label: 'Edit Prices',   short: 'Prices',   icon: <Tag size={14}/>,      color: 'bg-purple-500' },
-  { key: 'names',    label: 'Edit Names',    short: 'Names',    icon: <Type size={14}/>,     color: 'bg-pink-500' },
-  { key: 'barcodes', label: 'Edit Barcodes', short: 'Barcodes', icon: <Barcode size={14}/>,  color: 'bg-fuchsia-600' },
+  { key: 'prices',   label: 'Edit Prices',   short: 'Prices',   icon: <Tag size={14}/>,        color: 'bg-purple-500' },
+  { key: 'names',    label: 'Edit Names',    short: 'Names',    icon: <Type size={14}/>,       color: 'bg-pink-500' },
+  { key: 'barcodes', label: 'Edit Barcodes', short: 'Barcodes', icon: <Barcode size={14}/>,    color: 'bg-fuchsia-600' },
   { key: 'costs',    label: 'Edit Costs',    short: 'Costs',    icon: <DollarSign size={14}/>, color: 'bg-orange-500' },
+  { key: 'photos',   label: 'Edit Photos',   short: 'Photos',   icon: <ImageIcon size={14}/>,  color: 'bg-sky-500' },
 ]
 
 export default function BulkEditPricesPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const initialTab = (searchParams.get('tab') as Tab) || 'prices'
+  const imageInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
 
   const [tab, setTab] = useState<Tab>(initialTab)
   const [products, setProducts] = useState<Product[]>([])
@@ -27,6 +30,9 @@ export default function BulkEditPricesPage() {
   const [customMarkup, setCustomMarkup] = useState('')
   const [saving, setSaving] = useState(false)
   const [priceMode, setPriceMode] = useState<'manual' | 'percentage'>('manual')
+  const [error, setError] = useState('')
+  const [imageTarget, setImageTarget] = useState<Product | null>(null)
+  const [imageSavingId, setImageSavingId] = useState<string | null>(null)
 
   const load = async () => {
     const data = await window.api.products.getAll()
@@ -83,38 +89,90 @@ export default function BulkEditPricesPage() {
     setEdits(e => ({ ...e, ...updates }))
   }
 
+  const openImagePicker = (product: Product, useCamera = false) => {
+    setImageTarget(product)
+    if (useCamera) {
+      cameraInputRef.current?.click()
+    } else {
+      imageInputRef.current?.click()
+    }
+  }
+
+  const handleImagePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    const target = imageTarget
+    e.target.value = ''
+    if (!file || !target) return
+
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const raw = reader.result as string
+      if (!raw) return
+
+      setImageSavingId(target.id)
+      setError('')
+      try {
+        const dataUrl = await compressImage(raw)
+        const result = await window.api.products.saveImage(target.id, dataUrl)
+        if (!result?.success) throw new Error(result?.error || 'Failed to update product image.')
+        setProducts(current => current.map(p =>
+          p.id === target.id ? { ...p, image_path: result.path || dataUrl } : p
+        ))
+      } catch (err: any) {
+        setError(err?.message || 'Failed to update product image.')
+      } finally {
+        setImageSavingId(null)
+        setImageTarget(null)
+      }
+    }
+    reader.onerror = () => { setError('Failed to read the selected image.'); setImageTarget(null) }
+    reader.readAsDataURL(file)
+  }
+
   const handleSave = async () => {
     setSaving(true)
-    if (tab === 'prices') {
-      const updates = Object.entries(edits).map(([id, v]) => {
-        const nextPrice = v.price ?? v.retail_price ?? v.base_price
-        return {
-          id,
-          ...(nextPrice !== undefined ? {
-            price: nextPrice,
-            retail_price: nextPrice,
-            base_price: nextPrice,
-          } : {}),
-          ...(v.markup_pct !== undefined ? { markup_pct: v.markup_pct } : {}),
-        }
-      })
-      await window.api.products.bulkPrices(updates)
-    } else if (tab === 'names') {
-      const updates = Object.entries(edits).map(([id, v]) => ({ id, ...v }))
-      await window.api.products.bulkNames(updates)
-    } else if (tab === 'barcodes') {
-      const updates = Object.entries(edits).map(([id, v]) => ({ id, ...v }))
-      await window.api.products.bulkBarcodes(updates)
-    } else if (tab === 'costs') {
-      const updates = Object.entries(edits).map(([id, v]) => {
-        const nextCost = v.cost ?? v.base_cost
-        return { id, cost: nextCost, base_cost: nextCost }
-      })
-      await window.api.products.bulkCosts(updates)
+    setError('')
+    try {
+      let result: any = { success: true }
+      if (tab === 'prices') {
+        const updates = Object.entries(edits).map(([id, v]) => {
+          const nextPrice = v.price ?? v.retail_price ?? v.base_price
+          return {
+            id,
+            ...(nextPrice !== undefined ? {
+              price: nextPrice,
+              retail_price: nextPrice,
+              base_price: nextPrice,
+            } : {}),
+            ...(v.markup_pct !== undefined ? { markup_pct: v.markup_pct } : {}),
+          }
+        })
+        result = await window.api.products.bulkPrices(updates)
+      } else if (tab === 'names') {
+        const updates = Object.entries(edits).map(([id, v]) => ({ id, ...v }))
+        result = await window.api.products.bulkNames(updates)
+      } else if (tab === 'barcodes') {
+        const updates = Object.entries(edits).map(([id, v]) => ({ id, ...v }))
+        result = await window.api.products.bulkBarcodes(updates)
+      } else if (tab === 'costs') {
+        const updates = Object.entries(edits).map(([id, v]) => {
+          const nextCost = v.cost ?? v.base_cost
+          return { id, cost: nextCost, base_cost: nextCost }
+        })
+        result = await window.api.products.bulkCosts(updates)
+      }
+
+      if (!result?.success) {
+        throw new Error(result?.error || 'Failed to save product updates.')
+      }
+
+      setEdits({})
+      await load()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to save product updates.')
+    } finally {
+      setSaving(false)
     }
-    setEdits({})
-    setSaving(false)
-    load()
   }
 
   const editCount = Object.keys(edits).length
@@ -122,6 +180,8 @@ export default function BulkEditPricesPage() {
 
   return (
     <div className="h-screen flex flex-col bg-transparent">
+      <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleImagePick} />
+      <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleImagePick} />
 
       {/* ── Top bar ── */}
       <div className="brand-gradient relative flex h-14 md:h-20 shrink-0 items-center gap-2 md:gap-3 overflow-hidden border-b border-white/15 px-3 md:px-5">
@@ -187,6 +247,7 @@ export default function BulkEditPricesPage() {
                 {tab === 'prices' ? 'Bulk Price Management'
                   : tab === 'names' ? 'Bulk Product Naming'
                   : tab === 'barcodes' ? 'Bulk Barcode Management'
+                  : tab === 'photos' ? 'Product Photos'
                   : 'Bulk Cost Management'}
               </h2>
             </div>
@@ -211,107 +272,179 @@ export default function BulkEditPricesPage() {
             <input value={search} onChange={e => setSearch(e.target.value)}
               placeholder="Search products or scan barcode..."
               className="brand-ring w-full rounded-2xl border border-emerald-900/10 bg-white/85 px-4 py-2.5 text-sm text-slate-700" />
+            {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
           </div>
 
           {/* ── Product list ── */}
-          <div className="flex-1 overflow-y-auto px-3 md:px-4 py-3 space-y-2.5">
-            {filtered.map(p => {
-              const edit = edits[p.id] || {}
-              const isSelected = selected.has(p.id)
-              const price = edit.price ?? edit.retail_price ?? edit.base_price ?? p.retail_price ?? p.base_price
-              const cost = edit.cost ?? edit.base_cost ?? p.base_cost
-              const name = edit.name ?? p.name
-              const barcode = edit.barcode ?? p.barcode ?? ''
-              const markup = edit.markup_pct ?? p.markup_pct
-              const profit = price - cost
-
-              return (
-                <div key={p.id}
-                  onClick={() => priceMode === 'percentage' && toggleSelect(p.id)}
-                  className={`rounded-[22px] border p-3 md:p-4 transition duration-200 ${
-                    isSelected && priceMode === 'percentage'
-                      ? 'border-[var(--brand-500)] bg-[var(--brand-50)] shadow-[0_12px_28px_rgba(36,152,90,0.12)]'
-                      : 'border-emerald-900/10 bg-white/82 shadow-[0_8px_20px_rgba(22,49,39,0.06)] hover:-translate-y-0.5'
-                  }`}
-                >
-                  {/* Top row: image + name + stats */}
-                  <div className="flex items-start gap-3">
-                    <div className="h-12 w-12 md:h-16 md:w-16 overflow-hidden rounded-xl md:rounded-2xl bg-[linear-gradient(180deg,#f4faf6_0%,#e7f4eb_100%)] shrink-0">
-                      {p.image_path && <img src={getProductImageSrc(p.image_path)} alt={p.name || ''} className="w-full h-full object-cover" />}
+          <div className="flex-1 overflow-y-auto px-3 md:px-4 py-3">
+            {tab === 'photos' ? (
+              /* ── Photos grid ── */
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {filtered.map(p => {
+                  const isSavingImage = imageSavingId === p.id
+                  const imgSrc = p.image_path ? getProductImageSrc(p.image_path) : ''
+                  return (
+                    <div key={p.id} className="rounded-2xl border border-emerald-900/10 bg-white/82 shadow-sm overflow-hidden flex flex-col">
+                      {/* Photo area */}
+                      <div className="relative aspect-square bg-gradient-to-b from-gray-50 to-gray-100">
+                        {imgSrc
+                          ? <img src={imgSrc} alt={p.name} className="w-full h-full object-cover" />
+                          : (
+                            <div className="w-full h-full flex flex-col items-center justify-center gap-1 text-gray-300">
+                              <ImageIcon size={28} />
+                              <span className="text-[10px] font-medium">No photo</span>
+                            </div>
+                          )
+                        }
+                        {isSavingImage && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-slate-900/50">
+                            <span className="text-xs font-semibold text-white">Saving…</span>
+                          </div>
+                        )}
+                      </div>
+                      {/* Name */}
+                      <p className="px-2 pt-2 pb-1 text-xs font-semibold text-slate-700 truncate">{p.name}</p>
+                      {/* Action buttons */}
+                      <div className="flex gap-1.5 px-2 pb-2">
+                        <button
+                          type="button"
+                          onClick={() => openImagePicker(p, true)}
+                          disabled={isSavingImage}
+                          className="flex-1 flex items-center justify-center gap-1 rounded-xl bg-sky-500 py-1.5 text-[11px] font-medium text-white hover:bg-sky-600 disabled:opacity-50 sm:hidden"
+                        >
+                          <Camera size={12} /> Camera
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openImagePicker(p, false)}
+                          disabled={isSavingImage}
+                          className="flex-1 flex items-center justify-center gap-1 rounded-xl bg-slate-700 py-1.5 text-[11px] font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                        >
+                          <ImageIcon size={12} />
+                          <span className="sm:hidden">Gallery</span>
+                          <span className="hidden sm:inline">Change Photo</span>
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                        <p className="text-base md:text-xl font-semibold tracking-tight text-slate-800 truncate">{p.name}</p>
-                        <span className="shrink-0 rounded-full bg-[var(--brand-50)] px-2 py-0.5 text-[11px] font-semibold text-[var(--brand-700)]">
-                          Sold: {p.monthly_sold}
-                        </span>
+                  )
+                })}
+                {filtered.length === 0 && (
+                  <div className="col-span-full py-16 text-center text-sm text-slate-400">No matching products found.</div>
+                )}
+              </div>
+            ) : (
+              /* ── Standard list for other tabs ── */
+              <div className="space-y-2.5">
+                {filtered.map(p => {
+                  const edit = edits[p.id] || {}
+                  const isSelected = selected.has(p.id)
+                  const price = edit.price ?? edit.retail_price ?? edit.base_price ?? p.retail_price ?? p.base_price
+                  const cost = edit.cost ?? edit.base_cost ?? p.base_cost
+                  const name = edit.name ?? p.name
+                  const barcode = edit.barcode ?? p.barcode ?? ''
+                  const markup = edit.markup_pct ?? p.markup_pct
+                  const profit = price - cost
+                  const isSavingImage = imageSavingId === p.id
+
+                  return (
+                    <div key={p.id}
+                      onClick={() => priceMode === 'percentage' && toggleSelect(p.id)}
+                      className={`rounded-[22px] border p-3 md:p-4 transition duration-200 ${
+                        isSelected && priceMode === 'percentage'
+                          ? 'border-[var(--brand-500)] bg-[var(--brand-50)] shadow-[0_12px_28px_rgba(36,152,90,0.12)]'
+                          : 'border-emerald-900/10 bg-white/82 shadow-[0_8px_20px_rgba(22,49,39,0.06)] hover:-translate-y-0.5'
+                      }`}
+                    >
+                      {/* Top row: image + name + stats */}
+                      <div className="flex items-start gap-3">
+                        <div className="relative h-12 w-12 md:h-16 md:w-16 overflow-hidden rounded-xl md:rounded-2xl bg-[linear-gradient(180deg,#f4faf6_0%,#e7f4eb_100%)] shrink-0">
+                          {p.image_path && <img src={getProductImageSrc(p.image_path)} alt={p.name || ''} className="w-full h-full object-cover" />}
+                          {isSavingImage && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-slate-900/45 text-[10px] font-semibold text-white">
+                              Saving
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                            <p className="text-base md:text-xl font-semibold tracking-tight text-slate-800 truncate">{p.name}</p>
+                            <span className="shrink-0 rounded-full bg-[var(--brand-50)] px-2 py-0.5 text-[11px] font-semibold text-[var(--brand-700)]">
+                              Sold: {p.monthly_sold}
+                            </span>
+                          </div>
+                          {tab === 'prices' && (
+                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs font-medium text-slate-500">
+                              <span>Cost: ₱{cost.toFixed(2)}</span>
+                              {markup != null && <span className="text-[var(--brand-700)]">Markup: {markup}%</span>}
+                              <span>Price: ₱{price.toFixed(2)}</span>
+                              <span className={profit >= 0 ? 'text-green-600' : 'text-red-500'}>Profit: ₱{profit.toFixed(2)}</span>
+                            </div>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); openImagePicker(p) }}
+                          disabled={isSavingImage}
+                          className="shrink-0 rounded-full border border-emerald-900/10 bg-white/90 p-2 text-slate-500 transition hover:bg-white hover:text-[var(--brand-700)] disabled:opacity-50"
+                          title="Edit photo"
+                        >
+                          <ImageIcon size={16} />
+                        </button>
+                        {tab === 'prices' && priceMode === 'percentage' && isSelected && (
+                          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--brand-600)] text-white shadow-sm">
+                            <Check size={15} />
+                          </div>
+                        )}
                       </div>
 
-                      {tab === 'prices' && (
-                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs font-medium text-slate-500">
-                          <span>Cost: ₱{cost.toFixed(2)}</span>
-                          {markup != null && <span className="text-[var(--brand-700)]">Markup: {markup}%</span>}
-                          <span>Price: ₱{price.toFixed(2)}</span>
-                          <span className={profit >= 0 ? 'text-green-600' : 'text-red-500'}>Profit: ₱{profit.toFixed(2)}</span>
+                      {tab === 'prices' && priceMode === 'manual' && (
+                        <div className="mt-2.5 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                          <span className="text-slate-400 text-sm shrink-0">₱</span>
+                          <input
+                            value={price}
+                            onChange={e => setEdits(ed => ({ ...ed, [p.id]: { ...ed[p.id], price: parseFloat(e.target.value) || 0 } }))}
+                            type="number"
+                            className="brand-ring flex-1 max-w-[140px] rounded-2xl border border-emerald-900/10 bg-white/85 px-3 py-2 text-right text-sm text-slate-700"
+                          />
+                        </div>
+                      )}
+                      {tab === 'names' && (
+                        <div className="mt-2.5" onClick={e => e.stopPropagation()}>
+                          <input
+                            value={name}
+                            onChange={e => setEdits(ed => ({ ...ed, [p.id]: { ...ed[p.id], name: e.target.value } }))}
+                            className="brand-ring w-full rounded-2xl border border-emerald-900/10 bg-white/85 px-3 py-2 text-sm text-slate-700"
+                          />
+                        </div>
+                      )}
+                      {tab === 'barcodes' && (
+                        <div className="mt-2.5" onClick={e => e.stopPropagation()}>
+                          <input
+                            value={barcode}
+                            onChange={e => setEdits(ed => ({ ...ed, [p.id]: { ...ed[p.id], barcode: e.target.value } }))}
+                            placeholder="Enter barcode"
+                            className="brand-ring w-full rounded-2xl border border-emerald-900/10 bg-white/85 px-3 py-2 text-sm text-slate-700"
+                          />
+                        </div>
+                      )}
+                      {tab === 'costs' && (
+                        <div className="mt-2.5 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                          <span className="text-slate-400 text-sm shrink-0">₱</span>
+                          <input
+                            value={cost}
+                            onChange={e => setEdits(ed => ({ ...ed, [p.id]: { ...ed[p.id], cost: parseFloat(e.target.value) || 0 } }))}
+                            type="number"
+                            className="brand-ring flex-1 max-w-[140px] rounded-2xl border border-emerald-900/10 bg-white/85 px-3 py-2 text-right text-sm text-slate-700"
+                          />
                         </div>
                       )}
                     </div>
-
-                    {/* Checkbox for percentage mode */}
-                    {tab === 'prices' && priceMode === 'percentage' && isSelected && (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--brand-600)] text-white shadow-sm">
-                        <Check size={15} />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Input row — below the product info on mobile */}
-                  {tab === 'prices' && priceMode === 'manual' && (
-                    <div className="mt-2.5 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                      <span className="text-slate-400 text-sm shrink-0">₱</span>
-                      <input
-                        value={price}
-                        onChange={e => setEdits(ed => ({ ...ed, [p.id]: { ...ed[p.id], price: parseFloat(e.target.value) || 0 } }))}
-                        type="number"
-                        className="brand-ring flex-1 max-w-[140px] rounded-2xl border border-emerald-900/10 bg-white/85 px-3 py-2 text-right text-sm text-slate-700"
-                      />
-                    </div>
-                  )}
-                  {tab === 'names' && (
-                    <div className="mt-2.5" onClick={e => e.stopPropagation()}>
-                      <input
-                        value={name}
-                        onChange={e => setEdits(ed => ({ ...ed, [p.id]: { ...ed[p.id], name: e.target.value } }))}
-                        className="brand-ring w-full rounded-2xl border border-emerald-900/10 bg-white/85 px-3 py-2 text-sm text-slate-700"
-                      />
-                    </div>
-                  )}
-                  {tab === 'barcodes' && (
-                    <div className="mt-2.5" onClick={e => e.stopPropagation()}>
-                      <input
-                        value={barcode}
-                        onChange={e => setEdits(ed => ({ ...ed, [p.id]: { ...ed[p.id], barcode: e.target.value } }))}
-                        placeholder="Enter barcode"
-                        className="brand-ring w-full rounded-2xl border border-emerald-900/10 bg-white/85 px-3 py-2 text-sm text-slate-700"
-                      />
-                    </div>
-                  )}
-                  {tab === 'costs' && (
-                    <div className="mt-2.5 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                      <span className="text-slate-400 text-sm shrink-0">₱</span>
-                      <input
-                        value={cost}
-                        onChange={e => setEdits(ed => ({ ...ed, [p.id]: { ...ed[p.id], cost: parseFloat(e.target.value) || 0 } }))}
-                        type="number"
-                        className="brand-ring flex-1 max-w-[140px] rounded-2xl border border-emerald-900/10 bg-white/85 px-3 py-2 text-right text-sm text-slate-700"
-                      />
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-            {filtered.length === 0 && (
-              <div className="py-16 text-center text-sm text-slate-400">No matching products found.</div>
+                  )
+                })}
+                {filtered.length === 0 && (
+                  <div className="py-16 text-center text-sm text-slate-400">No matching products found.</div>
+                )}
+              </div>
             )}
           </div>
         </div>
