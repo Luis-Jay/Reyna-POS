@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Product } from '../../types'
-import { Camera, Check, Plus, Tag, Type, Barcode, DollarSign, LayoutGrid, X, Upload, Wand2, ImageIcon } from 'lucide-react'
+import { Camera, Check, Plus, Tag, Type, Barcode, DollarSign, LayoutGrid, X, Upload, Wand2, ImageIcon, Trash2 } from 'lucide-react'
 import { getProductImageSrc, compressImage } from '../../utils/images'
 
 type Tab = 'prices' | 'names' | 'barcodes' | 'costs' | 'photos'
@@ -33,6 +33,7 @@ export default function BulkEditPricesPage() {
   const [error, setError] = useState('')
   const [imageTarget, setImageTarget] = useState<Product | null>(null)
   const [imageSavingId, setImageSavingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const load = async () => {
     const data = await window.api.products.getAll()
@@ -87,6 +88,21 @@ export default function BulkEditPricesPage() {
       }
     }
     setEdits(e => ({ ...e, ...updates }))
+  }
+
+  const handleDelete = async (product: Product) => {
+    if (!confirm(`Delete "${product.name}"? This cannot be undone.`)) return
+    setDeletingId(product.id)
+    setError('')
+    try {
+      const result = await window.api.products.delete(product.id)
+      if (!result?.success) throw new Error(result?.error || 'Failed to delete product.')
+      setProducts(current => current.filter(p => p.id !== product.id))
+    } catch (err: any) {
+      setError(err?.message || 'Failed to delete product.')
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   const openImagePicker = (product: Product, useCamera = false) => {
@@ -310,9 +326,9 @@ export default function BulkEditPricesPage() {
                           type="button"
                           onClick={() => openImagePicker(p, true)}
                           disabled={isSavingImage}
-                          className="flex-1 flex items-center justify-center gap-1 rounded-xl bg-sky-500 py-1.5 text-[11px] font-medium text-white hover:bg-sky-600 disabled:opacity-50 sm:hidden"
+                          className="flex items-center justify-center gap-1 rounded-xl bg-sky-500 py-1.5 px-2 text-[11px] font-medium text-white hover:bg-sky-600 disabled:opacity-50 sm:hidden"
                         >
-                          <Camera size={12} /> Camera
+                          <Camera size={12} />
                         </button>
                         <button
                           type="button"
@@ -321,8 +337,16 @@ export default function BulkEditPricesPage() {
                           className="flex-1 flex items-center justify-center gap-1 rounded-xl bg-slate-700 py-1.5 text-[11px] font-medium text-white hover:bg-slate-800 disabled:opacity-50"
                         >
                           <ImageIcon size={12} />
-                          <span className="sm:hidden">Gallery</span>
-                          <span className="hidden sm:inline">Change Photo</span>
+                          <span>Photo</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(p)}
+                          disabled={deletingId === p.id}
+                          className="flex items-center justify-center rounded-xl bg-red-50 border border-red-100 py-1.5 px-2 text-red-500 hover:bg-red-100 disabled:opacity-50"
+                          title="Delete"
+                        >
+                          {deletingId === p.id ? <X size={12} /> : <Trash2 size={12} />}
                         </button>
                       </div>
                     </div>
@@ -389,6 +413,15 @@ export default function BulkEditPricesPage() {
                           title="Edit photo"
                         >
                           <ImageIcon size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={e => { e.stopPropagation(); handleDelete(p) }}
+                          disabled={deletingId === p.id}
+                          className="shrink-0 rounded-full border border-red-100 bg-white/90 p-2 text-red-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                          title="Delete product"
+                        >
+                          {deletingId === p.id ? <X size={16} /> : <Trash2 size={16} />}
                         </button>
                         {tab === 'prices' && priceMode === 'percentage' && isSelected && (
                           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--brand-600)] text-white shadow-sm">

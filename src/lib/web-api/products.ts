@@ -214,12 +214,14 @@ export const productsApi = {
   delete: async (id: string) => {
     try {
       const businessId = await getBusinessId()
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('catalog_products')
-        .update({ deleted_at: new Date().toISOString() })
+        .update({ deleted_at: new Date().toISOString(), is_active: false })
         .eq('id', id)
         .eq('business_id', businessId)
+        .select('id')
       assertNoError(error, 'Failed to delete product.')
+      if (!data || data.length === 0) throw new Error('Product not found or already deleted.')
       return { success: true }
     } catch (err: any) {
       return { success: false, error: err?.message }
