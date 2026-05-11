@@ -249,18 +249,18 @@ function getReceiptLayout(paperSize: string) {
     // Many "80mm" thermal printers only expose ~72mm printable width and can
     // still clip if we render too close to the right edge, so keep a centered
     // safety margin for the HTML fallback path.
-    contentWidthMm: is80mm ? 68 : 44,
-    horizontalPaddingMm: is80mm ? 3 : 2.6,
-    bodyFontPx: is80mm ? 13 : 10.5,
-    infoFontPx: is80mm ? 12 : 10,
-    storeNamePx: is80mm ? 21 : 15,
-    totalPx: is80mm ? 20 : 17,
-    qtyColPx: is80mm ? 40 : 26,
-    priceColPx: is80mm ? 72 : 46,
+    contentWidthMm: is80mm ? 66 : 40,
+    horizontalPaddingMm: is80mm ? 3.2 : 2.2,
+    bodyFontPx: is80mm ? 12.5 : 9.5,
+    infoFontPx: is80mm ? 11.5 : 9,
+    storeNamePx: is80mm ? 20 : 14,
+    totalPx: is80mm ? 19 : 14.5,
+    qtyColPx: is80mm ? 36 : 21,
+    priceColPx: is80mm ? 66 : 36,
     barcodeHeight: is80mm ? 48 : 34,
     barcodeWidth: is80mm ? 1.45 : 1.02,
-    barcodeFontPx: is80mm ? 11 : 8,
-    shortDividerWidth: is80mm ? '42mm' : '24mm',
+    barcodeFontPx: is80mm ? 10.5 : 7.5,
+    shortDividerWidth: is80mm ? '40mm' : '22mm',
     footerGapMm: is80mm ? 6 : 5,
   }
 }
@@ -371,6 +371,8 @@ function buildReceiptHtml58(
         font-size: var(--body-font);
         line-height: 1.25;
         margin: 0 auto;
+        overflow-x: hidden;
+        font-variant-numeric: tabular-nums;
       }
       .receipt {
         width: 100%;
@@ -438,6 +440,8 @@ function buildReceiptHtml58(
         width: var(--price-col-width);
         text-align: right;
         white-space: nowrap;
+        overflow: hidden;
+        text-overflow: clip;
       }
       .summary-row.total {
         margin-top: 4px;
@@ -672,6 +676,8 @@ function buildReceiptHtml(
         font-size: var(--body-font);
         line-height: 1.32;
         margin: 0 auto;
+        overflow-x: hidden;
+        font-variant-numeric: tabular-nums;
       }
       .receipt {
         width: 100%;
@@ -739,7 +745,13 @@ function buildReceiptHtml(
         word-break: break-word;
       }
       .qty-col  { text-align: center; width: var(--qty-col-width); }
-      .price-col { text-align: right; width: var(--price-col-width); white-space: nowrap; }
+      .price-col {
+        text-align: right;
+        width: var(--price-col-width);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: clip;
+      }
       .summary-row {
         display: flex;
         justify-content: space-between;
@@ -825,7 +837,7 @@ async function printHtmlReceipt(
 async function printHtmlContent(html: string, printerInterface: string) {
   const { paperSize } = getPrinterSettings()
   const paperWidthMm  = paperSize === '80mm' ? 80 : 58
-  const windowWidthPx = Math.round((paperWidthMm + (paperSize === '80mm' ? 8 : 4)) * 3.7795)
+  const windowWidthPx = Math.round((paperWidthMm + (paperSize === '80mm' ? 10 : 8)) * 3.7795)
 
   const tmpFile = path.join(os.tmpdir(), `reyna_receipt_${Date.now()}.html`)
   fs.writeFileSync(tmpFile, html, 'utf-8')

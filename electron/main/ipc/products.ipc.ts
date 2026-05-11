@@ -7,6 +7,67 @@ import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
 import { addStockBatch, applyBatchPricing, getRemainingStockBatches } from '../services/stock-batches.service'
 
+function normalizeImportKey(key: string) {
+  return String(key || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[%()]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function buildNormalizedRow(row: Record<string, any>) {
+  const normalized: Record<string, any> = {}
+  for (const [key, value] of Object.entries(row || {})) {
+    const normalizedKey = normalizeImportKey(key)
+    if (!(normalizedKey in normalized)) normalized[normalizedKey] = value
+  }
+  return normalized
+}
+
+function getImportValue(row: Record<string, any>, normalizedRow: Record<string, any>, aliases: string[]) {
+  for (const alias of aliases) {
+    if (row[alias] !== undefined) return row[alias]
+    const normalizedAlias = normalizeImportKey(alias)
+    if (normalizedRow[normalizedAlias] !== undefined) return normalizedRow[normalizedAlias]
+  }
+  return undefined
+}
+
+function parseImportedNumber(value: any): number | null {
+  if (value == null) return null
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+
+  let text = String(value).trim()
+  if (!text) return null
+
+  if (text.startsWith('=')) text = text.slice(1).trim()
+
+  const isNegativeByParens = /^\(.*\)$/.test(text)
+  text = text.replace(/[()]/g, '')
+  text = text.replace(/[^0-9,.\-]/g, '')
+
+  if (!text || text === '-' || text === '.' || text === ',') return null
+
+  if (text.includes(',')) {
+    if (text.includes('.')) {
+      text = text.replace(/,/g, '')
+    } else {
+      const parts = text.split(',')
+      const lastPart = parts[parts.length - 1]
+      if (parts.length > 2 || (lastPart && lastPart.length === 3)) {
+        text = parts.join('')
+      } else {
+        text = parts.join('.')
+      }
+    }
+  }
+
+  const parsed = Number.parseFloat(text)
+  if (!Number.isFinite(parsed)) return null
+  return isNegativeByParens ? -parsed : parsed
+}
+
 function withBatchDetails(db: ReturnType<typeof getDb>, row: any) {
   const priceTiers = getRemainingStockBatches(db, row.id).map(batch => ({
     id: batch.id,
@@ -257,32 +318,92 @@ export function registerProductHandlers() {
     const tx = db.transaction(() => {
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]
+        const normalizedRow = buildNormalizedRow(row)
         const rowNum = i + 2
 
-        const name = String(row.name || row.Name || '').trim()
+        const name = String(getImportValue(row, normalizedRow, ['name', 'product_name', 'item_name', 'product']) || '').trim()
         if (!name) {
           errors.push(`Row ${rowNum}: Name is required`)
           skipped++
           continue
         }
 
-        const retailPrice = parseFloat(row.price ?? row.retail_price ?? row.Price ?? 0)
-        if (isNaN(retailPrice) || retailPrice < 0) {
+        const retailPriceRaw = getImportValue(row, normalizedRow, [
+          'price',
+          'retail_price',
+          'retail price',
+          'retailprice',
+          'selling_price',
+          'selling price',
+          'srp',
+          'base_price',
+          'base price',
+        ])
+        const retailPrice = parseImportedNumber(retailPriceRaw)
+        if (retailPrice == null || retailPrice < 0) {
           errors.push(`Row ${rowNum}: Invalid price for "${name}"`)
           skipped++
           continue
         }
 
-        const wholesaleRaw = parseFloat(row.wholesale_price ?? '')
-        const wholesalePrice = isNaN(wholesaleRaw) ? retailPrice : wholesaleRaw
-        const cost = parseFloat(row.cost ?? row.Cost ?? row.base_cost ?? 0) || 0
-        const stock = parseInt(row.stock ?? row.Stock ?? row.initial_stock ?? 0, 10) || 0
-        const barcode = String(row.barcode ?? row.Barcode ?? '').trim() || null
-        const description = String(row.description ?? '').trim() || null
-        const catName = String(row.category ?? row.Category ?? '').trim()
-        const allowFractions = isTruthy(row.allow_fractions) ? 1 : 0
-        const trackInventory = isFalsy(row.track_inventory) ? 0 : 1
-        const variationGroupName = String(row.variation_group ?? '').trim()
+        const wholesaleRaw = getImportValue(row, normalizedRow, [
+          'wholesale_price',
+          'wholesale price',
+          'wholesale',
+          'wholesaleprice',
+          'bulk_price',
+          'bulk price',
+        ])
+        const wholesaleParsed = parseImportedNumber(wholesaleRaw)
+        const wholesalePrice = wholesaleParsed == null ? retailPrice : wholesaleParsed
+
+        const costRaw = getImportValue(row, normalizedRow, [
+          'cost',
+          'Cost',
+          'cost_price',
+          'cost price',
+          'base_cost',
+          'base cost',
+          'unit_cost',
+          'unit cost',
+        ])
+        const cost = parseImportedNumber(costRaw) ?? 0
+
+        const stockRaw = getImportValue(row, normalizedRow, [
+          'stock',
+          'Stock',
+          'initial_stock',
+          'initial stock',
+          'quantity',
+          'qty',
+        ])
+        const stock = Math.trunc(parseImportedNumber(stockRaw) ?? 0)
+        const barcode = String(getImportValue(row, normalizedRow, ['barcode', 'Barcode', 'bar_code']) ?? '').trim() || null
+        const description = String(getImportValue(row, normalizedRow, ['description', 'details']) ?? '').trim() || null
+        const catName = String(getImportValue(row, normalizedRow, ['category', 'Category']) ?? '').trim()
+        const allowFractions = isTruthy(getImportValue(row, normalizedRow, ['allow_fractions', 'allow fractions', 'weighted', 'by_weight'])) ? 1 : 0
+        const trackInventory = isFalsy(getImportValue(row, normalizedRow, ['track_inventory', 'track inventory'])) ? 0 : 1
+        const variationGroupName = String(getImportValue(row, normalizedRow, ['variation_group', 'variation group']) ?? '').trim()
+
+        console.info('[products:importBatch] parsed row', {
+          rowNum,
+          rawRow: row,
+          normalizedRow,
+          mapped: {
+            name,
+            retailPriceRaw,
+            retailPrice,
+            wholesaleRaw,
+            wholesalePrice,
+            costRaw,
+            cost,
+            stockRaw,
+            stock,
+            barcode,
+            catName,
+            variationGroupName,
+          },
+        })
 
         // Category
         let categoryId: string | null = null
@@ -317,13 +438,24 @@ export function registerProductHandlers() {
         // Price tiers (up to 3)
         const tiers: { min_qty: number; price: number; label: string | null }[] = []
         for (let t = 1; t <= 3; t++) {
-          const minQty = parseFloat(row[`tier${t}_min_qty`] ?? '')
-          const tierPrice = parseFloat(row[`tier${t}_price`] ?? '')
-          if (!isNaN(minQty) && !isNaN(tierPrice) && minQty > 0) {
+          const minQty = parseImportedNumber(getImportValue(row, normalizedRow, [
+            `tier${t}_min_qty`,
+            `tier${t} min qty`,
+            `tier${t}_minimum_qty`,
+            `tier${t} minimum qty`,
+          ]))
+          const tierPrice = parseImportedNumber(getImportValue(row, normalizedRow, [
+            `tier${t}_price`,
+            `tier${t} price`,
+          ]))
+          if (minQty != null && tierPrice != null && minQty > 0) {
             tiers.push({
               min_qty: minQty,
               price: tierPrice,
-              label: String(row[`tier${t}_label`] ?? '').trim() || null,
+              label: String(getImportValue(row, normalizedRow, [
+                `tier${t}_label`,
+                `tier${t} label`,
+              ]) ?? '').trim() || null,
             })
           }
         }

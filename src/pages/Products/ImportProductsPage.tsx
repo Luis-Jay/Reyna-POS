@@ -20,6 +20,28 @@ const TEMPLATE_EXAMPLE = [
   ['T-Shirt',        '250','200','150','',               'Apparel',   '0',   '',            'no',  'yes', 'Size',    '5', '230','Bulk',       '',   '',   '',           '',   '',   ''],
 ]
 
+function normalizeImportKey(key: string) {
+  return String(key || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[%()]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function getImportValue(row: Record<string, any>, aliases: string[], fallback: any = '—') {
+  for (const alias of aliases) {
+    if (row[alias] !== undefined && row[alias] !== null && row[alias] !== '') return row[alias]
+    const normalizedAlias = normalizeImportKey(alias)
+    for (const [key, value] of Object.entries(row)) {
+      if (normalizeImportKey(key) === normalizedAlias && value !== undefined && value !== null && value !== '') {
+        return value
+      }
+    }
+  }
+  return fallback
+}
+
 function downloadTemplate() {
   const rows = [TEMPLATE_HEADERS, ...TEMPLATE_EXAMPLE]
   const csv = rows.map(r => r.map(cell => `"${cell}"`).join(',')).join('\n')
@@ -66,10 +88,11 @@ function parseFile(file: File): Promise<any[]> {
 function tierSummary(row: any): string {
   const parts: string[] = []
   for (let t = 1; t <= 3; t++) {
-    const qty = row[`tier${t}_min_qty`]
-    const price = row[`tier${t}_price`]
+    const qty = getImportValue(row, [`tier${t}_min_qty`, `tier${t} min qty`, `tier${t}_minimum_qty`], '')
+    const price = getImportValue(row, [`tier${t}_price`, `tier${t} price`], '')
     if (qty !== '' && qty !== null && qty !== undefined && price !== '' && price !== null && price !== undefined) {
-      const label = row[`tier${t}_label`] ? ` (${row[`tier${t}_label`]})` : ''
+      const labelValue = getImportValue(row, [`tier${t}_label`, `tier${t} label`], '')
+      const label = labelValue ? ` (${labelValue})` : ''
       parts.push(`${qty}+→₱${price}${label}`)
     }
   }
@@ -128,11 +151,6 @@ export default function ImportProductsPage() {
     setParseError('')
     setResult(null)
     if (fileRef.current) fileRef.current.value = ''
-  }
-
-  const get = (row: any, key: string, fallback: any = '—') => {
-    const v = row[key]
-    return (v !== null && v !== undefined && v !== '') ? v : fallback
   }
 
   return (
@@ -230,25 +248,31 @@ export default function ImportProductsPage() {
                   {rows.slice(0, 20).map((row, i) => (
                     <tr key={i} className="border-b border-gray-50 last:border-0">
                       <td className="py-1.5 pr-3 text-gray-800 font-medium">
-                        {get(row, 'name', <span className="text-red-400">—</span>)}
+                        {getImportValue(row, ['name', 'product_name', 'item_name', 'product'], <span className="text-red-400">—</span>)}
                       </td>
                       <td className="py-1.5 pr-3 text-gray-600">
-                        {get(row, 'price', '') !== '—' ? `₱${get(row, 'price')}` : '—'}
+                        {getImportValue(row, ['price', 'retail_price', 'retail price', 'selling_price', 'srp'], '') !== '—'
+                          ? `₱${getImportValue(row, ['price', 'retail_price', 'retail price', 'selling_price', 'srp'])}`
+                          : '—'}
                       </td>
                       <td className="py-1.5 pr-3 text-gray-500">
-                        {get(row, 'wholesale_price', '') !== '—' ? `₱${get(row, 'wholesale_price')}` : '—'}
+                        {getImportValue(row, ['wholesale_price', 'wholesale price', 'wholesale', 'bulk_price'], '') !== '—'
+                          ? `₱${getImportValue(row, ['wholesale_price', 'wholesale price', 'wholesale', 'bulk_price'])}`
+                          : '—'}
                       </td>
                       <td className="py-1.5 pr-3 text-gray-500">
-                        {get(row, 'cost', '') !== '—' ? `₱${get(row, 'cost')}` : '—'}
+                        {getImportValue(row, ['cost', 'cost_price', 'cost price', 'base_cost', 'unit_cost'], '') !== '—'
+                          ? `₱${getImportValue(row, ['cost', 'cost_price', 'cost price', 'base_cost', 'unit_cost'])}`
+                          : '—'}
                       </td>
-                      <td className="py-1.5 pr-3 text-gray-600">{get(row, 'category')}</td>
-                      <td className="py-1.5 pr-3 text-gray-600">{get(row, 'stock', 0)}</td>
+                      <td className="py-1.5 pr-3 text-gray-600">{getImportValue(row, ['category'])}</td>
+                      <td className="py-1.5 pr-3 text-gray-600">{getImportValue(row, ['stock', 'initial_stock', 'quantity', 'qty'], 0)}</td>
                       <td className="py-1.5 pr-3 text-gray-500">
-                        {['yes', '1', 'true'].includes(String(get(row, 'allow_fractions', 'no')).toLowerCase())
+                        {['yes', '1', 'true'].includes(String(getImportValue(row, ['allow_fractions', 'allow fractions', 'weighted', 'by_weight'], 'no')).toLowerCase())
                           ? <span className="text-emerald-600 font-medium">Yes</span>
                           : 'No'}
                       </td>
-                      <td className="py-1.5 pr-3 text-gray-600">{get(row, 'variation_group')}</td>
+                      <td className="py-1.5 pr-3 text-gray-600">{getImportValue(row, ['variation_group', 'variation group'])}</td>
                       <td className="py-1.5 pr-3 text-gray-400 font-mono">{tierSummary(row)}</td>
                     </tr>
                   ))}

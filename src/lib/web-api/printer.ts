@@ -31,14 +31,14 @@ function buildReceiptHtml(order: any, store: {
   const { storeName, storeAddress, storePhone, storeTin, receiptFooter, paperSize } = store
   const is58mm = paperSize !== '80mm'
   // Dimensions: 58mm paper → 48mm printable; 80mm paper → 72mm printable
-  const receiptWidth = is58mm ? '48mm' : '72mm'
+  const receiptWidth = is58mm ? '40mm' : '66mm'
   const pageSize    = is58mm ? '58mm' : '80mm'
-  const pageMargin  = is58mm ? '3mm 4mm' : '4mm'
-  const bodyFont    = is58mm ? '11px' : '12px'
+  const pageMargin  = is58mm ? '2mm 2mm' : '3mm'
+  const bodyFont    = is58mm ? '9.5px' : '12px'
   const headerFont  = is58mm ? '14px' : '18px'
-  const totalFont   = is58mm ? '15px' : '18px'
-  const priceWidth  = is58mm ? '58px' : '70px'
-  const qtyWidth    = is58mm ? '28px' : '40px'
+  const totalFont   = is58mm ? '14.5px' : '18px'
+  const priceWidth  = is58mm ? '36px' : '66px'
+  const qtyWidth    = is58mm ? '21px' : '36px'
   const createdAt = formatDateTime(order?.created_at)
   const payments = Array.isArray(order?.payment_breakdown) ? order.payment_breakdown : []
 
@@ -117,7 +117,7 @@ function buildReceiptHtml(order: any, store: {
   <style>
     :root{color-scheme:light}
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-    body{background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;font-size:${bodyFont};line-height:1.35}
+    body{background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;font-size:${bodyFont};line-height:1.35;overflow-x:hidden;font-variant-numeric:tabular-nums}
     .receipt{width:${receiptWidth};max-width:100%;margin:0 auto;padding:6px 2px 14px}
     .center{text-align:center}
     .store-name{font-size:${headerFont};font-weight:900;text-transform:uppercase;letter-spacing:.01em;margin-bottom:2px}
@@ -128,9 +128,9 @@ function buildReceiptHtml(order: any, store: {
     table{width:100%;border-collapse:collapse;margin:6px 0 8px}
     th,td{padding:3px 0;vertical-align:top;font-size:${bodyFont}}
     th{font-weight:700}
-    .name-col{text-align:left}
+    .name-col{text-align:left;padding-right:6px;word-break:break-word}
     .qty-col{text-align:center;width:${qtyWidth}}
-    .price-col{text-align:right;width:${priceWidth};white-space:nowrap}
+    .price-col{text-align:right;width:${priceWidth};white-space:nowrap;overflow:hidden;text-overflow:clip}
     .summary-row{display:flex;justify-content:space-between;margin:2px 0;font-size:${bodyFont}}
     .summary-row.subtotal{font-size:${totalFont};font-weight:900;margin:5px 0 4px}
     .barcode-text{font-family:monospace;font-size:12px;letter-spacing:.08em;margin:5px 0}
