@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../stores/auth.store'
+import { getDefaultAuthorizedPath } from '../../lib/access'
+import { User } from '../../types'
 import { ChevronLeft, Delete } from 'lucide-react'
 
 const PIN_KEYS = ['1','2','3','4','5','6','7','8','9','','0','⌫']
-
-type User = { id: string; name: string; role: string; is_active: number }
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -26,7 +26,7 @@ export default function LoginPage() {
 
   const loadUsers = () => {
     window.api.auth.getUsers().then((list: User[]) => {
-      setUsers(list.filter((u: User) => u.is_active))
+      setUsers(list.filter((u: User) => u.is_active && !!getDefaultAuthorizedPath(u)))
     })
   }
 
@@ -90,8 +90,14 @@ export default function LoginPage() {
     try {
       const result = await window.api.auth.login(user.name, enteredPin)
       if (result.success) {
+        const destination = getDefaultAuthorizedPath(result.user)
+        if (!destination) {
+          setError('This account has no assigned modules yet. Ask the admin to enable access.')
+          setPin('')
+          return
+        }
         login(result.user)
-        navigate(result.user.role === 'admin' ? '/' : '/pos')
+        navigate(destination)
       } else {
         setError('Wrong PIN. Try again.')
         setPin('')

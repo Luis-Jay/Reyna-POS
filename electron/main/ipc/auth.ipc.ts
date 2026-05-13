@@ -120,11 +120,11 @@ function applyCloudCashiers(
       : (c.is_active ? 1 : 0)
 
     if (existing) {
-      db.prepare(`UPDATE users SET name = ?, pin = ?, role = ?, is_active = ?, deleted_at = NULL WHERE id = ?`)
-        .run(c.name, resolvedPin, c.role, resolvedIsActive, c.id)
+      db.prepare(`UPDATE users SET name = ?, pin = ?, role = ?, is_active = ?, permissions = ?, deleted_at = NULL WHERE id = ?`)
+        .run(c.name, resolvedPin, c.role, resolvedIsActive, JSON.stringify(c.permissions ?? {}), c.id)
     } else {
-      db.prepare(`INSERT OR IGNORE INTO users (id, name, pin, role, is_active, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)`)
-        .run(c.id, c.name, resolvedPin, c.role, resolvedIsActive)
+      db.prepare(`INSERT OR IGNORE INTO users (id, name, pin, role, is_active, permissions, deleted_at) VALUES (?, ?, ?, ?, ?, ?, NULL)`)
+        .run(c.id, c.name, resolvedPin, c.role, resolvedIsActive, JSON.stringify(c.permissions ?? {}))
     }
   }
 }
@@ -275,15 +275,15 @@ export function registerAuthHandlers() {
   ipcMain.handle(IPC.AUTH.CREATE_USER, async (_, data: any) => {
     const db = getDb()
     const id = uuid()
-    db.prepare(`INSERT INTO users (id, name, pin, role) VALUES (?, ?, ?, ?)`)
-      .run(id, data.name, data.pin, data.role || 'cashier')
+    db.prepare(`INSERT INTO users (id, name, pin, role, permissions) VALUES (?, ?, ?, ?, ?)`)
+      .run(id, data.name, data.pin, data.role || 'cashier', JSON.stringify(data.permissions ?? {}))
 
     // Push to cloud if logged in
     const token = await getValidCloudToken()
     if (token) {
       try {
         ensureAdminIdIsUUID()
-        const users = db.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
+        const users = db.prepare(`SELECT id, name, pin, role, is_active, permissions FROM users WHERE deleted_at IS NULL`).all()
         await axios.post(
           `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
           { cashiers: users },
@@ -311,7 +311,7 @@ export function registerAuthHandlers() {
     if (token) {
       try {
         ensureAdminIdIsUUID()
-        const users = db.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
+        const users = db.prepare(`SELECT id, name, pin, role, is_active, permissions FROM users WHERE deleted_at IS NULL`).all()
         await axios.post(
           `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
           { cashiers: users },
@@ -356,7 +356,7 @@ export function registerAuthHandlers() {
         localDb.prepare(`INSERT INTO users (id, name, pin, role, is_active, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)`)
           .run(adminId, data.adminName ?? 'Admin', data.adminPin, 'admin', 1)
       }
-      usersForCloud = localDb.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
+      usersForCloud = localDb.prepare(`SELECT id, name, pin, role, is_active, permissions FROM users WHERE deleted_at IS NULL`).all()
 
       // 1. Create Supabase Auth account
       const signupRes = await axios.post(
@@ -520,7 +520,7 @@ export function registerAuthHandlers() {
 
     try {
       ensureAdminIdIsUUID()
-      const users = getDb().prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
+      const users = getDb().prepare(`SELECT id, name, pin, role, is_active, permissions FROM users WHERE deleted_at IS NULL`).all()
       await axios.post(
         `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
         { cashiers: users },

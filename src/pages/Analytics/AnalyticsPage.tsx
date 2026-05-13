@@ -324,9 +324,9 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
       <TopBar title="Analytics & Reports" back="/" />
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex flex-wrap gap-2">
             {FILTERS.map(p => (

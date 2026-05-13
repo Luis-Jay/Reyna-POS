@@ -112,10 +112,10 @@ export default function CashierMonitoringPage() {
   const unusedUsers = users.filter(u => !activeShifts.find(s => s.user_id === u.id))
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
       <TopBar title="Cashier Monitoring" back="/" />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="mx-auto w-full max-w-3xl min-w-0 p-4 space-y-4">
 
           {/* Today's Sales Summary */}
           {(() => {

@@ -2,12 +2,20 @@
 export type UserRole = 'admin' | 'cashier'
 
 export interface UserPermissions {
+  can_access_dashboard?: boolean
+  can_access_pos?: boolean
+  can_access_sales?: boolean
+  can_access_analytics?: boolean
+  can_access_inventory?: boolean
   can_access_reports?: boolean
-  can_manage_inventory?: boolean
   can_access_expenses?: boolean
   can_access_cashier_monitoring?: boolean
-  can_manage_debtors?: boolean
+  can_access_customer_credit?: boolean
+  can_access_loyalty?: boolean
   can_manage_products?: boolean
+  // Legacy keys kept for backward-compatible permission parsing.
+  can_manage_inventory?: boolean
+  can_manage_debtors?: boolean
 }
 
 export interface User {

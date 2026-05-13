@@ -24,12 +24,14 @@
   * { box-sizing: border-box; }
   html, body, #root {
     height: 100%;
+    width: 100%;
     margin: 0;
     padding: 0;
     font-family: 'Avenir Next', 'Segoe UI', Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
     user-select: none;
     color: var(--text);
+    overflow-x: hidden;
     background:
       radial-gradient(circle at top left, rgba(56, 179, 107, 0.18), transparent 28%),
       radial-gradient(circle at top right, rgba(183, 239, 202, 0.75), transparent 26%),
@@ -38,6 +40,7 @@
   input, textarea { user-select: text; }
   body {
     color: var(--text);
+    overflow-x: hidden;
   }
   input, textarea, select, button {
     font: inherit;

@@ -27,10 +27,10 @@ export default function OrdersPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
       <TopBar title="All Orders" back="/" />
 
-      <div className="p-4 space-y-3">
+      <div className="w-full min-w-0 p-4 space-y-3">
         <select value={dateFilter} onChange={e => setDateFilter(e.target.value)}
           className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]">
           {DATE_FILTERS.map(f => <option key={f}>{f}</option>)}
@@ -40,7 +40,7 @@ export default function OrdersPage() {
           className="w-full border border-gray-200 rounded-lg px-3 py-2 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]" />
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 space-y-4">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-4 space-y-4">
         {orders.length === 0 ? (
           <p className="text-gray-400 text-center py-12">No orders found</p>
         ) : orders.map(o => (

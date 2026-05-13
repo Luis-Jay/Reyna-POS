@@ -12,6 +12,7 @@ import SavedOrdersModal from './SavedOrdersModal'
 import CameraScannerModal from './CameraScannerModal'
 import { ShoppingBag, Plus, Minus, X, Search, Clock, ClipboardList, Settings, Camera, LogOut, ShoppingCart, Grid } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
+import { getDefaultAuthorizedPath, hasPermission } from '../../lib/access'
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
 
@@ -19,6 +20,9 @@ export default function POSPage() {
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
   const cart = useCartStore()
+  const homePath = hasPermission(user, 'can_access_dashboard') ? '/' : (getDefaultAuthorizedPath(user) || '/pos')
+  const canAccessSales = hasPermission(user, 'can_access_sales')
+  const canAccessSettings = user?.role === 'admin'
 
   const [products, setProducts] = useState<Product[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -249,25 +253,29 @@ export default function POSPage() {
       {/* ── Top bar ───────────────────────────────────────────────────────────── */}
       <div className="brand-gradient relative flex h-14 md:h-20 shrink-0 items-center gap-2 md:gap-3 overflow-hidden border-b border-white/15 px-3 md:px-5">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.18),transparent_30%)]" />
-        <button onClick={() => navigate('/')} className="relative rounded-full border border-white/15 bg-white/10 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium text-white transition hover:bg-white/20">
-          Back
+        <button onClick={() => navigate(homePath)} className="relative rounded-full border border-white/15 bg-white/10 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium text-white transition hover:bg-white/20">
+          Home
         </button>
         <div className="relative">
           <p className="hidden md:block text-xs uppercase tracking-[0.24em] text-emerald-50/75">Selling Floor</p>
           <h1 className="text-base md:text-2xl font-semibold text-white leading-tight">Point of Sale</h1>
         </div>
         <div className="flex-1" />
-        {pendingCount > 0 && (
+        {canAccessSales && pendingCount > 0 && (
           <button onClick={() => navigate('/orders')} className="relative flex items-center gap-1 rounded-full bg-amber-400/95 px-2.5 py-1.5 text-xs font-semibold text-emerald-950 shadow-sm">
             <Clock size={13} /> <span className="hidden sm:inline">Pending</span>
           </button>
         )}
-        <button onClick={() => navigate('/orders')} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
-          <ClipboardList size={15} /> <span className="hidden sm:inline">Orders</span>
-        </button>
-        <button onClick={() => navigate('/settings')} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
-          <Settings size={15} /> <span className="hidden sm:inline">Config</span>
-        </button>
+        {canAccessSales && (
+          <button onClick={() => navigate('/orders')} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
+            <ClipboardList size={15} /> <span className="hidden sm:inline">Orders</span>
+          </button>
+        )}
+        {canAccessSettings && (
+          <button onClick={() => navigate('/settings')} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
+            <Settings size={15} /> <span className="hidden sm:inline">Config</span>
+          </button>
+        )}
         <button onClick={() => setShowCameraScanner(true)} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
           <Camera size={15} /> <span className="hidden sm:inline">Scan</span>
         </button>

@@ -115,7 +115,7 @@ export const authApi = {
         .from('cashiers')
         .select('*')
         .eq('business_id', businessId)
-        .eq('is_active', true)
+        .order('role', { ascending: false })
         .order('name')
 
       if (error) throw error

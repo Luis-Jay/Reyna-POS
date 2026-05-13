@@ -5,6 +5,7 @@ import { DashboardSnapshot } from '../../types'
 import { formatDate } from '../../utils/format'
 import { useAuthStore } from '../../stores/auth.store'
 import { APP_VERSION } from '../../lib/app-meta'
+import { hasPermission } from '../../lib/access'
 
 type DashboardSyncState = {
   status?: string
@@ -18,6 +19,7 @@ type DashboardSyncState = {
 
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const user = useAuthStore(s => s.user)
   const logout = useAuthStore(s => s.logout)
   const [snap, setSnap] = useState<DashboardSnapshot | null>(null)
   const [pendingCount, setPendingCount] = useState(0)
@@ -53,22 +55,22 @@ export default function DashboardPage() {
   }, [])
 
   const tiles = [
-    { label: 'POS',           icon: ShoppingCart, tone: 'from-emerald-500 to-green-700', path: '/pos' },
-    { label: 'View Orders',   icon: List,         tone: 'from-emerald-400 to-teal-700', path: '/orders' },
-    { label: 'Product List',  icon: Tag,          tone: 'from-lime-500 to-emerald-700', path: '/products' },
-    { label: 'Analytics',     icon: BarChart2,    tone: 'from-green-400 to-emerald-700', path: '/analytics' },
-    { label: 'Reports',       icon: FileText,     tone: 'from-cyan-500 to-emerald-800', path: '/reports' },
-    { label: 'Inventory',     icon: Package,      tone: 'from-teal-400 to-green-700', path: '/inventory', badge: undefined },
-    { label: 'Pending Orders',icon: Clock,        tone: 'from-amber-400 to-emerald-700', path: '/orders', badge: pendingCount > 0 ? pendingCount : undefined },
-    { label: 'Debtors',       icon: UserX,        tone: 'from-stone-500 to-emerald-900', path: '/debtors' },
-    { label: 'Expenses',          icon: Receipt,  tone: 'from-rose-400 to-red-700',     path: '/expenses' },
-    { label: 'Cashier Monitoring',icon: Users,    tone: 'from-violet-500 to-purple-700', path: '/cashier-monitoring' },
-    { label: 'Loyalty / Sukipoints', icon: Star, tone: 'from-amber-400 to-orange-600', path: '/loyalty' },
-    { label: 'Settings',      icon: Settings,     tone: 'from-zinc-500 to-green-800', path: '/settings' },
-  ]
+    { label: 'POS', icon: ShoppingCart, tone: 'from-emerald-500 to-green-700', path: '/pos', visible: hasPermission(user, 'can_access_pos') },
+    { label: 'Sales', icon: List, tone: 'from-emerald-400 to-teal-700', path: '/orders', visible: hasPermission(user, 'can_access_sales') },
+    { label: 'Products', icon: Tag, tone: 'from-lime-500 to-emerald-700', path: '/products', visible: hasPermission(user, 'can_manage_products') },
+    { label: 'Analytics', icon: BarChart2, tone: 'from-green-400 to-emerald-700', path: '/analytics', visible: hasPermission(user, 'can_access_analytics') },
+    { label: 'Reports', icon: FileText, tone: 'from-cyan-500 to-emerald-800', path: '/reports', visible: hasPermission(user, 'can_access_reports') },
+    { label: 'Inventory', icon: Package, tone: 'from-teal-400 to-green-700', path: '/inventory', badge: undefined, visible: hasPermission(user, 'can_access_inventory') },
+    { label: 'Pending Orders', icon: Clock, tone: 'from-amber-400 to-emerald-700', path: '/orders', badge: pendingCount > 0 ? pendingCount : undefined, visible: hasPermission(user, 'can_access_sales') },
+    { label: 'Customer Credit', icon: UserX, tone: 'from-stone-500 to-emerald-900', path: '/debtors', visible: hasPermission(user, 'can_access_customer_credit') },
+    { label: 'Expenses', icon: Receipt, tone: 'from-rose-400 to-red-700', path: '/expenses', visible: hasPermission(user, 'can_access_expenses') },
+    { label: 'Cashier Monitoring', icon: Users, tone: 'from-violet-500 to-purple-700', path: '/cashier-monitoring', visible: hasPermission(user, 'can_access_cashier_monitoring') },
+    { label: 'Loyalty / Sukipoints', icon: Star, tone: 'from-amber-400 to-orange-600', path: '/loyalty', visible: hasPermission(user, 'can_access_loyalty') },
+    { label: 'Settings', icon: Settings, tone: 'from-zinc-500 to-green-800', path: '/settings', visible: user?.role === 'admin' },
+  ].filter(tile => tile.visible)
 
   return (
-    <div className="min-h-screen bg-transparent flex flex-col">
+    <div className="min-h-screen overflow-hidden bg-transparent flex flex-col">
       <div className="brand-gradient relative flex h-24 items-end overflow-hidden border-b border-white/15 px-6 pb-5">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.2),transparent_28%)]" />
         <div className="relative flex w-full items-end gap-4">
@@ -103,13 +105,13 @@ export default function DashboardPage() {
               onClick={async () => { await window.api.auth.logout(); logout(); navigate('/login') }}
               className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
             >
-              ADMIN
+              {user?.role === 'admin' ? 'ADMIN' : (user?.name || 'STAFF').toUpperCase()}
             </button>
           </div>
         </div>
       </div>
 
-      <div className="flex-1 p-5">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden p-5">
         <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1.3fr_380px]">
           <div>
             <div className="glass-panel mb-5 rounded-[28px] p-5">

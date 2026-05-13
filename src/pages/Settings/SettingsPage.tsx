@@ -4,15 +4,7 @@ import TopBar from '../../components/layout/TopBar'
 import { VariationGroup, UserPermissions } from '../../types'
 import { Plus, Trash2, X, Upload, ChevronDown, ChevronUp } from 'lucide-react'
 import { useAuthStore } from '../../stores/auth.store'
-
-const PERMISSION_LABELS: Array<{ key: keyof UserPermissions; label: string; desc: string }> = [
-  { key: 'can_manage_products', label: 'Manage Products', desc: 'Add, edit, delete products' },
-  { key: 'can_manage_inventory', label: 'Manage Inventory', desc: 'View & adjust stock levels' },
-  { key: 'can_manage_debtors', label: 'Manage Debtors', desc: 'Add debtors, record payments' },
-  { key: 'can_access_reports', label: 'View Reports & Analytics', desc: 'Analytics, reports, financials' },
-  { key: 'can_access_expenses', label: 'View Expenses', desc: 'Track operating expenses' },
-  { key: 'can_access_cashier_monitoring', label: 'Cashier Monitoring', desc: 'Time-in/out, shift reports' },
-]
+import { getDefaultCashierPermissions, normalizePermissions, PERMISSION_MODULES } from '../../lib/access'
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -33,6 +25,7 @@ export default function SettingsPage() {
   const [savingPerms, setSavingPerms] = useState<string | null>(null)
   const [showAddUser, setShowAddUser] = useState(false)
   const [newUserForm, setNewUserForm] = useState({ name: '', pin: '', role: 'cashier' })
+  const [newUserPerms, setNewUserPerms] = useState<UserPermissions>(getDefaultCashierPermissions())
   const [addingUser, setAddingUser] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
@@ -71,8 +64,7 @@ export default function SettingsPage() {
     setUsers(userList)
     const perms: Record<string, UserPermissions> = {}
     for (const u of userList) {
-      try { perms[u.id] = u.permissions ? JSON.parse(u.permissions) : {} }
-      catch { perms[u.id] = {} }
+      perms[u.id] = normalizePermissions(u.permissions)
     }
     setUserPerms(perms)
     window.api.sms.getCredits().then((res: any) => {
@@ -88,8 +80,9 @@ export default function SettingsPage() {
 
   const handleSavePermissions = async (userId: string) => {
     setSavingPerms(userId)
-    await window.api.auth.updateUser(userId, { permissions: userPerms[userId] || {} })
+    await window.api.auth.updateUser(userId, { permissions: normalizePermissions(userPerms[userId] || {}) })
     setSavingPerms(null)
+    load()
   }
 
   const togglePerm = (userId: string, key: keyof UserPermissions) => {
@@ -102,8 +95,14 @@ export default function SettingsPage() {
   const handleAddUser = async () => {
     if (!newUserForm.name.trim() || !newUserForm.pin.trim()) return
     setAddingUser(true)
-    await window.api.auth.createUser({ name: newUserForm.name.trim(), pin: newUserForm.pin.trim(), role: newUserForm.role })
+    await window.api.auth.createUser({
+      name: newUserForm.name.trim(),
+      pin: newUserForm.pin.trim(),
+      role: newUserForm.role,
+      permissions: newUserForm.role === 'admin' ? {} : normalizePermissions(newUserPerms),
+    })
     setNewUserForm({ name: '', pin: '', role: 'cashier' })
+    setNewUserPerms(getDefaultCashierPermissions())
     setShowAddUser(false)
     setAddingUser(false)
     load()
@@ -278,10 +277,10 @@ export default function SettingsPage() {
   ]
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="h-screen flex flex-col overflow-hidden bg-gray-50">
       <TopBar title="Settings" back="/" />
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-2xl mx-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+        <div className="mx-auto w-full max-w-2xl min-w-0 p-4 space-y-4">
           {/* Store info */}
           <Section title="Store">
             {/* Logo upload */}
@@ -462,10 +461,10 @@ export default function SettingsPage() {
                         <p className="text-xs text-gray-400 capitalize">{u.role} {!u.is_active ? '· Inactive' : ''}</p>
                         {u.role !== 'admin' && (() => {
                           const perms = userPerms[u.id] || {}
-                          const enabled = PERMISSION_LABELS.filter(p => perms[p.key]).map(p => p.label)
+                          const enabled = PERMISSION_MODULES.filter(p => perms[p.key]).map(p => p.label)
                           return enabled.length > 0
-                            ? <p className="text-xs text-[#1a8eff] mt-0.5">{enabled.length}/{PERMISSION_LABELS.length} features enabled</p>
-                            : <p className="text-xs text-gray-300 mt-0.5">No extra access</p>
+                            ? <p className="text-xs text-[#1a8eff] mt-0.5">{enabled.length}/{PERMISSION_MODULES.length} modules enabled</p>
+                            : <p className="text-xs text-amber-500 mt-0.5">No modules assigned</p>
                         })()}
                       </div>
                     </div>
@@ -487,8 +486,30 @@ export default function SettingsPage() {
                   </div>
                   {expandedUser === u.id && u.role !== 'admin' && (
                     <div className="border-t border-gray-100 bg-gray-50 px-4 py-3 space-y-2">
-                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Feature Permissions</p>
-                      {PERMISSION_LABELS.map(({ key, label, desc }) => (
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Module Access</p>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setUserPerms(prev => ({ ...prev, [u.id]: getDefaultCashierPermissions() }))}
+                            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                          >
+                            POS Only
+                          </button>
+                          <button
+                            onClick={() => setUserPerms(prev => ({
+                              ...prev,
+                              [u.id]: PERMISSION_MODULES.reduce<UserPermissions>((acc, module) => {
+                                acc[module.key] = true
+                                return acc
+                              }, {}),
+                            }))}
+                            className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                          >
+                            Allow All
+                          </button>
+                        </div>
+                      </div>
+                      {PERMISSION_MODULES.map(({ key, label, desc }) => (
                         <div key={key} className="flex items-center justify-between py-1">
                           <div>
                             <p className="text-sm text-gray-700">{label}</p>
@@ -534,12 +555,56 @@ export default function SettingsPage() {
                 />
                 <select
                   value={newUserForm.role}
-                  onChange={e => setNewUserForm(f => ({ ...f, role: e.target.value }))}
+                  onChange={e => {
+                    const nextRole = e.target.value
+                    setNewUserForm(f => ({ ...f, role: nextRole }))
+                    if (nextRole !== 'admin') {
+                      setNewUserPerms(getDefaultCashierPermissions())
+                    }
+                  }}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
                 >
                   <option value="cashier">Cashier</option>
                   <option value="admin">Admin</option>
                 </select>
+                {newUserForm.role !== 'admin' && (
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-gray-700">Module Access</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setNewUserPerms(getDefaultCashierPermissions())}
+                          className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                        >
+                          POS Only
+                        </button>
+                        <button
+                          onClick={() => setNewUserPerms(PERMISSION_MODULES.reduce<UserPermissions>((acc, module) => {
+                            acc[module.key] = true
+                            return acc
+                          }, {}))}
+                          className="rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                        >
+                          Allow All
+                        </button>
+                      </div>
+                    </div>
+                    {PERMISSION_MODULES.map(({ key, label, desc }) => (
+                      <div key={key} className="flex items-center justify-between gap-3 py-1">
+                        <div>
+                          <p className="text-sm text-gray-700">{label}</p>
+                          <p className="text-xs text-gray-400">{desc}</p>
+                        </div>
+                        <button
+                          onClick={() => setNewUserPerms(prev => ({ ...prev, [key]: !prev[key] }))}
+                          className={`relative h-5 w-10 shrink-0 rounded-full transition-colors ${newUserPerms[key] ? 'bg-[#1a8eff]' : 'bg-gray-200'}`}
+                        >
+                          <div className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${newUserPerms[key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <button onClick={() => setShowAddUser(false)} className="flex-1 border border-gray-200 text-gray-600 py-2 rounded-xl text-sm">Cancel</button>
                   <button onClick={handleAddUser} disabled={addingUser} className="flex-1 bg-[#1a8eff] text-white py-2 rounded-xl text-sm font-semibold disabled:opacity-50">
