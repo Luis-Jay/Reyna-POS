@@ -191,17 +191,20 @@ function NewAccountForm({ onComplete, onSwitchMode }: { onComplete: () => void; 
 function RestoreForm({ onComplete, onSwitchMode }: { onComplete: () => void; onSwitchMode: () => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [localPin, setLocalPin] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   const handleSubmit = async (e: { preventDefault(): void }) => {
     e.preventDefault()
     setError('')
-    if (!email.trim() || !password) return setError('Enter your email and password.')
+    if (!email.trim() || !password || !localPin.trim()) {
+      return setError('Enter your email, password, and owner PIN.')
+    }
 
     setLoading(true)
     try {
-      const result = await window.api.auth.cloudLogin({ email, password })
+      const result = await window.api.auth.cloudLogin({ email, password, localPin: localPin.trim() })
       if (!result.success) {
         setError(result.error || 'Login failed. Check your credentials.')
         return
@@ -238,6 +241,11 @@ function RestoreForm({ onComplete, onSwitchMode }: { onComplete: () => void; onS
               <Field label="Password">
                 <input value={password} onChange={e => { setPassword(e.target.value); setError('') }}
                   type="password" placeholder="••••••••"
+                  className="brand-input" />
+              </Field>
+              <Field label="Owner PIN" hint="Use the admin PIN for this account.">
+                <input value={localPin} onChange={e => { setLocalPin(e.target.value); setError('') }}
+                  type="password" inputMode="numeric" placeholder="••••"
                   className="brand-input" />
               </Field>
             </div>

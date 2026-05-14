@@ -103,13 +103,22 @@ function applyCloudCashiers(
     const existing: any = db.prepare(`SELECT id, pin FROM users WHERE id = ?`).get(c.id)
     const existingPin = typeof existing?.pin === 'string' && existing.pin.trim() ? existing.pin : null
     const cloudPin = typeof c.pin === 'string' && c.pin.trim() ? c.pin : null
+    const preferredAdminPin =
+      c.role === 'admin' &&
+      options.fallbackAdminPin?.trim() &&
+      (!existingPin || existingPin === '1234')
+        ? options.fallbackAdminPin.trim()
+        : null
     const resolvedPin =
       cloudPin ||
+      preferredAdminPin ||
       existingPin ||
-      (c.role === 'admin' ? options.fallbackAdminPin : `restored-needs-reset-${uuid()}`)
+      (c.role === 'admin' && options.fallbackAdminPin?.trim()
+        ? options.fallbackAdminPin.trim()
+        : `restored-needs-reset-${uuid()}`)
 
-    if (!resolvedPin) {
-      throw new Error('Cloud restore needs a new owner PIN for this device.')
+    if (c.role === 'admin' && !cloudPin && !existingPin && !options.fallbackAdminPin?.trim()) {
+      throw new Error('Owner PIN required to restore this account on this device.')
     }
 
     // Cloud restores do not return cashier PINs. Keep non-admin restored users inactive
@@ -155,7 +164,7 @@ function getLocalSetupFallback() {
     storeName: (storeNameRow?.value || 'Reyna Store').trim(),
     storePhone: storePhoneRow?.value || '',
     adminName: (adminUser?.name || 'Admin').trim(),
-    adminPin: adminUser?.pin || '1234',
+    adminPin: typeof adminUser?.pin === 'string' && adminUser.pin.trim() ? adminUser.pin.trim() : null,
   }
 }
 
@@ -192,15 +201,20 @@ async function fetchCloudBusinessSnapshot(accessToken: string) {
   )
 }
 
-async function repairMissingCloudBusiness(accessToken: string) {
+async function repairMissingCloudBusiness(accessToken: string, localPin?: string) {
   const fallback = getLocalSetupFallback()
+  const adminPin = localPin?.trim() || fallback.adminPin
+
+  if (!adminPin) {
+    throw new Error('Owner PIN required to rebuild the cloud account on this device.')
+  }
 
   await axios.post(
     `${SUPABASE_FUNCTIONS_URL}/business-setup`,
     {
       storeName: fallback.storeName,
       storePhone: fallback.storePhone,
-      adminPin: fallback.adminPin,
+      adminPin,
       adminName: fallback.adminName,
     },
     { headers: { Authorization: `Bearer ${accessToken}` }, timeout: 15000 }
@@ -461,7 +475,7 @@ export function registerAuthHandlers() {
         }
 
         try {
-          await repairMissingCloudBusiness(access_token)
+          await repairMissingCloudBusiness(access_token, data.localPin)
           syncRes = await fetchCloudBusinessSnapshot(access_token)
         } catch (repairErr: any) {
           return { success: false, error: getFriendlyCloudError(repairErr, 'sync') }
@@ -490,9 +504,9 @@ export function registerAuthHandlers() {
       // 4. Switch this device into the signed-in account's isolated storage
       setActiveCloudUserId(user.id)
 
-      const fallbackAdminPin = (typeof data.localPin === 'string' && data.localPin.trim())
+      const fallbackAdminPin = typeof data.localPin === 'string' && data.localPin.trim()
         ? data.localPin.trim()
-        : '1234'
+        : undefined
 
       // 5. Upsert all cashiers into local users table
       applyCloudCashiers(cashiers, { fallbackAdminPin })

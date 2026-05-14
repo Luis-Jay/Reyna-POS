@@ -47,21 +47,64 @@ function restoreSettings(settings: Record<string, string>) {
   tx()
 }
 
-function applyCloudCashiers(cashiers: any[]) {
+function getLocalAdminSnapshot() {
+  try {
+    const admin = getDb().prepare(`
+      SELECT id, pin
+      FROM users
+      WHERE role = 'admin' AND deleted_at IS NULL
+      ORDER BY created_at ASC
+      LIMIT 1
+    `).get() as { id?: string; pin?: string } | undefined
+
+    return {
+      id: admin?.id ?? null,
+      pin: typeof admin?.pin === 'string' && admin.pin.trim() ? admin.pin.trim() : null,
+    }
+  } catch {
+    return { id: null, pin: null }
+  }
+}
+
+function applyCloudCashiers(cashiers: any[], options: { fallbackAdminPin?: string | null } = {}) {
   const db = getDb()
   for (const cashier of cashiers) {
-    const existing: any = db.prepare(`SELECT id FROM users WHERE id = ?`).get(cashier.id)
+    const existing: any = db.prepare(`SELECT id, pin FROM users WHERE id = ?`).get(cashier.id)
+    const existingPin = typeof existing?.pin === 'string' && existing.pin.trim() ? existing.pin.trim() : null
+    const cloudPin = typeof cashier.pin === 'string' && cashier.pin.trim() ? cashier.pin.trim() : null
+    const preferredAdminPin =
+      cashier.role === 'admin' &&
+      options.fallbackAdminPin?.trim() &&
+      (!existingPin || existingPin === '1234')
+        ? options.fallbackAdminPin.trim()
+        : null
+    const resolvedPin =
+      cloudPin ||
+      preferredAdminPin ||
+      existingPin ||
+      (cashier.role === 'admin' && options.fallbackAdminPin?.trim()
+        ? options.fallbackAdminPin.trim()
+        : `restored-needs-reset-${cashier.id}`)
+    const restoredWithoutPin = !cloudPin && !existingPin
+    const resolvedIsActive = restoredWithoutPin && cashier.role !== 'admin'
+      ? 0
+      : (cashier.is_active ? 1 : 0)
+
+    if (cashier.role === 'admin' && !cloudPin && !existingPin && !options.fallbackAdminPin?.trim()) {
+      throw new Error('Owner PIN required to restore this account on this device.')
+    }
+
     if (existing) {
-      db.prepare(`UPDATE users SET name = ?, pin = ?, role = ?, is_active = ? WHERE id = ?`)
-        .run(cashier.name, cashier.pin, cashier.role, cashier.is_active ? 1 : 0, cashier.id)
+      db.prepare(`UPDATE users SET name = ?, pin = ?, role = ?, is_active = ?, deleted_at = NULL WHERE id = ?`)
+        .run(cashier.name, resolvedPin, cashier.role, resolvedIsActive, cashier.id)
     } else {
-      db.prepare(`INSERT OR IGNORE INTO users (id, name, pin, role, is_active) VALUES (?, ?, ?, ?, ?)`)
-        .run(cashier.id, cashier.name, cashier.pin, cashier.role, cashier.is_active ? 1 : 0)
+      db.prepare(`INSERT OR IGNORE INTO users (id, name, pin, role, is_active, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)`)
+        .run(cashier.id, cashier.name, resolvedPin, cashier.role, resolvedIsActive)
     }
   }
 }
 
-async function restoreCloudAccount(accessToken: string) {
+async function restoreCloudAccount(accessToken: string, options: { fallbackAdminPin?: string | null } = {}) {
   try {
     const syncRes = await axios.get(
       `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
@@ -84,7 +127,7 @@ async function restoreCloudAccount(accessToken: string) {
 
     // Keep this a no-op when cashiers are missing; an empty array should not deactivate local users.
     if (Array.isArray(data.cashiers) && data.cashiers.length > 0) {
-      applyCloudCashiers(data.cashiers)
+      applyCloudCashiers(data.cashiers, options)
     }
   } catch (error: any) {
     console.error('Failed to restore cloud account:', error.message)
@@ -136,6 +179,7 @@ export function registerBackupHandlers() {
     try {
       const dbPath = getCurrentDbPath()
       const preservedSettings = loadPreservedSettings()
+      const preservedAdmin = getLocalAdminSnapshot()
       closeDb()
       if (fs.existsSync(dbPath)) {
         fs.unlinkSync(dbPath)
@@ -149,7 +193,7 @@ export function registerBackupHandlers() {
       const accessToken = preservedSettings.cloud_access_token
       if (accessToken) {
         try {
-          await restoreCloudAccount(accessToken)
+          await restoreCloudAccount(accessToken, { fallbackAdminPin: preservedAdmin.pin })
         } catch (err) {
           console.warn('[backup:reset] Cloud restore after reset failed:', err)
         }
