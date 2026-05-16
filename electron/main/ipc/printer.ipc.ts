@@ -246,11 +246,12 @@ function getReceiptLayout(paperSize: string) {
 
   return {
     paperWidthMm: is80mm ? 80 : 58,
-    // Many "80mm" thermal printers only expose ~72mm printable width and can
-    // still clip if we render too close to the right edge, so keep a centered
-    // safety margin for the HTML fallback path.
-    contentWidthMm: is80mm ? 66 : 40,
-    horizontalPaddingMm: is80mm ? 3.2 : 2.2,
+    // Keep the receipt centered while using most of the printable area.
+    // Many "80mm" printers expose ~72mm printable width; common 58mm printers
+    // expose ~52mm. Matching those widths prevents the HTML fallback receipt
+    // from looking squeezed to one side.
+    contentWidthMm: is80mm ? 72 : 52,
+    horizontalPaddingMm: is80mm ? 4 : 3,
     bodyFontPx: is80mm ? 12.5 : 9.5,
     infoFontPx: is80mm ? 11.5 : 9,
     storeNamePx: is80mm ? 20 : 14,
@@ -375,8 +376,8 @@ function buildReceiptHtml58(
         font-variant-numeric: tabular-nums;
       }
       .receipt {
-        width: 100%;
-        max-width: var(--content-width);
+        width: var(--content-width);
+        max-width: calc(var(--paper-width) - (var(--side-pad) * 2));
         margin: 0 auto;
         padding: 2.8mm var(--side-pad) 4.5mm;
       }
@@ -680,8 +681,8 @@ function buildReceiptHtml(
         font-variant-numeric: tabular-nums;
       }
       .receipt {
-        width: 100%;
-        max-width: var(--content-width);
+        width: var(--content-width);
+        max-width: calc(var(--paper-width) - (var(--side-pad) * 2));
         margin: 0 auto;
         padding: 4mm var(--side-pad) var(--footer-gap);
       }
