@@ -114,35 +114,40 @@ export default function BulkEditPricesPage() {
     }
   }
 
-  const handleImagePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImagePick = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     const target = imageTarget
-    e.target.value = ''
+    e.target.value = '' // reset so the same file can be picked again
     if (!file || !target) return
 
-    const reader = new FileReader()
-    reader.onload = async () => {
-      const raw = reader.result as string
-      if (!raw) return
+    setImageSavingId(target.id)
+    setImageTarget(null)
+    setError('')
 
-      setImageSavingId(target.id)
-      setError('')
-      try {
-        const dataUrl = await compressImage(raw)
+    // Read → compress → save, chained as promises (no async-in-callback)
+    const readFile = () => new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result as string)
+      reader.onerror = () => reject(new Error('Could not read image file.'))
+      reader.readAsDataURL(file)
+    })
+
+    readFile()
+      .then(raw => compressImage(raw))
+      .then(async dataUrl => {
         const result = await window.api.products.saveImage(target.id, dataUrl)
-        if (!result?.success) throw new Error(result?.error || 'Failed to update product image.')
+        if (!result?.success) throw new Error(result?.error || 'Failed to save image.')
+        // Update the in-memory list so the new photo shows immediately
         setProducts(current => current.map(p =>
-          p.id === target.id ? { ...p, image_path: result.path || dataUrl } : p
+          p.id === target.id ? { ...p, image_path: dataUrl } : p
         ))
-      } catch (err: any) {
-        setError(err?.message || 'Failed to update product image.')
-      } finally {
-        setImageSavingId(null)
-        setImageTarget(null)
-      }
-    }
-    reader.onerror = () => { setError('Failed to read the selected image.'); setImageTarget(null) }
-    reader.readAsDataURL(file)
+      })
+      .catch((err: any) => {
+        const msg = err?.message || 'Failed to update product image.'
+        setError(msg)
+        alert(msg) // make errors visible on mobile where the error bar is easy to miss
+      })
+      .finally(() => setImageSavingId(null))
   }
 
   const handleSave = async () => {

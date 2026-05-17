@@ -7,6 +7,85 @@ function asNumber(value: any, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
+function parseImportNumber(value: any, fallback?: number) {
+  if (value == null) return fallback
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback
+  if (typeof value === 'string') {
+    const cleaned = value.trim().replace(/,/g, '').replace(/[₱$]/g, '')
+    if (!cleaned) return fallback
+    const parsed = Number(cleaned)
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
+  return fallback
+}
+
+function parseImportBoolean(value: any, fallback = false) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value !== 0
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (!normalized) return fallback
+    if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true
+    if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false
+  }
+  return fallback
+}
+
+function asTrimmedString(value: any) {
+  if (value == null) return ''
+  return String(value).trim()
+}
+
+function normalizeLookupKey(value: any) {
+  return asTrimmedString(value).toLowerCase()
+}
+
+function uniqueNameMap(rows: any[]) {
+  const counts = new Map<string, number>()
+  const ids = new Map<string, string>()
+
+  for (const row of rows ?? []) {
+    const key = normalizeLookupKey(row.name)
+    if (!key) continue
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+    ids.set(key, row.id)
+  }
+
+  const map = new Map<string, string>()
+  for (const [key, count] of counts.entries()) {
+    if (count === 1) map.set(key, ids.get(key)!)
+  }
+  return map
+}
+
+async function replacePriceTiers(
+  businessId: string,
+  productId: string,
+  tiers: { min_qty: number; price: number; label?: string | null }[],
+) {
+  const { error: deleteError } = await supabase
+    .from('price_tiers')
+    .delete()
+    .eq('business_id', businessId)
+    .eq('product_id', productId)
+  assertNoError(deleteError, 'Failed to clear price tiers.')
+
+  if (tiers.length === 0) return
+
+  const { error: insertError } = await supabase
+    .from('price_tiers')
+    .insert(
+      tiers.map((tier) => ({
+        business_id: businessId,
+        product_id: productId,
+        min_qty: tier.min_qty,
+        price: tier.price,
+        label: tier.label || null,
+      })),
+    )
+  assertNoError(insertError, 'Failed to save price tiers.')
+}
+
 function toImagePath(p: any) {
   if (typeof p.image_path === 'string' && p.image_path.trim()) return p.image_path
   if (typeof p.image_url === 'string' && p.image_url.trim()) return p.image_url
@@ -297,81 +376,212 @@ export const productsApi = {
     }
   },
 
-  // Upload image to Supabase Storage and store the public URL in image_url.
-  // Storing the URL (not base64) keeps DB rows small and reads reliable.
+  // Store compressed base64 image directly in the image_url column.
+  // Compression caps images at ~100KB so the column update is fast and reliable.
   saveImage: async (productId: string, dataUrl: string) => {
     try {
       const businessId = await getBusinessId()
 
-      // Convert base64 data URL → Blob for Storage upload
-      const [header, b64] = dataUrl.split(',')
-      const mime = header.match(/:(.*?);/)?.[1] || 'image/jpeg'
-      const binary = atob(b64)
-      const bytes = new Uint8Array(binary.length)
-      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-      const blob = new Blob([bytes], { type: mime })
+      // Guard: reject obviously broken data URLs
+      if (!dataUrl || !dataUrl.startsWith('data:')) {
+        throw new Error('Invalid image data.')
+      }
 
-      // Upsert into product-images bucket at businessId/productId.jpg
-      const storagePath = `${businessId}/${productId}.jpg`
-      const { error: uploadError } = await supabase.storage
-        .from('product-images')
-        .upload(storagePath, blob, { upsert: true, contentType: 'image/jpeg' })
-      if (uploadError) throw new Error(uploadError.message)
+      const { error } = await supabase
+        .from('catalog_products')
+        .update({ image_url: dataUrl, updated_at: new Date().toISOString() })
+        .eq('id', productId)
+        .eq('business_id', businessId)
 
-      // Get permanent public URL (no expiry — bucket is public)
-      const { data: urlData } = supabase.storage
-        .from('product-images')
-        .getPublicUrl(storagePath)
-      const publicUrl = urlData.publicUrl
+      if (error) throw new Error(error.message)
 
-      // Persist the URL in the product row
-      const { data, error } = await supabase.from('catalog_products')
-        .update({ image_url: publicUrl, updated_at: new Date().toISOString() })
-        .select('id, image_url')
-        .eq('id', productId).eq('business_id', businessId)
-        .single()
-      assertNoError(error, 'Failed to save product image reference.')
-      if (!data?.id) throw new Error('Product image was not saved. Please refresh and try again.')
-
-      return { success: true, path: publicUrl }
+      return { success: true, path: dataUrl }
     } catch (err: any) {
-      return { success: false, error: err?.message }
+      console.error('[saveImage]', err)
+      return { success: false, error: err?.message || 'Failed to save image.' }
     }
   },
 
   importBatch: async (rows: any[]) => {
     try {
       const businessId = await getBusinessId()
-      let created = 0, updated = 0, errors = 0
-      for (const row of rows) {
+      const [{ data: existingProducts, error: productsError }, { data: existingCategories, error: categoriesError }, { data: existingGroups, error: groupsError }] = await Promise.all([
+        supabase
+          .from('catalog_products')
+          .select('id, name, barcode')
+          .eq('business_id', businessId)
+          .is('deleted_at', null),
+        supabase
+          .from('catalog_categories')
+          .select('id, name')
+          .eq('business_id', businessId)
+          .is('deleted_at', null),
+        supabase
+          .from('catalog_variation_groups')
+          .select('id, name')
+          .eq('business_id', businessId)
+          .is('deleted_at', null),
+      ])
+      assertNoError(productsError, 'Failed to load existing products.')
+      assertNoError(categoriesError, 'Failed to load categories.')
+      assertNoError(groupsError, 'Failed to load variation groups.')
+
+      const categoryMap = new Map((existingCategories ?? []).map((row: any) => [normalizeLookupKey(row.name), row.id]))
+      const variationGroupMap = new Map((existingGroups ?? []).map((row: any) => [normalizeLookupKey(row.name), row.id]))
+      const barcodeMap = new Map<string, string>()
+      for (const row of existingProducts ?? []) {
+        const barcodeKey = asTrimmedString(row.barcode)
+        if (barcodeKey) barcodeMap.set(barcodeKey, row.id)
+      }
+      const nameMap = uniqueNameMap(existingProducts ?? [])
+
+      const ensureCategory = async (name: any) => {
+        const normalized = normalizeLookupKey(name)
+        if (!normalized) return null
+        const existingId = categoryMap.get(normalized)
+        if (existingId) return existingId
+        const id = uuid()
+        const { error } = await supabase.from('catalog_categories').insert({
+          id,
+          business_id: businessId,
+          name: asTrimmedString(name),
+        })
+        assertNoError(error, `Failed to create category "${asTrimmedString(name)}".`)
+        categoryMap.set(normalized, id)
+        return id
+      }
+
+      const ensureVariationGroup = async (name: any) => {
+        const normalized = normalizeLookupKey(name)
+        if (!normalized) return null
+        const existingId = variationGroupMap.get(normalized)
+        if (existingId) return existingId
+        const id = uuid()
+        const { error } = await supabase.from('catalog_variation_groups').insert({
+          id,
+          business_id: businessId,
+          name: asTrimmedString(name),
+        })
+        assertNoError(error, `Failed to create variation group "${asTrimmedString(name)}".`)
+        variationGroupMap.set(normalized, id)
+        return id
+      }
+
+      const errors: string[] = []
+      let created = 0
+      let updated = 0
+      let skipped = 0
+
+      for (const [index, row] of rows.entries()) {
         try {
-          const id = row.id || uuid()
-          await supabase.from('catalog_products').upsert({
-            id, business_id: businessId,
-            name: row.name,
-            barcode: row.barcode || null,
-            category_id: row.category_id || null,
-            base_price: row.base_price ?? 0,
-            retail_price: row.retail_price ?? row.base_price ?? 0,
-            wholesale_price: row.wholesale_price ?? null,
-            base_cost: row.base_cost ?? 0,
-            track_inventory: true,
+          const rowLabel = `Row ${index + 2}`
+          const name = asTrimmedString(row.name)
+          if (!name) throw new Error(`${rowLabel}: product name is required.`)
+
+          const retailPrice = parseImportNumber(row.price ?? row.retail_price ?? row.base_price)
+          if (retailPrice == null || retailPrice < 0) throw new Error(`${rowLabel}: price must be a valid number.`)
+
+          const wholesalePrice = parseImportNumber(row.wholesale_price)
+          if (wholesalePrice != null && wholesalePrice < 0) {
+            throw new Error(`${rowLabel}: wholesale_price cannot be negative.`)
+          }
+
+          const baseCost = parseImportNumber(row.cost ?? row.base_cost, 0) ?? 0
+          if (baseCost < 0) throw new Error(`${rowLabel}: cost cannot be negative.`)
+
+          const stock = parseImportNumber(row.stock ?? row.quantity, 0)
+          if (stock == null || stock < 0) throw new Error(`${rowLabel}: stock must be 0 or higher.`)
+
+          const barcode = asTrimmedString(row.barcode) || null
+          const categoryId = row.category_id || await ensureCategory(row.category)
+          const variationGroupId = row.variation_group_id || await ensureVariationGroup(row.variation_group)
+          const allowFractions = parseImportBoolean(row.allow_fractions, false)
+          const trackInventory = parseImportBoolean(row.track_inventory, true)
+          const tiers: { min_qty: number; price: number; label?: string | null }[] = []
+
+          for (let tierNumber = 1; tierNumber <= 3; tierNumber++) {
+            const minQty = parseImportNumber(row[`tier${tierNumber}_min_qty`])
+            const tierPrice = parseImportNumber(row[`tier${tierNumber}_price`])
+            const label = asTrimmedString(row[`tier${tierNumber}_label`]) || null
+
+            if (minQty == null && tierPrice == null && !label) continue
+            if (minQty == null || minQty <= 0) {
+              throw new Error(`${rowLabel}: tier${tierNumber}_min_qty must be greater than 0 when a tier is provided.`)
+            }
+            if (tierPrice == null || tierPrice < 0) {
+              throw new Error(`${rowLabel}: tier${tierNumber}_price must be a valid number when a tier is provided.`)
+            }
+            tiers.push({ min_qty: minQty, price: tierPrice, label })
+          }
+
+          tiers.sort((a, b) => a.min_qty - b.min_qty)
+          for (let tierIndex = 1; tierIndex < tiers.length; tierIndex++) {
+            if (tiers[tierIndex].min_qty === tiers[tierIndex - 1].min_qty) {
+              throw new Error(`${rowLabel}: price tier minimum quantities must be unique.`)
+            }
+          }
+
+          const explicitId = asTrimmedString(row.id)
+          const matchedId =
+            explicitId ||
+            (barcode ? barcodeMap.get(barcode) : undefined) ||
+            nameMap.get(normalizeLookupKey(name)) ||
+            ''
+          const id = matchedId || uuid()
+          const hasVariations = !!variationGroupId || parseImportBoolean(row.has_variations, false)
+
+          const { error: productError } = await supabase.from('catalog_products').upsert({
+            id,
+            business_id: businessId,
+            name,
+            description: asTrimmedString(row.description) || null,
+            barcode,
+            category_id: categoryId || null,
+            base_price: retailPrice,
+            retail_price: retailPrice,
+            wholesale_price: wholesalePrice ?? null,
+            base_cost: baseCost,
+            has_variations: hasVariations,
+            variation_group_id: variationGroupId || null,
+            allow_fractions: allowFractions,
+            track_inventory: trackInventory,
             is_active: true,
+            updated_at: new Date().toISOString(),
           })
-          await supabase.from('catalog_inventory').upsert({
-            id: `inv-${id}`,
+          assertNoError(productError, `Failed to save ${name}.`)
+
+          const { error: inventoryError } = await supabase.from('catalog_inventory').upsert({
+            id: uuid(),
             business_id: businessId,
             product_id: id,
-            quantity: Number(row.quantity ?? row.stock ?? 0),
-            low_threshold: Number(row.low_threshold ?? 5),
+            quantity: stock,
+            low_threshold: parseImportNumber(row.low_threshold, 5) ?? 5,
             updated_at: new Date().toISOString(),
           }, {
             onConflict: 'business_id,product_id',
           })
-          if (row.id) updated++; else created++
-        } catch { errors++ }
+          assertNoError(inventoryError, `Failed to save inventory for ${name}.`)
+
+          await replacePriceTiers(businessId, id, tiers)
+
+          if (barcode) barcodeMap.set(barcode, id)
+          nameMap.set(normalizeLookupKey(name), id)
+
+          if (matchedId) updated++
+          else created++
+        } catch (error: any) {
+          skipped++
+          errors.push(error?.message || `Row ${index + 2}: import failed.`)
+        }
       }
-      return { success: true, created, updated, errors }
+
+      return {
+        success: true,
+        created,
+        updated,
+        skipped,
+        errors,
+      }
     } catch (err: any) {
       return { success: false, error: err?.message }
     }

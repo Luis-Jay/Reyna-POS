@@ -101,11 +101,16 @@ export default function AddProductPage() {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = async () => {
+    reader.onload = () => {
       const raw = reader.result as string
-      const compressed = await compressImage(raw)
-      setImagePreview(compressed)
-      setImageDataUrl(compressed)
+      compressImage(raw).then(compressed => {
+        setImagePreview(compressed)
+        setImageDataUrl(compressed)
+      }).catch(() => {
+        // Fall back to uncompressed if canvas fails (e.g. cross-origin sandbox)
+        setImagePreview(raw)
+        setImageDataUrl(raw)
+      })
     }
     reader.readAsDataURL(file)
   }
