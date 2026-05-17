@@ -1,6 +1,9 @@
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { useAuthStore } from './stores/auth.store'
+import { canAccessModule, getDefaultRouteForUser, ModuleId } from './lib/access'
+import { supabase } from './lib/supabase'
+import { clearBusinessId } from './lib/web-api/context'
 import ActivationPage from './pages/Activation/ActivationPage'
 import SetupPage from './pages/Setup/SetupPage'
 import LoginPage from './pages/Login/LoginPage'
@@ -32,8 +35,20 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function RequireAdmin({ children }: { children: React.ReactNode }) {
   const user = useAuthStore(s => s.user)
   if (!user) return <Navigate to="/login" replace />
-  if (user.role !== 'admin') return <Navigate to="/pos" replace />
+  if (user.role !== 'admin') return <Navigate to={getDefaultRouteForUser(user)} replace />
   return <>{children}</>
+}
+
+function RequireModule({ moduleId, children }: { moduleId: ModuleId; children: React.ReactNode }) {
+  const user = useAuthStore(s => s.user)
+  if (!user) return <Navigate to="/login" replace />
+  if (!canAccessModule(user, moduleId)) return <Navigate to={getDefaultRouteForUser(user)} replace />
+  return <>{children}</>
+}
+
+function RouteFallback() {
+  const user = useAuthStore(s => s.user)
+  return <Navigate to={getDefaultRouteForUser(user)} replace />
 }
 
 export default function App() {
@@ -77,6 +92,20 @@ export default function App() {
     return () => window.removeEventListener('online', handleOnline)
   }, [])
 
+  // Detect when the Supabase session expires or the refresh token becomes
+  // invalid. When that happens redirect back to the cloud sign-in screen so
+  // the user can re-authenticate instead of seeing a wall of 401 errors.
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT' || (event === 'TOKEN_REFRESHED' && !session)) {
+        clearBusinessId()
+        window.api.settings.set('setup_completed', 'false').catch(() => {})
+        setSetupComplete(false)
+      }
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
   if (setupComplete === null) return null // loading
 
   if (!setupComplete) {
@@ -87,27 +116,36 @@ export default function App() {
     <HashRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/" element={<RequireAdmin><DashboardPage /></RequireAdmin>} />
-        <Route path="/pos" element={<RequireAuth><POSPage /></RequireAuth>} />
-        <Route path="/orders" element={<RequireAdmin><OrdersPage /></RequireAdmin>} />
-        <Route path="/products" element={<RequireAdmin><ProductsPage /></RequireAdmin>} />
-        <Route path="/products/add" element={<RequireAdmin><AddProductPage /></RequireAdmin>} />
-        <Route path="/products/:id/edit" element={<RequireAdmin><AddProductPage /></RequireAdmin>} />
-        <Route path="/products/prices" element={<RequireAdmin><BulkEditPricesPage /></RequireAdmin>} />
-        <Route path="/products/categories" element={<RequireAdmin><CategoriesPage /></RequireAdmin>} />
-        <Route path="/products/import" element={<RequireAdmin><ImportProductsPage /></RequireAdmin>} />
-        <Route path="/inventory" element={<RequireAdmin><InventoryPage /></RequireAdmin>} />
-        <Route path="/inventory/report" element={<RequireAdmin><InventoryReportPage /></RequireAdmin>} />
-        <Route path="/debtors" element={<RequireAuth><DebtorsPage /></RequireAuth>} />
-        <Route path="/debtors/:id" element={<RequireAuth><DebtorDetailPage /></RequireAuth>} />
-        <Route path="/analytics" element={<RequireAdmin><AnalyticsPage /></RequireAdmin>} />
-        <Route path="/reports" element={<RequireAdmin><ReportsPage /></RequireAdmin>} />
+        <Route path="/" element={<RequireModule moduleId="dashboard"><DashboardPage /></RequireModule>} />
+        <Route path="/pos" element={<RequireModule moduleId="pos"><POSPage /></RequireModule>} />
+        <Route path="/orders" element={<RequireModule moduleId="sales"><OrdersPage /></RequireModule>} />
+        <Route path="/products" element={<RequireModule moduleId="products"><ProductsPage /></RequireModule>} />
+        <Route path="/products/add" element={<RequireModule moduleId="products"><AddProductPage /></RequireModule>} />
+        <Route path="/products/:id/edit" element={<RequireModule moduleId="products"><AddProductPage /></RequireModule>} />
+        <Route path="/products/prices" element={<RequireModule moduleId="products"><BulkEditPricesPage /></RequireModule>} />
+        <Route path="/products/categories" element={<RequireModule moduleId="products"><CategoriesPage /></RequireModule>} />
+        <Route path="/products/import" element={<RequireModule moduleId="products"><ImportProductsPage /></RequireModule>} />
+        <Route path="/inventory" element={<RequireModule moduleId="inventory"><InventoryPage /></RequireModule>} />
+        <Route path="/inventory/report" element={<RequireModule moduleId="inventory"><InventoryReportPage /></RequireModule>} />
+        <Route path="/debtors" element={<RequireModule moduleId="customer_credit"><DebtorsPage /></RequireModule>} />
+        <Route path="/debtors/:id" element={<RequireModule moduleId="customer_credit"><DebtorDetailPage /></RequireModule>} />
+        <Route path="/analytics" element={<RequireModule moduleId="sales"><AnalyticsPage /></RequireModule>} />
+        <Route path="/reports" element={<RequireModule moduleId="reports"><ReportsPage /></RequireModule>} />
         <Route path="/pro" element={<RequireAdmin><ActivationPage onActivated={() => {}} /></RequireAdmin>} />
         <Route path="/settings" element={<RequireAdmin><SettingsPage /></RequireAdmin>} />
-        <Route path="/expenses" element={<RequireAdmin><ExpensesPage /></RequireAdmin>} />
-        <Route path="/cashier-monitoring" element={<RequireAdmin><CashierMonitoringPage /></RequireAdmin>} />
-        <Route path="/loyalty" element={<RequireAuth><LoyaltyPage /></RequireAuth>} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="/expenses" element={<RequireModule moduleId="expenses"><ExpensesPage /></RequireModule>} />
+        <Route path="/cashier-monitoring" element={<RequireModule moduleId="cashier_monitoring"><CashierMonitoringPage /></RequireModule>} />
+        <Route path="/loyalty" element={<RequireModule moduleId="loyalty"><LoyaltyPage /></RequireModule>} />
+        <Route path="/no-access" element={<RequireAuth>
+          <div className="min-h-screen flex items-center justify-center p-6">
+            <div className="glass-panel max-w-md rounded-[28px] p-6 text-center">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-700/70">Access Required</p>
+              <h1 className="mt-2 text-2xl font-semibold text-slate-900">No modules assigned</h1>
+              <p className="mt-3 text-sm text-slate-500">This account does not have access to any Reyna POS module yet. Ask an admin to assign permissions in staff settings.</p>
+            </div>
+          </div>
+        </RequireAuth>} />
+        <Route path="*" element={<RouteFallback />} />
       </Routes>
     </HashRouter>
   )

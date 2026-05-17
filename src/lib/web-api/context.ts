@@ -5,8 +5,12 @@ let _businessId: string | null = null
 export async function getBusinessId(): Promise<string> {
   if (_businessId) return _businessId
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) throw new Error('Not authenticated')
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    // Session is gone — clear everything so the app redirects to login
+    _businessId = null
+    throw new Error('Session expired. Please sign in again.')
+  }
 
   const { data, error } = await supabase
     .from('businesses')
