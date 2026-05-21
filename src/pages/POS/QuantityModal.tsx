@@ -33,7 +33,8 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
   const [loadingOptions, setLoadingOptions] = useState(false)
   const [selectedOption, setSelectedOption] = useState<VariationOption | null>(null)
 
-  const hasVariations = !!product.has_variations && !!product.variation_group_id
+  // variation_group_id is the definitive signal — has_variations flag may be stale
+  const hasVariations = !!(product.variation_group_id)
 
   useEffect(() => {
     if (!hasVariations) return

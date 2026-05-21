@@ -12,12 +12,16 @@ import SavedOrdersModal from './SavedOrdersModal'
 import CameraScannerModal from './CameraScannerModal'
 import { ShoppingBag, Plus, Minus, X, Search, Clock, ClipboardList, Settings, Camera, LogOut, ShoppingCart, Grid } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
+import { canAccessModule, getDefaultRouteForUser } from '../../lib/access'
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
 
 export default function POSPage() {
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
+  const homeRoute = getDefaultRouteForUser(user)
+  const canAccessSales = canAccessModule(user, 'sales')
+  const canAccessSettings = user?.role === 'admin'
   const cart = useCartStore()
 
   const [products, setProducts] = useState<Product[]>([])
@@ -77,10 +81,14 @@ export default function POSPage() {
     return best ? best.price : basePrice
   }, [tierCache])
 
+  const needsModal = (product: Product) =>
+    !!(product.has_variations || product.variation_group_id || product.allow_fractions ||
+      ((product.wholesale_price ?? 0) > 0 && (product.wholesale_price ?? 0) !== (product.retail_price ?? product.base_price)))
+
   const handleScannedBarcode = useCallback(async (code: string) => {
     const product = await window.api.products.getByBarcode(code)
     if (!product) return
-    if (product.has_variations || product.allow_fractions || ((product.wholesale_price ?? 0) > 0 && (product.wholesale_price ?? 0) !== (product.retail_price ?? product.base_price))) {
+    if (needsModal(product)) {
       setQuantityProduct(product)
     } else {
       void fetchAndCacheTiers(product.id)
@@ -94,7 +102,7 @@ export default function POSPage() {
   }, [handleScannedBarcode])
 
   const handleAddProduct = (product: Product) => {
-    if (product.has_variations || product.allow_fractions || ((product.wholesale_price ?? 0) > 0 && (product.wholesale_price ?? 0) !== (product.retail_price ?? product.base_price))) {
+    if (needsModal(product)) {
       setQuantityProduct(product)
     } else {
       void fetchAndCacheTiers(product.id)
@@ -244,30 +252,36 @@ export default function POSPage() {
   )
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-transparent">
+    <div className="h-screen flex flex-col overflow-hidden bg-transparent min-w-0">
 
       {/* ── Top bar ───────────────────────────────────────────────────────────── */}
       <div className="brand-gradient relative flex h-14 md:h-20 shrink-0 items-center gap-2 md:gap-3 overflow-hidden border-b border-white/15 px-3 md:px-5">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.18),transparent_30%)]" />
-        <button onClick={() => navigate('/')} className="relative rounded-full border border-white/15 bg-white/10 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium text-white transition hover:bg-white/20">
-          Back
-        </button>
+        {homeRoute !== '/pos' && (
+          <button onClick={() => navigate(homeRoute)} className="relative rounded-full border border-white/15 bg-white/10 px-2.5 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium text-white transition hover:bg-white/20">
+            Back
+          </button>
+        )}
         <div className="relative">
           <p className="hidden md:block text-xs uppercase tracking-[0.24em] text-emerald-50/75">Selling Floor</p>
           <h1 className="text-base md:text-2xl font-semibold text-white leading-tight">Point of Sale</h1>
         </div>
         <div className="flex-1" />
-        {pendingCount > 0 && (
+        {canAccessSales && pendingCount > 0 && (
           <button onClick={() => navigate('/orders')} className="relative flex items-center gap-1 rounded-full bg-amber-400/95 px-2.5 py-1.5 text-xs font-semibold text-emerald-950 shadow-sm">
             <Clock size={13} /> <span className="hidden sm:inline">Pending</span>
           </button>
         )}
-        <button onClick={() => navigate('/orders')} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
-          <ClipboardList size={15} /> <span className="hidden sm:inline">Orders</span>
-        </button>
-        <button onClick={() => navigate('/settings')} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
-          <Settings size={15} /> <span className="hidden sm:inline">Config</span>
-        </button>
+        {canAccessSales && (
+          <button onClick={() => navigate('/orders')} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
+            <ClipboardList size={15} /> <span className="hidden sm:inline">Orders</span>
+          </button>
+        )}
+        {canAccessSettings && (
+          <button onClick={() => navigate('/settings')} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
+            <Settings size={15} /> <span className="hidden sm:inline">Config</span>
+          </button>
+        )}
         <button onClick={() => setShowCameraScanner(true)} className="relative flex items-center gap-1 rounded-full border border-white/15 bg-white/10 px-2.5 py-1.5 text-xs text-white transition hover:bg-white/20">
           <Camera size={15} /> <span className="hidden sm:inline">Scan</span>
         </button>
@@ -346,16 +360,16 @@ export default function POSPage() {
       </div>
 
       {/* ── DESKTOP layout (>= md) ────────────────────────────────────────────── */}
-      <div className="hidden md:flex flex-1 gap-4 overflow-hidden p-4">
+      <div className="hidden md:flex flex-1 gap-4 overflow-hidden p-4 min-w-0">
         {layout === 2 ? (
           <>
             {/* Left: product browser */}
-            <div className="glass-panel flex flex-1 flex-col overflow-hidden rounded-[30px]">
+            <div className="glass-panel flex flex-1 flex-col overflow-hidden rounded-[30px] min-w-0">
               {ProductBrowser}
             </div>
 
             {/* Right: cart */}
-            <div className="glass-strong flex w-80 flex-col rounded-[30px]">
+            <div className="glass-strong flex w-80 flex-col rounded-[30px] min-w-0">
               <div className="flex items-center justify-between border-b border-emerald-900/5 px-5 py-4">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700/70">Ticket</p>
@@ -368,7 +382,7 @@ export default function POSPage() {
           </>
         ) : (
           /* Layout 1 */
-          <div className="flex-1 flex flex-col overflow-hidden p-3">
+          <div className="relative flex-1 flex flex-col overflow-hidden p-3 pr-[21rem] min-w-0">
             <div className="flex items-center gap-2 mb-3">
               <button onClick={() => setLayout(2)} className="rounded-full bg-[var(--brand-50)] px-3 py-1 text-xs font-medium text-[var(--brand-700)]">Layout 2</button>
             </div>
@@ -382,7 +396,7 @@ export default function POSPage() {
               ))}
               {cart.items.length === 0 && <p className="py-8 text-center text-slate-400">Cart is empty</p>}
             </div>
-            <div className="glass-strong absolute right-4 top-24 bottom-4 flex w-80 flex-col rounded-[28px] p-4">
+            <div className="glass-strong absolute right-4 top-4 bottom-4 flex w-80 flex-col rounded-[28px] p-4 min-w-0">
               <h3 className="mb-2 font-semibold text-slate-700">Add Products</h3>
               <input
                 value={search}
