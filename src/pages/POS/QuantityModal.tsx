@@ -111,17 +111,17 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
           </div>
 
           {/* Custom quantity */}
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2">
             <input
               value={customQty}
               onChange={e => { setCustomQty(e.target.value); setQty(parseFloat(e.target.value) || 1) }}
               placeholder="Custom Quantity"
               type="number"
               step="0.01"
-              className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-center text-base focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-center text-base focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
             />
             <button onClick={handleAdd}
-              className="bg-green-500 text-white px-6 rounded-xl font-semibold hover:bg-green-600">
+              className="w-full bg-green-500 text-white py-3 rounded-xl font-semibold hover:bg-green-600">
               Set
             </button>
           </div>
