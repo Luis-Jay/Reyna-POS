@@ -1022,8 +1022,12 @@ export default function SettingsPage() {
 
           {/* Variation Groups */}
           <Section title="Manage Variation Groups">
+            {groups.length === 0 && (
+              <p className="text-sm text-gray-400 py-2">No variation groups yet. Add one below.</p>
+            )}
             {groups.map(g => (
               <div key={g.id} className="border-b border-gray-100 py-3 last:border-0">
+                {/* Group header */}
                 <div className="flex justify-between items-center mb-2">
                   {editingGroupId === g.id ? (
                     <input
@@ -1031,58 +1035,79 @@ export default function SettingsPage() {
                       value={editingGroupName}
                       onChange={e => setEditingGroupName(e.target.value)}
                       onBlur={() => handleRenameGroup(g.id)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleRenameGroup(g.id); if (e.key === 'Escape') { setEditingGroupId(null); setEditingGroupName('') } }}
-                      className="flex-1 border border-[#1a8eff] rounded-lg px-2 py-1 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1a8eff] mr-2"
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleRenameGroup(g.id)
+                        if (e.key === 'Escape') { setEditingGroupId(null); setEditingGroupName('') }
+                      }}
+                      className="flex-1 border border-[#1a8eff] rounded-lg px-2 py-1 text-sm font-semibold focus:outline-none mr-2"
                     />
                   ) : (
-                    <button
+                    <span
+                      className="font-semibold text-gray-800 text-sm cursor-pointer hover:text-[#1a8eff]"
+                      title="Click to rename"
                       onClick={() => { setEditingGroupId(g.id); setEditingGroupName(g.name) }}
-                      className="font-medium text-gray-800 hover:text-[#1a8eff] text-left"
                     >
                       {g.name}
-                    </button>
+                    </span>
                   )}
                   <button onClick={() => handleDeleteGroup(g.id)} className="text-red-400 hover:text-red-600 text-xs flex items-center gap-1 shrink-0">
                     <Trash2 size={14} /> Delete Group
                   </button>
                 </div>
+
+                {/* Options list */}
                 {g.options?.map(opt => (
-                  <OptionRow key={opt.id} opt={opt} onDelete={() => { handleDeleteOption(opt.id); }} onUpdate={handleUpdateOption} />
+                  <OptionRow key={opt.id} opt={opt} onDelete={() => handleDeleteOption(opt.id)} onUpdate={handleUpdateOption} />
                 ))}
+
                 {/* Add option row */}
-                <div className="flex gap-2 mt-2">
+                <div className="flex items-center gap-2 mt-2">
                   <input
                     value={newOption[g.id]?.name || ''}
                     onChange={e => setNewOption(n => ({ ...n, [g.id]: { ...n[g.id], name: e.target.value } }))}
+                    onKeyDown={e => e.key === 'Enter' && handleAddOption(g.id)}
                     placeholder="e.g., Large"
                     className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
                   />
+                  <span className="text-xs text-gray-400">₱</span>
                   <input
                     value={newOption[g.id]?.price || ''}
                     onChange={e => setNewOption(n => ({ ...n, [g.id]: { ...n[g.id], price: e.target.value } }))}
+                    onKeyDown={e => e.key === 'Enter' && handleAddOption(g.id)}
                     placeholder="Price"
                     type="number"
-                    className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                    className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
                   />
+                  <span className="text-xs text-gray-400">₱</span>
                   <input
                     value={newOption[g.id]?.cost || ''}
                     onChange={e => setNewOption(n => ({ ...n, [g.id]: { ...n[g.id], cost: e.target.value } }))}
+                    onKeyDown={e => e.key === 'Enter' && handleAddOption(g.id)}
                     placeholder="Cost"
                     type="number"
-                    className="w-20 border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                    className="w-16 border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-right focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
                   />
                   <button onClick={() => handleAddOption(g.id)}
-                    className="bg-[#1a8eff] text-white px-3 rounded-lg hover:bg-[#0077e6]"><Plus size={16} /></button>
+                    className="bg-[#1a8eff] text-white px-3 py-1.5 rounded-lg hover:bg-[#0077e6] shrink-0">
+                    <Plus size={16} />
+                  </button>
                 </div>
               </div>
             ))}
+
+            {/* Add group row */}
             <div className="flex gap-2 pt-3">
-              <input value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
+              <input
+                value={newGroupName}
+                onChange={e => setNewGroupName(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAddGroup()}
                 placeholder="New Group Name (e.g., Size)"
                 className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
-                onKeyDown={e => e.key === 'Enter' && handleAddGroup()} />
+              />
               <button onClick={handleAddGroup}
-                className="bg-green-500 text-white px-4 rounded-lg font-medium text-sm hover:bg-green-600">Add Group</button>
+                className="bg-green-500 text-white px-4 rounded-lg font-medium text-sm hover:bg-green-600 shrink-0">
+                Add Group
+              </button>
             </div>
           </Section>
 
@@ -1165,19 +1190,35 @@ function OptionRow({ opt, onDelete, onUpdate }: { opt: any; onDelete: () => void
   const [name, setName] = useState(String(opt.name))
   const [price, setPrice] = useState(String(opt.price))
   const [cost, setCost] = useState(String(opt.cost))
+  const [editingName, setEditingName] = useState(false)
 
   const save = () => onUpdate(opt.id, name, price, cost)
+  const saveName = () => { setEditingName(false); save() }
 
   return (
     <div className="flex items-center gap-2 mb-1.5">
-      <input value={name} onChange={e => setName(e.target.value)} onBlur={save}
-        onKeyDown={e => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
-        placeholder="Option name"
-        className="flex-1 border border-gray-200 rounded px-1.5 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a8eff]" />
-      <span className="text-xs text-gray-400">₱</span>
+      {editingName ? (
+        <input
+          autoFocus
+          value={name}
+          onChange={e => setName(e.target.value)}
+          onBlur={saveName}
+          onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') saveName() }}
+          className="flex-1 border border-[#1a8eff] rounded px-1.5 py-1 text-sm focus:outline-none"
+        />
+      ) : (
+        <span
+          className="flex-1 text-sm text-gray-700 cursor-pointer hover:text-[#1a8eff] truncate"
+          title="Click to edit name"
+          onClick={() => setEditingName(true)}
+        >
+          {name}
+        </span>
+      )}
+      <span className="text-xs text-gray-400 shrink-0">₱</span>
       <input value={price} onChange={e => setPrice(e.target.value)} onBlur={save}
         type="number" className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#1a8eff] text-right" />
-      <span className="text-xs text-gray-400 hidden sm:inline">cost</span>
+      <span className="text-xs text-gray-400 shrink-0">₱</span>
       <input value={cost} onChange={e => setCost(e.target.value)} onBlur={save}
         type="number" className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#1a8eff] text-right" />
       <button onClick={onDelete} className="text-red-400 hover:text-red-600 shrink-0"><X size={14} /></button>
