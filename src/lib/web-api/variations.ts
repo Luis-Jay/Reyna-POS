@@ -100,4 +100,20 @@ export const variationsApi = {
       return { success: false }
     }
   },
+
+  getOptions: async (groupId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('catalog_variation_options')
+        .select('id, name, price, cost, sort_order')
+        .eq('group_id', groupId)
+        .is('deleted_at', null)
+        .order('sort_order')
+        .order('name')
+      if (error) throw error
+      return (data ?? []) as { id: string; name: string; price: number; cost: number; sort_order: number }[]
+    } catch {
+      return []
+    }
+  },
 }

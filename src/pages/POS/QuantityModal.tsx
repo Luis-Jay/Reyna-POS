@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { Product } from '../../types'
 
@@ -10,6 +10,13 @@ const FRACTIONS = [
 ]
 const WHOLE = [1, 2, 3, 4, 5, 10, 15, 20]
 
+interface VariationOption {
+  id: string
+  name: string
+  price: number
+  cost: number
+}
+
 interface Props {
   product: Product
   onClose: () => void
@@ -19,34 +26,71 @@ interface Props {
 export default function QuantityModal({ product, onClose, onAdd }: Props) {
   const [qty, setQty] = useState<number | string>(1)
   const [customQty, setCustomQty] = useState('')
+  const [priceType, setPriceType] = useState<'retail' | 'wholesale'>('retail')
+
+  // Variations
+  const [options, setOptions] = useState<VariationOption[]>([])
+  const [loadingOptions, setLoadingOptions] = useState(false)
+  const [selectedOption, setSelectedOption] = useState<VariationOption | null>(null)
+
+  const hasVariations = !!product.has_variations && !!product.variation_group_id
+
+  useEffect(() => {
+    if (!hasVariations) return
+    setLoadingOptions(true)
+    window.api.variations.getOptions(product.variation_group_id!)
+      .then((opts: VariationOption[]) => {
+        setOptions(opts)
+        // Auto-select first option if only one exists
+        if (opts.length === 1) setSelectedOption(opts[0])
+      })
+      .finally(() => setLoadingOptions(false))
+  }, [product.variation_group_id, hasVariations])
+
   const retailPrice = product.retail_price ?? product.base_price
   const wholesalePrice = product.wholesale_price ?? retailPrice
   const hasWholesale = wholesalePrice > 0 && wholesalePrice !== retailPrice
-  const [priceType, setPriceType] = useState<'retail' | 'wholesale'>('retail')
+
+  // Price: use variation price if set, otherwise use product price
+  const basePrice = priceType === 'wholesale' ? wholesalePrice : retailPrice
+  const effectivePrice = selectedOption && selectedOption.price > 0
+    ? selectedOption.price
+    : basePrice
 
   const finalQty = typeof qty === 'number' ? qty : parseFloat(qty) || 1
-  const selectedPrice = priceType === 'wholesale' ? wholesalePrice : retailPrice
+  const canAdd = !hasVariations || selectedOption !== null
 
   const handleAdd = () => {
     const q = customQty ? parseFloat(customQty) : finalQty
     if (!q || q <= 0) return
+    if (!canAdd) return
+
+    const itemName = selectedOption
+      ? `${product.name} (${selectedOption.name})`
+      : product.name
+
+    const itemCost = selectedOption && selectedOption.cost > 0
+      ? selectedOption.cost
+      : product.base_cost
+
     onAdd({
       product_id: product.id,
-      name: product.name,
-      price: selectedPrice,
-      base_price: retailPrice,
-      cost: product.base_cost,
+      name: itemName,
+      price: effectivePrice,
+      base_price: effectivePrice,
+      cost: itemCost,
       quantity: q,
       is_custom: false,
       image_path: product.image_path,
       price_type: priceType,
+      variation_option_id: selectedOption?.id,
     })
   }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
-        <div className="flex items-center justify-between px-6 py-4 border-b">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b sticky top-0 bg-white rounded-t-2xl">
           <h2 className="text-lg font-bold text-gray-800">Set Quantity</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
         </div>
@@ -54,12 +98,49 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
         <div className="p-6">
           <p className="text-sm text-gray-500 mb-3 text-center">{product.name}</p>
 
+          {/* Variation picker */}
+          {hasVariations && (
+            <div className="mb-4">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                {product.variation_group_name || 'Select Variation'}
+              </p>
+              {loadingOptions ? (
+                <p className="text-sm text-gray-400 text-center py-2">Loading options…</p>
+              ) : options.length === 0 ? (
+                <p className="text-sm text-amber-600 text-center py-2">No variations configured for this product.</p>
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  {options.map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => setSelectedOption(opt)}
+                      className={`py-2.5 px-2 rounded-xl text-sm font-semibold border-2 transition-colors truncate ${
+                        selectedOption?.id === opt.id
+                          ? 'bg-[#1a8eff] text-white border-[#1a8eff]'
+                          : 'bg-gray-50 text-gray-700 border-gray-200 hover:border-[#1a8eff]'
+                      }`}
+                    >
+                      {opt.name}
+                      {opt.price > 0 && (
+                        <span className="block text-xs font-normal opacity-80">₱{opt.price.toFixed(0)}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {hasVariations && !selectedOption && options.length > 0 && (
+                <p className="text-xs text-amber-500 mt-1.5 text-center">Please select a variation to continue</p>
+              )}
+            </div>
+          )}
+
+          {/* Price display */}
           <div className="mb-4 rounded-xl bg-gray-50 p-3">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-500">Retail</span>
-              <span className="font-semibold text-gray-800">₱{retailPrice.toFixed(2)}</span>
+              <span className="text-gray-500">Price</span>
+              <span className="font-semibold text-gray-800">₱{effectivePrice.toFixed(2)}</span>
             </div>
-            {hasWholesale && (
+            {hasWholesale && !hasVariations && (
               <div className="mt-1 flex items-center justify-between text-sm">
                 <span className="text-gray-500">Wholesale</span>
                 <span className="font-semibold text-emerald-700">₱{wholesalePrice.toFixed(2)}</span>
@@ -67,7 +148,8 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
             )}
           </div>
 
-          {hasWholesale && (
+          {/* Retail / Wholesale toggle — only when no variations */}
+          {hasWholesale && !hasVariations && (
             <div className="mb-4 grid grid-cols-2 gap-2">
               <button
                 onClick={() => setPriceType('retail')}
@@ -110,7 +192,7 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
             ))}
           </div>
 
-          {/* Custom quantity */}
+          {/* Custom quantity + Add button */}
           <div className="flex flex-col gap-2">
             <input
               value={customQty}
@@ -120,9 +202,12 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
               step="0.01"
               className="w-full border border-gray-200 rounded-xl px-4 py-3 text-center text-base focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
             />
-            <button onClick={handleAdd}
-              className="w-full bg-green-500 text-white py-3 rounded-xl font-semibold hover:bg-green-600">
-              Set
+            <button
+              onClick={handleAdd}
+              disabled={!canAdd}
+              className="w-full bg-green-500 text-white py-3 rounded-xl font-semibold hover:bg-green-600 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {hasVariations && !selectedOption ? 'Select a variation first' : 'Add to Cart'}
             </button>
           </div>
         </div>
