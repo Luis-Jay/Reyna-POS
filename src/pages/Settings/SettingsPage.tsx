@@ -2,17 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
 import { VariationGroup, UserPermissions } from '../../types'
-import { Plus, Trash2, X, Upload, ChevronDown, ChevronUp } from 'lucide-react'
+import { Plus, Trash2, X, Upload, ChevronDown, ChevronUp, Archive } from 'lucide-react'
 import { useAuthStore } from '../../stores/auth.store'
+import { MODULE_ACCESS, normalizePermissions, serializePermissions } from '../../lib/access'
 
-const PERMISSION_LABELS: Array<{ key: keyof UserPermissions; label: string; desc: string }> = [
-  { key: 'can_manage_products', label: 'Manage Products', desc: 'Add, edit, delete products' },
-  { key: 'can_manage_inventory', label: 'Manage Inventory', desc: 'View & adjust stock levels' },
-  { key: 'can_manage_debtors', label: 'Manage Debtors', desc: 'Add debtors, record payments' },
-  { key: 'can_access_reports', label: 'View Reports & Analytics', desc: 'Analytics, reports, financials' },
-  { key: 'can_access_expenses', label: 'View Expenses', desc: 'Track operating expenses' },
-  { key: 'can_access_cashier_monitoring', label: 'Cashier Monitoring', desc: 'Time-in/out, shift reports' },
-]
+const PERMISSION_LABELS: Array<{ key: keyof UserPermissions; label: string; desc: string }> = MODULE_ACCESS
+  .filter(module => module.permissionKey)
+  .map(module => ({
+    key: module.permissionKey!,
+    label: module.label,
+    desc: module.description,
+  }))
 
 export default function SettingsPage() {
   const navigate = useNavigate()
@@ -21,6 +21,8 @@ export default function SettingsPage() {
   const [groups, setGroups] = useState<VariationGroup[]>([])
   const [newGroupName, setNewGroupName] = useState('')
   const [newOption, setNewOption] = useState<Record<string, { name: string; price: string; cost: string }>>({})
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
+  const [editingGroupName, setEditingGroupName] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const logoInputRef = useRef<HTMLInputElement>(null)
@@ -33,7 +35,14 @@ export default function SettingsPage() {
   const [savingPerms, setSavingPerms] = useState<string | null>(null)
   const [showAddUser, setShowAddUser] = useState(false)
   const [newUserForm, setNewUserForm] = useState({ name: '', pin: '', role: 'cashier' })
+  const [newUserPermissions, setNewUserPermissions] = useState<UserPermissions>({ can_access_pos: true })
   const [addingUser, setAddingUser] = useState(false)
+  const [addUserError, setAddUserError] = useState('')
+  const [editingPin, setEditingPin] = useState<Record<string, string>>({})
+  const [savingPin, setSavingPin] = useState<string | null>(null)
+  const [editingName, setEditingName] = useState<Record<string, string>>({})
+  const [savingName, setSavingName] = useState<string | null>(null)
+  const [deletingUser, setDeletingUser] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
   const [smsCredits, setSmsCredits] = useState<number | null>(null)
@@ -136,8 +145,8 @@ export default function SettingsPage() {
     setUsers(userList)
     const perms: Record<string, UserPermissions> = {}
     for (const u of userList) {
-      try { perms[u.id] = u.permissions ? JSON.parse(u.permissions) : {} }
-      catch { perms[u.id] = {} }
+      try { perms[u.id] = normalizePermissions(u.permissions ? JSON.parse(u.permissions) : {}) }
+      catch { perms[u.id] = normalizePermissions({}) }
     }
     setUserPerms(perms)
     window.api.sms.getCredits().then((res: any) => {
@@ -153,7 +162,7 @@ export default function SettingsPage() {
 
   const handleSavePermissions = async (userId: string) => {
     setSavingPerms(userId)
-    await window.api.auth.updateUser(userId, { permissions: userPerms[userId] || {} })
+    await window.api.auth.updateUser(userId, { permissions: serializePermissions(userPerms[userId] || {}) })
     setSavingPerms(null)
   }
 
@@ -167,10 +176,61 @@ export default function SettingsPage() {
   const handleAddUser = async () => {
     if (!newUserForm.name.trim() || !newUserForm.pin.trim()) return
     setAddingUser(true)
-    await window.api.auth.createUser({ name: newUserForm.name.trim(), pin: newUserForm.pin.trim(), role: newUserForm.role })
-    setNewUserForm({ name: '', pin: '', role: 'cashier' })
-    setShowAddUser(false)
+    setAddUserError('')
+    const result = await window.api.auth.createUser({
+      name: newUserForm.name.trim(),
+      pin: newUserForm.pin.trim(),
+      role: newUserForm.role,
+      permissions: newUserForm.role === 'admin' ? undefined : serializePermissions(newUserPermissions),
+    })
     setAddingUser(false)
+    if (!result.success) {
+      setAddUserError(result.error || 'Failed to create staff account.')
+      return
+    }
+    setNewUserForm({ name: '', pin: '', role: 'cashier' })
+    setNewUserPermissions({ can_access_pos: true })
+    setAddUserError('')
+    setShowAddUser(false)
+    load()
+  }
+
+  const handleSavePin = async (userId: string) => {
+    const pin = editingPin[userId]?.trim()
+    if (!pin) return
+    setSavingPin(userId)
+    const result = await window.api.auth.updateUser(userId, { pin })
+    setSavingPin(null)
+    if (!result.success) {
+      alert(result.error || 'Failed to update PIN.')
+      return
+    }
+    setEditingPin(prev => { const next = { ...prev }; delete next[userId]; return next })
+  }
+
+  const handleSaveName = async (userId: string) => {
+    const name = editingName[userId]?.trim()
+    if (!name) return
+    setSavingName(userId)
+    const result = await window.api.auth.updateUser(userId, { name })
+    setSavingName(null)
+    if (!result.success) {
+      alert(result.error || 'Failed to update name.')
+      return
+    }
+    setUsers(prev => prev.map(u => u.id === userId ? { ...u, name } : u))
+    setEditingName(prev => { const next = { ...prev }; delete next[userId]; return next })
+  }
+
+  const handleDeleteUser = async (userId: string, userName: string) => {
+    if (!confirm(`Remove "${userName}"? This cannot be undone.`)) return
+    setDeletingUser(userId)
+    const result = await (window.api.auth as any).deleteUser(userId)
+    setDeletingUser(null)
+    if (!result.success) {
+      alert(result.error || 'Failed to remove staff.')
+      return
+    }
     load()
   }
 
@@ -182,7 +242,7 @@ export default function SettingsPage() {
   useEffect(() => { load() }, [])
 
   useEffect(() => {
-    const unsubscribe = window.api.on.syncStatus((status) => {
+    const unsubscribe = window.api.on.syncStatus((status: any) => {
       setSyncStatus(status)
     })
 
@@ -265,11 +325,20 @@ export default function SettingsPage() {
     load()
   }
 
-  const handleUpdateOption = async (id: string, price: string, cost: string) => {
+  const handleUpdateOption = async (id: string, name: string, price: string, cost: string) => {
     await window.api.variations.updateOption(id, {
+      name: name.trim() || undefined,
       price: parseFloat(price) || 0,
       cost: parseFloat(cost) || 0,
     })
+  }
+
+  const handleRenameGroup = async (id: string) => {
+    if (!editingGroupName.trim()) return
+    await window.api.variations.updateGroup(id, editingGroupName.trim())
+    setEditingGroupId(null)
+    setEditingGroupName('')
+    load()
   }
 
   const handleTestPrint = async () => {
@@ -278,6 +347,13 @@ export default function SettingsPage() {
       alert(result.error || 'Printer test failed.')
     }
     setPrinterStatus(await window.api.printer.getStatus())
+  }
+
+  const handleOpenDrawer = async () => {
+    const result = await (window.api.printer as any).openDrawer?.()
+    if (!result?.success) {
+      alert(result?.error || 'Could not open drawer. Make sure a USB or Bluetooth printer is connected and the cash drawer is plugged into the printer.')
+    }
   }
 
   const handleForceSync = async () => {
@@ -529,8 +605,8 @@ export default function SettingsPage() {
                           const perms = userPerms[u.id] || {}
                           const enabled = PERMISSION_LABELS.filter(p => perms[p.key]).map(p => p.label)
                           return enabled.length > 0
-                            ? <p className="text-xs text-[#1a8eff] mt-0.5">{enabled.length}/{PERMISSION_LABELS.length} features enabled</p>
-                            : <p className="text-xs text-gray-300 mt-0.5">No extra access</p>
+                            ? <p className="text-xs text-[#1a8eff] mt-0.5">{enabled.length}/{PERMISSION_LABELS.length} modules enabled</p>
+                            : <p className="text-xs text-gray-300 mt-0.5">No module access</p>
                         })()}
                       </div>
                     </div>
@@ -543,37 +619,94 @@ export default function SettingsPage() {
                           {u.is_active ? 'Active' : 'Inactive'}
                         </button>
                       )}
-                      {u.role !== 'admin' && (
-                        expandedUser === u.id
-                          ? <ChevronUp size={16} className="text-gray-400" />
-                          : <ChevronDown size={16} className="text-gray-400" />
-                      )}
+                      {expandedUser === u.id
+                        ? <ChevronUp size={16} className="text-gray-400" />
+                        : <ChevronDown size={16} className="text-gray-400" />
+                      }
                     </div>
                   </div>
-                  {expandedUser === u.id && u.role !== 'admin' && (
+                  {expandedUser === u.id && (
                     <div className="border-t border-gray-100 bg-gray-50 px-4 py-3 space-y-2">
-                      <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Feature Permissions</p>
-                      {PERMISSION_LABELS.map(({ key, label, desc }) => (
-                        <div key={key} className="flex items-center justify-between py-1">
-                          <div>
-                            <p className="text-sm text-gray-700">{label}</p>
-                            <p className="text-xs text-gray-400">{desc}</p>
-                          </div>
+                      {/* Module access — cashiers only */}
+                      {u.role !== 'admin' && (
+                        <>
+                          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Module Access</p>
+                          {PERMISSION_LABELS.map(({ key, label, desc }) => (
+                            <div key={key} className="flex items-center justify-between py-1">
+                              <div>
+                                <p className="text-sm text-gray-700">{label}</p>
+                                <p className="text-xs text-gray-400">{desc}</p>
+                              </div>
+                              <button
+                                onClick={() => togglePerm(u.id, key)}
+                                className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${userPerms[u.id]?.[key] ? 'bg-[#1a8eff]' : 'bg-gray-200'}`}
+                              >
+                                <div className={`absolute w-4 h-4 bg-white rounded-full shadow top-0.5 transition-transform ${userPerms[u.id]?.[key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                              </button>
+                            </div>
+                          ))}
                           <button
-                            onClick={() => togglePerm(u.id, key)}
-                            className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${userPerms[u.id]?.[key] ? 'bg-[#1a8eff]' : 'bg-gray-200'}`}
+                            onClick={() => handleSavePermissions(u.id)}
+                            disabled={savingPerms === u.id}
+                            className="mt-2 w-full bg-[#1a8eff] text-white py-2 rounded-xl text-sm font-semibold hover:bg-[#0077e6] disabled:opacity-50"
                           >
-                            <div className={`absolute w-4 h-4 bg-white rounded-full shadow top-0.5 transition-transform ${userPerms[u.id]?.[key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                            {savingPerms === u.id ? 'Saving...' : 'Save Permissions'}
+                          </button>
+                        </>
+                      )}
+
+                      {/* Change Name — all users */}
+                      <div className={u.role !== 'admin' ? 'pt-3 border-t border-gray-200 mt-1' : ''}>
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Change Name</p>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder={u.name}
+                            value={editingName[u.id] ?? ''}
+                            onChange={e => setEditingName(prev => ({ ...prev, [u.id]: e.target.value }))}
+                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                          />
+                          <button
+                            onClick={() => handleSaveName(u.id)}
+                            disabled={savingName === u.id || !editingName[u.id]?.trim()}
+                            className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 disabled:opacity-40"
+                          >
+                            {savingName === u.id ? 'Saving…' : 'Save'}
                           </button>
                         </div>
-                      ))}
-                      <button
-                        onClick={() => handleSavePermissions(u.id)}
-                        disabled={savingPerms === u.id}
-                        className="mt-2 w-full bg-[#1a8eff] text-white py-2 rounded-xl text-sm font-semibold hover:bg-[#0077e6] disabled:opacity-50"
-                      >
-                        {savingPerms === u.id ? 'Saving...' : 'Save Permissions'}
-                      </button>
+                      </div>
+
+                      {/* Change PIN — all users including admins */}
+                      <div className="pt-3 border-t border-gray-200 mt-1">
+                        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Change PIN</p>
+                        <div className="flex gap-2">
+                          <input
+                            type="password"
+                            placeholder="New PIN"
+                            value={editingPin[u.id] ?? ''}
+                            onChange={e => setEditingPin(prev => ({ ...prev, [u.id]: e.target.value }))}
+                            className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+                          />
+                          <button
+                            onClick={() => handleSavePin(u.id)}
+                            disabled={savingPin === u.id || !editingPin[u.id]?.trim()}
+                            className="px-4 py-2 bg-emerald-500 text-white rounded-lg text-sm font-medium hover:bg-emerald-600 disabled:opacity-40"
+                          >
+                            {savingPin === u.id ? 'Saving…' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Remove — all users (edge function guards last admin) */}
+                      <div className="pt-3 border-t border-gray-200 mt-1">
+                        <button
+                          onClick={() => handleDeleteUser(u.id, u.name)}
+                          disabled={deletingUser === u.id}
+                          className="w-full py-2 rounded-xl border-2 border-red-200 text-red-500 text-sm font-medium hover:bg-red-50 disabled:opacity-50"
+                        >
+                          {deletingUser === u.id ? 'Removing…' : `Remove ${u.role === 'admin' ? 'Admin' : 'Staff Member'}`}
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -583,7 +716,7 @@ export default function SettingsPage() {
             {/* Add User */}
             {showAddUser ? (
               <div className="border border-gray-200 rounded-xl p-4 space-y-3 mt-2">
-                <p className="text-sm font-semibold text-gray-700">New Cashier</p>
+                <p className="text-sm font-semibold text-gray-700">New Staff Account</p>
                 <input
                   value={newUserForm.name}
                   onChange={e => setNewUserForm(f => ({ ...f, name: e.target.value }))}
@@ -599,14 +732,45 @@ export default function SettingsPage() {
                 />
                 <select
                   value={newUserForm.role}
-                  onChange={e => setNewUserForm(f => ({ ...f, role: e.target.value }))}
+                  onChange={e => {
+                    const role = e.target.value
+                    setNewUserForm(f => ({ ...f, role }))
+                    if (role === 'admin') {
+                      setNewUserPermissions({})
+                    } else if (Object.keys(newUserPermissions).length === 0) {
+                      setNewUserPermissions({ can_access_pos: true })
+                    }
+                  }}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
                 >
                   <option value="cashier">Cashier</option>
                   <option value="admin">Admin</option>
                 </select>
+                {newUserForm.role !== 'admin' && (
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Initial Module Access</p>
+                    {PERMISSION_LABELS.map(({ key, label, desc }) => (
+                      <div key={key} className="flex items-center justify-between py-1">
+                        <div className="pr-3">
+                          <p className="text-sm text-gray-700">{label}</p>
+                          <p className="text-xs text-gray-400">{desc}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setNewUserPermissions(prev => ({ ...prev, [key]: !prev[key] }))}
+                          className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${newUserPermissions[key] ? 'bg-[#1a8eff]' : 'bg-gray-200'}`}
+                        >
+                          <div className={`absolute w-4 h-4 bg-white rounded-full shadow top-0.5 transition-transform ${newUserPermissions[key] ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {addUserError && (
+                  <p className="text-xs text-red-500 bg-red-50 rounded-lg px-3 py-2">{addUserError}</p>
+                )}
                 <div className="flex gap-2">
-                  <button onClick={() => setShowAddUser(false)} className="flex-1 border border-gray-200 text-gray-600 py-2 rounded-xl text-sm">Cancel</button>
+                  <button onClick={() => { setShowAddUser(false); setAddUserError('') }} className="flex-1 border border-gray-200 text-gray-600 py-2 rounded-xl text-sm">Cancel</button>
                   <button onClick={handleAddUser} disabled={addingUser} className="flex-1 bg-[#1a8eff] text-white py-2 rounded-xl text-sm font-semibold disabled:opacity-50">
                     {addingUser ? 'Adding...' : 'Add User'}
                   </button>
@@ -617,7 +781,7 @@ export default function SettingsPage() {
                 onClick={() => setShowAddUser(true)}
                 className="mt-2 flex items-center gap-2 text-sm text-[#1a8eff] hover:underline"
               >
-                <Plus size={14} /> Add New Cashier
+                <Plus size={14} /> Add New Staff
               </button>
             )}
           </Section>
@@ -793,13 +957,92 @@ export default function SettingsPage() {
             </div>
           </Section>
 
+          {/* Cash Drawer */}
+          <Section title="Cash Drawer">
+            <p className="text-xs text-gray-500 pb-3">
+              Cash drawers connect to the receipt printer via an RJ11 cable. The printer sends a signal to pop the drawer when a payment is confirmed.
+            </p>
+
+            {/* Auto-open on cash */}
+            <div className="flex items-center justify-between py-2 border-b border-gray-100">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Auto-open on cash payment</p>
+                <p className="text-xs text-gray-400">Opens the drawer whenever cash is part of the payment</p>
+              </div>
+              <button
+                onClick={() => set('auto_open_drawer', settings['auto_open_drawer'] === 'false' ? 'true' : 'false')}
+                className={`relative w-11 h-6 rounded-full transition-colors ${settings['auto_open_drawer'] === 'false' ? 'bg-gray-200' : 'bg-[#1a8eff]'}`}
+              >
+                <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${settings['auto_open_drawer'] === 'false' ? 'left-0.5' : 'left-5'}`} />
+              </button>
+            </div>
+
+            {/* Open on all payments */}
+            <div className="flex items-center justify-between py-2 border-b border-gray-100">
+              <div>
+                <p className="text-sm font-medium text-gray-700">Also open for GCash / Card</p>
+                <p className="text-xs text-gray-400">Open drawer even when no cash changes hands</p>
+              </div>
+              <button
+                onClick={() => set('drawer_open_on_all', settings['drawer_open_on_all'] === 'true' ? 'false' : 'true')}
+                className={`relative w-11 h-6 rounded-full transition-colors ${settings['drawer_open_on_all'] === 'true' ? 'bg-[#1a8eff]' : 'bg-gray-200'}`}
+              >
+                <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${settings['drawer_open_on_all'] === 'true' ? 'left-5' : 'left-0.5'}`} />
+              </button>
+            </div>
+
+            {/* Drawer pin */}
+            <div className="py-2 border-b border-gray-100">
+              <p className="text-sm font-medium text-gray-700 mb-1.5">Drawer cable pin</p>
+              <p className="text-xs text-gray-400 mb-2">Most cash drawers use Pin 2. Try Pin 5 if Pin 2 doesn't work.</p>
+              <div className="flex gap-2">
+                {[{ label: 'Pin 2 (default)', value: '0' }, { label: 'Pin 5', value: '1' }].map(opt => (
+                  <button
+                    key={opt.value}
+                    onClick={() => set('drawer_pin', opt.value)}
+                    className={`flex-1 py-2 rounded-xl border-2 text-sm font-medium transition-colors ${(settings['drawer_pin'] ?? '0') === opt.value ? 'border-[#1a8eff] text-[#1a8eff] bg-blue-50' : 'border-gray-200 text-gray-600'}`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Manual open button */}
+            <div className="pt-3">
+              <button
+                onClick={handleOpenDrawer}
+                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border-2 border-gray-200 text-gray-700 font-medium text-sm hover:bg-gray-50"
+              >
+                <Archive size={15} /> Open Drawer Now
+              </button>
+              <p className="text-xs text-gray-400 text-center mt-1.5">Use this to open the drawer manually or to test the connection.</p>
+            </div>
+          </Section>
+
           {/* Variation Groups */}
           <Section title="Manage Variation Groups">
             {groups.map(g => (
               <div key={g.id} className="border-b border-gray-100 py-3 last:border-0">
                 <div className="flex justify-between items-center mb-2">
-                  <h4 className="font-medium text-gray-800">{g.name}</h4>
-                  <button onClick={() => handleDeleteGroup(g.id)} className="text-red-400 hover:text-red-600 text-xs flex items-center gap-1">
+                  {editingGroupId === g.id ? (
+                    <input
+                      autoFocus
+                      value={editingGroupName}
+                      onChange={e => setEditingGroupName(e.target.value)}
+                      onBlur={() => handleRenameGroup(g.id)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleRenameGroup(g.id); if (e.key === 'Escape') { setEditingGroupId(null); setEditingGroupName('') } }}
+                      className="flex-1 border border-[#1a8eff] rounded-lg px-2 py-1 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-[#1a8eff] mr-2"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => { setEditingGroupId(g.id); setEditingGroupName(g.name) }}
+                      className="font-medium text-gray-800 hover:text-[#1a8eff] text-left"
+                    >
+                      {g.name}
+                    </button>
+                  )}
+                  <button onClick={() => handleDeleteGroup(g.id)} className="text-red-400 hover:text-red-600 text-xs flex items-center gap-1 shrink-0">
                     <Trash2 size={14} /> Delete Group
                   </button>
                 </div>
@@ -918,20 +1161,26 @@ function SectionInner({ label, children }: { label: string; children: React.Reac
   )
 }
 
-function OptionRow({ opt, onDelete, onUpdate }: { opt: any; onDelete: () => void; onUpdate: (id: string, price: string, cost: string) => void }) {
+function OptionRow({ opt, onDelete, onUpdate }: { opt: any; onDelete: () => void; onUpdate: (id: string, name: string, price: string, cost: string) => void }) {
+  const [name, setName] = useState(String(opt.name))
   const [price, setPrice] = useState(String(opt.price))
   const [cost, setCost] = useState(String(opt.cost))
 
+  const save = () => onUpdate(opt.id, name, price, cost)
+
   return (
     <div className="flex items-center gap-2 mb-1.5">
-      <span className="text-sm text-gray-700 flex-1">{opt.name}</span>
+      <input value={name} onChange={e => setName(e.target.value)} onBlur={save}
+        onKeyDown={e => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+        placeholder="Option name"
+        className="flex-1 border border-gray-200 rounded px-1.5 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-[#1a8eff]" />
       <span className="text-xs text-gray-400">₱</span>
-      <input value={price} onChange={e => setPrice(e.target.value)} onBlur={() => onUpdate(opt.id, price, cost)}
+      <input value={price} onChange={e => setPrice(e.target.value)} onBlur={save}
         type="number" className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#1a8eff] text-right" />
-      <span className="text-xs text-gray-400">₱</span>
-      <input value={cost} onChange={e => setCost(e.target.value)} onBlur={() => onUpdate(opt.id, price, cost)}
+      <span className="text-xs text-gray-400 hidden sm:inline">cost</span>
+      <input value={cost} onChange={e => setCost(e.target.value)} onBlur={save}
         type="number" className="w-16 border border-gray-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-[#1a8eff] text-right" />
-      <button onClick={onDelete} className="text-red-400 hover:text-red-600"><X size={14} /></button>
+      <button onClick={onDelete} className="text-red-400 hover:text-red-600 shrink-0"><X size={14} /></button>
     </div>
   )
 }
