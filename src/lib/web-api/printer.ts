@@ -122,19 +122,27 @@ async function findBulkOutEndpoint(device: USBDevice): Promise<{ iface: number; 
   return null
 }
 
-async function openUsbDevice(device: USBDevice): Promise<boolean> {
+async function openUsbDevice(device: USBDevice): Promise<{ ok: boolean; error?: string }> {
   try {
     await device.open()
     if (device.configuration === null) await device.selectConfiguration(1)
     const found = await findBulkOutEndpoint(device)
-    if (!found) { await device.close().catch(() => {}); return false }
+    if (!found) {
+      await device.close().catch(() => {})
+      return { ok: false, error: 'No bulk-out endpoint found. This may not be a supported ESC/POS printer.' }
+    }
     _usbInterfaceNum = found.iface
     _usbEndpointNum = found.ep
     await device.claimInterface(_usbInterfaceNum)
     _usbDevice = device
-    return true
-  } catch {
-    return false
+    return { ok: true }
+  } catch (err: any) {
+    await device.close().catch(() => {})
+    const msg: string = err?.message || String(err)
+    if (/claim|interface|access denied/i.test(msg)) {
+      return { ok: false, error: 'Could not claim the printer interface — the OS printer driver may be blocking access. On macOS, try going to System Settings → Printers and removing the printer, then reconnect.' }
+    }
+    return { ok: false, error: msg || 'Failed to open printer.' }
   }
 }
 
@@ -698,7 +706,22 @@ export const printerApi = {
     return { success: true }
   },
 
-  openDrawer: async () => ({ success: false, error: 'Cash drawer not supported in browser.' }),
+  openDrawer: async () => {
+    // ESC/POS drawer kick: ESC p <pin> <t1> <t2>
+    // pin=0 → RJ11 pin 2 (most common), pin=1 → RJ11 pin 5
+    const pinSetting = await settingsApi.get('drawer_pin')
+    const pin = pinSetting === '1' ? 1 : 0
+    const cmd = new Uint8Array([0x1B, 0x70, pin, 0x19, 0xFA])
+    if (_usbDevice) {
+      const ok = await sendEscPos(cmd)
+      return ok ? { success: true } : { success: false, error: 'USB drawer kick failed.' }
+    }
+    if (_bleChar) {
+      const ok = await sendBleData(cmd)
+      return ok ? { success: true } : { success: false, error: 'BLE drawer kick failed.' }
+    }
+    return { success: false, error: 'No printer connected. Connect a USB or Bluetooth printer to use a cash drawer.' }
+  },
 
   listPrinters: async () => {
     if (_usbDevice) return [{ name: usbDeviceName(_usbDevice), value: 'usb', isDefault: true }]
@@ -709,12 +732,12 @@ export const printerApi = {
   // Connect a USB thermal printer — must be called from a user gesture (button click)
   connectUsb: async () => {
     if (!WEB_USB_SUPPORTED) {
-      return { success: false, error: 'Web USB is not supported in this browser. Use Chrome or Edge.' }
+      return { success: false, error: 'Web USB is not supported in this browser. Use Chrome or Edge on desktop.' }
     }
     try {
       const device = await navigator.usb.requestDevice({ filters: [] })
-      const ok = await openUsbDevice(device)
-      if (!ok) return { success: false, error: 'Could not open printer. Make sure no other app is using it.' }
+      const result = await openUsbDevice(device)
+      if (!result.ok) return { success: false, error: result.error || 'Could not open printer.' }
       return { success: true, device: usbDeviceName(device) }
     } catch (err: any) {
       if (err?.name === 'NotFoundError') return { success: false, error: 'No device selected.' }
@@ -739,8 +762,8 @@ export const printerApi = {
     try {
       const devices = await navigator.usb.getDevices()
       for (const device of devices) {
-        const ok = await openUsbDevice(device)
-        if (ok) return { connected: true, device: usbDeviceName(device) }
+        const result = await openUsbDevice(device)
+        if (result.ok) return { connected: true, device: usbDeviceName(device) }
       }
     } catch { /* ignore */ }
     return { connected: false }
