@@ -83,6 +83,28 @@ export async function getValidCloudToken(): Promise<string | null> {
   return refreshAccessToken()
 }
 
+function parsePermissionsForCloud(value: unknown) {
+  if (typeof value !== 'string' || value.trim() === '') return {}
+  try {
+    return JSON.parse(value)
+  } catch {
+    return {}
+  }
+}
+
+function getUsersForCloudSync(db = getDb()) {
+  const users = db.prepare(`
+    SELECT id, name, pin, role, is_active, permissions
+    FROM users
+    WHERE deleted_at IS NULL
+  `).all() as any[]
+
+  return users.map(user => ({
+    ...user,
+    permissions: parsePermissionsForCloud(user.permissions),
+  }))
+}
+
 function applyCloudCashiers(cashiers: any[]) {
   const db = getDb()
   const incomingIds = new Set(cashiers.map(c => c.id))
@@ -98,12 +120,13 @@ function applyCloudCashiers(cashiers: any[]) {
 
   for (const c of cashiers) {
     const existing: any = db.prepare(`SELECT id FROM users WHERE id = ?`).get(c.id)
+    const permissionsJson = JSON.stringify(c.permissions ?? {})
     if (existing) {
-      db.prepare(`UPDATE users SET name = ?, pin = ?, role = ?, is_active = ?, deleted_at = NULL WHERE id = ?`)
-        .run(c.name, c.pin, c.role, c.is_active ? 1 : 0, c.id)
+      db.prepare(`UPDATE users SET name = ?, pin = ?, role = ?, is_active = ?, permissions = ?, deleted_at = NULL WHERE id = ?`)
+        .run(c.name, c.pin, c.role, c.is_active ? 1 : 0, permissionsJson, c.id)
     } else {
-      db.prepare(`INSERT OR IGNORE INTO users (id, name, pin, role, is_active, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)`)
-        .run(c.id, c.name, c.pin, c.role, c.is_active ? 1 : 0)
+      db.prepare(`INSERT OR IGNORE INTO users (id, name, pin, role, is_active, permissions, deleted_at) VALUES (?, ?, ?, ?, ?, ?, NULL)`)
+        .run(c.id, c.name, c.pin, c.role, c.is_active ? 1 : 0, permissionsJson)
     }
   }
 }
@@ -238,7 +261,7 @@ export function registerAuthHandlers() {
   ipcMain.handle(IPC.AUTH.LOGOUT, () => ({ success: true }))
 
   ipcMain.handle(IPC.AUTH.CLOUD_LOGOUT, () => {
-    withScopedDb(null, (db) => {
+    withScopedDb(getActiveCloudUserId(), (db) => {
       db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES ('setup_completed', 'false')`).run()
     })
     clearCloudSession()
@@ -254,14 +277,14 @@ export function registerAuthHandlers() {
   ipcMain.handle(IPC.AUTH.CREATE_USER, async (_, data: any) => {
     const db = getDb()
     const id = uuid()
-    db.prepare(`INSERT INTO users (id, name, pin, role) VALUES (?, ?, ?, ?)`)
-      .run(id, data.name, data.pin, data.role || 'cashier')
+    db.prepare(`INSERT INTO users (id, name, pin, role, permissions) VALUES (?, ?, ?, ?, ?)`)
+      .run(id, data.name, data.pin, data.role || 'cashier', JSON.stringify(data.permissions ?? {}))
 
     // Push to cloud if logged in
     const token = await getValidCloudToken()
     if (token) {
       try {
-        const users = db.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
+        const users = getUsersForCloudSync(db)
         await axios.post(
           `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
           { cashiers: users },
@@ -288,7 +311,7 @@ export function registerAuthHandlers() {
     const token = await getValidCloudToken()
     if (token) {
       try {
-        const users = db.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
+        const users = getUsersForCloudSync(db)
         await axios.post(
           `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
           { cashiers: users },
@@ -333,7 +356,7 @@ export function registerAuthHandlers() {
         localDb.prepare(`INSERT INTO users (id, name, pin, role, is_active, deleted_at) VALUES (?, ?, ?, ?, ?, NULL)`)
           .run(adminId, data.adminName ?? 'Admin', data.adminPin, 'admin', 1)
       }
-      usersForCloud = localDb.prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
+      usersForCloud = getUsersForCloudSync(localDb)
 
       // 1. Create Supabase Auth account
       const signupRes = await axios.post(
@@ -488,7 +511,7 @@ export function registerAuthHandlers() {
     if (!token) return { success: false, error: 'Not signed in to cloud' }
 
     try {
-      const users = getDb().prepare(`SELECT id, name, pin, role, is_active FROM users WHERE deleted_at IS NULL`).all()
+      const users = getUsersForCloudSync()
       await axios.post(
         `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,
         { cashiers: users },

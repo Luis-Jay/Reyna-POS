@@ -1,0 +1,109 @@
+REYNA POS - STATUS REPORT
+Last updated: June 29, 2026
+
+============================================================
+1. BUGS FIXED
+============================================================
+
+- FIXED: Only the "C" (Cashier) account could edit products
+  - other roles couldn't see or edit other items because
+  permissions were hard-limited to that one role.
+
+- FIXED: Deleting an item in the POS was accidentally
+  deleting other items along with it.
+
+- FIXED: Wholesale/Retail price toggle only switched one
+  item at a time instead of all items at once when toggled
+  quickly.
+
+- FIXED: Password recovery flow.
+
+These were all caused by gaps in the original logic and
+have been corrected and tested.
+
+============================================================
+2. THE DATABASE OUTAGE (JUNE 29, 2026)
+============================================================
+
+WHAT HAPPENED:
+The system runs on a cloud database service (Supabase). For
+about a day, the database was overloaded and customers using
+the POS would have experienced slow loading or the app
+failing to load products, orders, or reports.
+
+WHY IT HAPPENED, IN PLAIN TERMS:
+Think of the database like a small office with one clerk
+handling all requests. Every time someone opened the
+Analytics or Reports page, the system was sending that one
+clerk 18 separate requests instead of 1-2, for a single page
+view. Multiply that across every cashier checking reports
+throughout the day, and the clerk (database) got buried and
+couldn't keep up, which is why the app became "unhealthy."
+
+WHAT WE DID:
+1. Restarted the database service - this immediately cleared
+   the backlog and the system is healthy again as of today.
+2. Identified the root cause: the Reports/Analytics page was
+   making far more requests to the database than necessary
+   every time it loaded.
+3. Next step (in progress): rewrite that page so it asks the
+   database once for the data it needs and reuses it, instead
+   of asking 18 times. This permanently fixes the overload
+   instead of just patching it.
+
+IS THIS A RECURRING RISK?
+Not once the Analytics page fix ships. The restart was a
+same-day fix for the immediate symptom; the code fix removes
+the actual cause.
+
+============================================================
+3. WHY THE SYSTEM IS PRICED THE WAY IT IS
+============================================================
+
+The POS runs on paid cloud infrastructure - the database, the
+servers, and the backup systems all cost money based on how
+much they're used. This is the same reason the outage above
+happened: heavier features cost more to run.
+
+BASIC (FREE) PLAN:
+- Up to 300 items
+- Core POS only (sell, checkout, basic inventory)
+
+PRO PLAN (PHP 399/month):
+- Unlimited items
+- Price tiers (wholesale/retail/custom pricing)
+- Price management tools
+- Reports & Analytics
+- Loyalty cards
+- Credit/debtor monitoring
+
+WHY THESE SPECIFIC FEATURES ARE LOCKED BEHIND PRO:
+The features that are locked - Reports, Price Tiers, Loyalty,
+Credit Monitoring - are exactly the features that put the
+most load on the database, because they require pulling and
+cross-referencing large amounts of historical data (as seen
+directly in the outage above: the Reports page alone was
+responsible for most of the database strain).
+
+The PHP 399/month fee isn't an arbitrary paywall - it
+reflects the real cost difference between running a simple
+"ring up a sale" system (cheap, low database usage) versus
+running a full reporting/loyalty/credit system at scale
+(expensive, high database usage). Pricing the heavy features
+into the Pro tier keeps the Basic plan affordable for small
+shops while making sure the cost of running the data-heavy
+features is covered by the businesses that actually use them.
+
+============================================================
+4. SUMMARY FOR STAKEHOLDERS
+============================================================
+
+- All four reported bugs are fixed.
+- The database outage was caused by inefficient queries on
+  the Reports page, not by a lack of paid infrastructure - it
+  has already been resolved by restarting the database, with
+  a permanent code fix in progress.
+- The Basic/Pro pricing split reflects real infrastructure
+  cost differences: Pro-tier features (reports, loyalty,
+  credit monitoring, price tiers) are the most database-
+  intensive, which is why they require the paid plan.

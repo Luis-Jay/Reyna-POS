@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../stores/auth.store'
 import { ArrowLeft, LogOut } from 'lucide-react'
+import { getDefaultRouteForUser } from '../../lib/access'
 
 interface TopBarProps {
   title: string
@@ -11,6 +12,7 @@ interface TopBarProps {
 export default function TopBar({ title, back, actions }: TopBarProps) {
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
+  const resolvedBack = back === '/' ? getDefaultRouteForUser(user) : back
 
   const handleLogout = async () => {
     await window.api.auth.logout()
@@ -24,7 +26,7 @@ export default function TopBar({ title, back, actions }: TopBarProps) {
       <div className="relative px-3 py-3 sm:px-5 sm:py-0">
         <div className="flex min-h-[64px] items-center gap-2 sm:gap-3">
           {back && (
-            <button onClick={() => navigate(back)} className="shrink-0 rounded-full border border-white/15 bg-white/10 p-2 text-white transition hover:bg-white/20">
+            <button onClick={() => navigate(resolvedBack || '/login')} className="shrink-0 rounded-full border border-white/15 bg-white/10 p-2 text-white transition hover:bg-white/20">
               <ArrowLeft size={20} />
             </button>
           )}

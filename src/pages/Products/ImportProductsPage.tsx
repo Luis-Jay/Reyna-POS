@@ -20,6 +20,26 @@ const TEMPLATE_EXAMPLE = [
   ['T-Shirt',        '250','200','150','',               'Apparel',   '0',   '',            'no',  'yes', 'Size',    '5', '230','Bulk',       '',   '',   '',           '',   '',   ''],
 ]
 
+function normalizeHeader(value: string) {
+  return value
+    .replace(/^\uFEFF/, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+}
+
+function normalizeParsedRows(rows: any[]) {
+  return rows
+    .map((row) => {
+      const normalized: Record<string, any> = {}
+      for (const [key, value] of Object.entries(row ?? {})) {
+        normalized[normalizeHeader(String(key))] = typeof value === 'string' ? value.trim() : value
+      }
+      return normalized
+    })
+    .filter((row) => Object.values(row).some((value) => value !== '' && value !== null && value !== undefined))
+}
+
 function downloadTemplate() {
   const rows = [TEMPLATE_HEADERS, ...TEMPLATE_EXAMPLE]
   const csv = rows.map(r => r.map(cell => `"${cell}"`).join(',')).join('\n')
@@ -40,7 +60,8 @@ function parseFile(file: File): Promise<any[]> {
       Papa.parse(file, {
         header: true,
         skipEmptyLines: true,
-        complete: (results) => resolve(results.data as any[]),
+        transformHeader: (header) => normalizeHeader(header),
+        complete: (results) => resolve(normalizeParsedRows(results.data as any[])),
         error: reject,
       })
     } else if (ext === 'xlsx' || ext === 'xls') {
@@ -51,7 +72,7 @@ function parseFile(file: File): Promise<any[]> {
           const workbook = XLSX.read(data, { type: 'array' })
           const sheet = workbook.Sheets[workbook.SheetNames[0]]
           const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' })
-          resolve(rows as any[])
+          resolve(normalizeParsedRows(rows as any[]))
         } catch (err) {
           reject(err)
         }
@@ -76,7 +97,7 @@ function tierSummary(row: any): string {
   return parts.length ? parts.join(', ') : '—'
 }
 
-type ImportResult = { success: boolean; created?: number; skipped?: number; errors?: string[]; error?: string }
+type ImportResult = { success: boolean; created?: number; updated?: number; skipped?: number; errors?: string[]; error?: string }
 
 export default function ImportProductsPage() {
   const navigate = useNavigate()
@@ -86,6 +107,7 @@ export default function ImportProductsPage() {
   const [fileName, setFileName] = useState('')
   const [parseError, setParseError] = useState('')
   const [importing, setImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null)
   const [result, setResult] = useState<ImportResult | null>(null)
 
   const handleFile = async (file: File) => {
@@ -95,6 +117,9 @@ export default function ImportProductsPage() {
     setFileName(file.name)
     try {
       const parsed = await parseFile(file)
+      if (parsed.length === 0) {
+        throw new Error('No product rows were found in the file.')
+      }
       setRows(parsed)
     } catch (err: any) {
       setParseError(err.message || 'Failed to parse file')
@@ -110,8 +135,11 @@ export default function ImportProductsPage() {
   const handleImport = async () => {
     if (rows.length === 0) return
     setImporting(true)
+    setImportProgress({ done: 0, total: rows.length })
     try {
-      const res = await window.api.products.importBatch(rows)
+      const res = await window.api.products.importBatch(rows, (done: number, total: number) => {
+        setImportProgress({ done, total })
+      })
       setResult(res)
       if (res.success) {
         setRows([])
@@ -119,6 +147,7 @@ export default function ImportProductsPage() {
       }
     } finally {
       setImporting(false)
+      setImportProgress(null)
     }
   }
 
@@ -127,6 +156,7 @@ export default function ImportProductsPage() {
     setFileName('')
     setParseError('')
     setResult(null)
+    setImportProgress(null)
     if (fileRef.current) fileRef.current.value = ''
   }
 
@@ -270,6 +300,7 @@ export default function ImportProductsPage() {
                   <CheckCircle size={16} className="text-green-600" />
                   <p className="text-sm font-semibold text-green-800">
                     Import complete — {result.created} product{result.created !== 1 ? 's' : ''} added
+                    {(result.updated ?? 0) > 0 && `, ${result.updated} updated`}
                     {(result.skipped ?? 0) > 0 && `, ${result.skipped} skipped`}
                   </p>
                 </div>
@@ -300,14 +331,28 @@ export default function ImportProductsPage() {
 
         {/* Import button */}
         {rows.length > 0 && !result?.success && (
-          <button
-            onClick={handleImport}
-            disabled={importing}
-            className="w-full py-3 bg-[#1a8eff] text-white font-semibold rounded-xl hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            <Upload size={16} />
-            {importing ? 'Importing...' : `Import ${rows.length} Product${rows.length !== 1 ? 's' : ''}`}
-          </button>
+          <div>
+            <button
+              onClick={handleImport}
+              disabled={importing}
+              className="w-full py-3 bg-[#1a8eff] text-white font-semibold rounded-xl hover:bg-blue-600 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <Upload size={16} />
+              {importing
+                ? importProgress && importProgress.total > 0
+                  ? `Importing ${importProgress.done} / ${importProgress.total}…`
+                  : 'Preparing…'
+                : `Import ${rows.length} Product${rows.length !== 1 ? 's' : ''}`}
+            </button>
+            {importing && importProgress && importProgress.total > 0 && (
+              <div className="mt-2 w-full bg-gray-200 rounded-full h-1.5">
+                <div
+                  className="bg-[#1a8eff] h-1.5 rounded-full transition-all duration-150"
+                  style={{ width: `${Math.round((importProgress.done / importProgress.total) * 100)}%` }}
+                />
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

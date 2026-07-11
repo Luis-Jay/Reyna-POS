@@ -24,6 +24,7 @@
   * { box-sizing: border-box; }
   html, body, #root {
     height: 100%;
+    width: 100%;
     margin: 0;
     padding: 0;
     font-family: 'Avenir Next', 'Segoe UI', Roboto, sans-serif;
@@ -38,6 +39,8 @@
   input, textarea { user-select: text; }
   body {
     color: var(--text);
+    overflow-x: hidden;
+    overflow-y: auto;
   }
   input, textarea, select, button {
     font: inherit;

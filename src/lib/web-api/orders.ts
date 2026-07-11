@@ -1,6 +1,8 @@
 import { v4 as uuid } from 'uuid'
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
+import { localDb, decrementLocalInventory } from '../local-db'
+import { triggerSync } from '../web-sync-service'
 
 function manilaDate(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(date)
@@ -21,6 +23,15 @@ async function generateOrderNumber(businessId: string): Promise<string> {
   const m = String(today.getMonth() + 1).padStart(2, '0')
   const d = String(today.getDate()).padStart(2, '0')
   const prefix = `${y}${m}${d}-`
+
+  // When offline, count from local queue
+  if (!navigator.onLine) {
+    const todayLocal = await localDb.orders_queue
+      .where('business_id').equals(businessId)
+      .filter(o => o.order_number.startsWith(prefix))
+      .count()
+    return `${prefix}${String(todayLocal + 1).padStart(4, '0')}`
+  }
 
   const { data } = await supabase
     .from('sales_orders')
@@ -53,6 +64,7 @@ export const ordersApi = {
     try {
       const businessId = await getBusinessId()
       const orderId = uuid()
+      const createdAt = new Date().toISOString()
       const items = (orderData.items ?? []).map((item: any) => ({
         id: uuid(),
         product_id: item.product_id || null,
@@ -64,149 +76,140 @@ export const ordersApi = {
         is_custom: !!item.is_custom,
       }))
 
-      const { data, error } = await supabase.rpc('create_sale_order', {
-        p_business_id: businessId,
-        p_order_id: orderId,
-        p_customer_name: orderData.customer_name || null,
-        p_subtotal: orderData.subtotal ?? 0,
-        p_discount: orderData.discount ?? 0,
-        p_total: orderData.total ?? 0,
-        p_payment_amount: orderData.payment_amount ?? null,
-        p_change_amount: orderData.change_amount ?? null,
-        p_payment_breakdown: orderData.payment_breakdown ?? [],
-        p_is_credit: !!orderData.is_credit,
-        p_debtor_id: orderData.debtor_id || null,
-        p_user_id: orderData.user_id || null,
-        p_note: orderData.note || null,
-        p_items: items,
+      const orderNumber = await generateOrderNumber(businessId)
+
+      // Always write to local queue first so sales are never lost offline
+      await localDb.orders_queue.add({
+        id: orderId,
+        business_id: businessId,
+        order_number: orderNumber,
+        payload: JSON.stringify({ orderId, orderNumber, orderData, items }),
+        synced: 0,
+        created_at: createdAt,
+        sync_error: null,
       })
 
-      if (error && !shouldFallbackToClientFlow(error, 'create_sale_order')) {
-        return { success: false, error: error.message }
+      // Decrement local inventory immediately so the POS shows correct stock
+      for (const item of items) {
+        if (item.product_id && !item.is_custom) {
+          await decrementLocalInventory(businessId, item.product_id, item.quantity)
+        }
       }
 
-      let orderNumber = data?.order_number ?? null
+      // Attempt immediate sync to Supabase if online
+      if (navigator.onLine) {
+        try {
+          const { data, error } = await supabase.rpc('create_sale_order', {
+            p_business_id: businessId,
+            p_order_id: orderId,
+            p_customer_name: orderData.customer_name || null,
+            p_subtotal: orderData.subtotal ?? 0,
+            p_discount: orderData.discount ?? 0,
+            p_total: orderData.total ?? 0,
+            p_payment_amount: orderData.payment_amount ?? null,
+            p_change_amount: orderData.change_amount ?? null,
+            p_payment_breakdown: orderData.payment_breakdown ?? [],
+            p_is_credit: !!orderData.is_credit,
+            p_debtor_id: orderData.debtor_id || null,
+            p_user_id: orderData.user_id || null,
+            p_note: orderData.note || null,
+            p_items: items,
+          })
 
-      if (error) {
-        orderNumber = await generateOrderNumber(businessId)
-
-        const { error: orderError } = await supabase.from('sales_orders').insert({
-          id: orderId,
-          business_id: businessId,
-          order_number: orderNumber,
-          customer_name: orderData.customer_name || null,
-          status: 'completed',
-          subtotal: orderData.subtotal ?? 0,
-          discount: orderData.discount ?? 0,
-          total: orderData.total,
-          payment_amount: orderData.payment_amount ?? null,
-          change_amount: orderData.change_amount ?? null,
-          payment_breakdown: orderData.payment_breakdown ?? [],
-          is_credit: !!orderData.is_credit,
-          debtor_id: orderData.debtor_id || null,
-          user_id: orderData.user_id || null,
-          note: orderData.note || null,
-        })
-        if (orderError) return { success: false, error: orderError.message }
-
-        if (items.length > 0) {
-          const { error: itemsError } = await supabase.from('sales_order_items').insert(
-            items.map((item: any) => ({
-              ...item,
-              business_id: businessId,
-              order_id: orderId,
-            }))
-          )
-          if (itemsError) return { success: false, error: itemsError.message }
-        }
-
-        const inventoryUpdates = items.filter((item: any) => item.product_id && !item.is_custom)
-        await Promise.all(inventoryUpdates.map(async (item: any) => {
-          const { data: inv } = await supabase
-            .from('catalog_inventory')
-            .select('quantity')
-            .eq('product_id', item.product_id)
-            .eq('business_id', businessId)
-            .single()
-
-          if (inv) {
-            const newQty = Math.max(0, Number(inv.quantity ?? 0) - Number(item.quantity ?? 0))
-            await supabase.from('catalog_inventory')
-              .update({ quantity: newQty, updated_at: new Date().toISOString() })
-              .eq('product_id', item.product_id)
-              .eq('business_id', businessId)
+          if (error && !shouldFallbackToClientFlow(error, 'create_sale_order')) {
+            throw new Error(error.message)
           }
 
-          const { data: product } = await supabase
-            .from('catalog_products')
-            .select('monthly_sold')
-            .eq('id', item.product_id)
-            .eq('business_id', businessId)
-            .single()
-
-          await supabase.from('catalog_products')
-            .update({
-              monthly_sold: Number(product?.monthly_sold ?? 0) + Number(item.quantity ?? 0),
-              updated_at: new Date().toISOString(),
+          if (error) {
+            // Manual fallback
+            const { error: orderError } = await supabase.from('sales_orders').insert({
+              id: orderId,
+              business_id: businessId,
+              order_number: orderNumber,
+              customer_name: orderData.customer_name || null,
+              status: 'completed',
+              subtotal: orderData.subtotal ?? 0,
+              discount: orderData.discount ?? 0,
+              total: orderData.total,
+              payment_amount: orderData.payment_amount ?? null,
+              change_amount: orderData.change_amount ?? null,
+              payment_breakdown: orderData.payment_breakdown ?? [],
+              is_credit: !!orderData.is_credit,
+              debtor_id: orderData.debtor_id || null,
+              user_id: orderData.user_id || null,
+              note: orderData.note || null,
+              created_at: createdAt,
             })
-            .eq('id', item.product_id)
-            .eq('business_id', businessId)
+            if (orderError) throw new Error(orderError.message)
 
-          await supabase.from('stock_movements').insert({
-            id: uuid(),
-            business_id: businessId,
-            product_id: item.product_id,
-            type: 'sale',
-            quantity: -Math.abs(Number(item.quantity ?? 0)),
-            reference_id: orderId,
-            note: orderData.note || null,
-            user_id: orderData.user_id || null,
-          })
-        }))
+            if (items.length > 0) {
+              const { error: itemsError } = await supabase.from('sales_order_items').insert(
+                items.map((item: any) => ({ ...item, business_id: businessId, order_id: orderId }))
+              )
+              if (itemsError) throw new Error(itemsError.message)
+            }
 
-        if (orderData.is_credit && orderData.debtor_id) {
-          const profit = items.reduce((s: number, i: any) =>
-            s + ((Number(i.price ?? 0) - Number(i.cost ?? 0)) * Number(i.quantity ?? 0)), 0)
+            const inventoryUpdates = items.filter((item: any) => item.product_id && !item.is_custom)
+            await Promise.all(inventoryUpdates.map(async (item: any) => {
+              const { data: inv } = await supabase
+                .from('catalog_inventory').select('quantity')
+                .eq('product_id', item.product_id).eq('business_id', businessId).single()
 
-          const { data: debtor } = await supabase.from('sales_debtors')
-            .select('balance, total_credit')
-            .eq('id', orderData.debtor_id)
-            .eq('business_id', businessId)
-            .single()
+              if (inv) {
+                await supabase.from('catalog_inventory')
+                  .update({ quantity: Math.max(0, Number(inv.quantity ?? 0) - Number(item.quantity ?? 0)), updated_at: new Date().toISOString() })
+                  .eq('product_id', item.product_id).eq('business_id', businessId)
+              }
 
-          await supabase.from('sales_debtors')
-            .update({
-              balance: Number(debtor?.balance ?? 0) + Number(orderData.total ?? 0),
-              total_credit: Number(debtor?.total_credit ?? 0) + Number(orderData.total ?? 0),
-              updated_at: new Date().toISOString(),
-            })
-            .eq('id', orderData.debtor_id)
-            .eq('business_id', businessId)
+              await supabase.from('catalog_products')
+                .update({ monthly_sold: (await supabase.from('catalog_products').select('monthly_sold').eq('id', item.product_id).eq('business_id', businessId).single()).data?.monthly_sold + Number(item.quantity ?? 0), updated_at: new Date().toISOString() })
+                .eq('id', item.product_id).eq('business_id', businessId)
 
-          await supabase.from('sales_debtor_transactions').insert({
-            id: uuid(),
-            business_id: businessId,
-            debtor_id: orderData.debtor_id,
-            type: 'debt',
-            amount: orderData.total,
-            profit,
-            order_id: orderId,
-            user_id: orderData.user_id || null,
-            note: orderData.note || null,
-          })
+              await supabase.from('stock_movements').insert({
+                id: uuid(), business_id: businessId, product_id: item.product_id,
+                type: 'sale', quantity: -Math.abs(Number(item.quantity ?? 0)),
+                reference_id: orderId, note: orderData.note || null, user_id: orderData.user_id || null,
+              })
+            }))
+
+            if (orderData.is_credit && orderData.debtor_id) {
+              const profit = items.reduce((s: number, i: any) =>
+                s + ((Number(i.price ?? 0) - Number(i.cost ?? 0)) * Number(i.quantity ?? 0)), 0)
+              const { data: debtor } = await supabase.from('sales_debtors')
+                .select('balance, total_credit').eq('id', orderData.debtor_id).eq('business_id', businessId).single()
+              await supabase.from('sales_debtors').update({
+                balance: Number(debtor?.balance ?? 0) + Number(orderData.total ?? 0),
+                total_credit: Number(debtor?.total_credit ?? 0) + Number(orderData.total ?? 0),
+                updated_at: new Date().toISOString(),
+              }).eq('id', orderData.debtor_id).eq('business_id', businessId)
+              await supabase.from('sales_debtor_transactions').insert({
+                id: uuid(), business_id: businessId, debtor_id: orderData.debtor_id,
+                type: 'debt', amount: orderData.total, profit,
+                order_id: orderId, user_id: orderData.user_id || null, note: orderData.note || null,
+              })
+            }
+          }
+
+          // Mark as synced in local queue
+          const finalOrderNumber = data?.order_number ?? orderNumber
+          await localDb.orders_queue.update(orderId, { synced: 1, order_number: finalOrderNumber })
+
+          return {
+            success: true, id: orderId, order_number: finalOrderNumber,
+            order: { id: orderId, order_number: finalOrderNumber, ...orderData, items: orderData.items ?? [] },
+          }
+        } catch {
+          // Supabase failed — order stays in queue, will sync later
         }
       }
 
+      // Offline or Supabase failed: return the locally-queued order
+      // Trigger a background sync attempt so it goes up as soon as connectivity returns
+      void triggerSync(businessId).catch(() => {})
+
       return {
-        success: true,
-        id: orderId,
-        order_number: orderNumber,
-        order: {
-          id: orderId,
-          order_number: orderNumber,
-          ...orderData,
-          items: orderData.items ?? [],
-        },
+        success: true, id: orderId, order_number: orderNumber,
+        order: { id: orderId, order_number: orderNumber, ...orderData, items: orderData.items ?? [] },
       }
     } catch (err: any) {
       return { success: false, error: err?.message }
@@ -370,7 +373,7 @@ export const ordersApi = {
       const businessId = await getBusinessId()
       const { data } = await supabase
         .from('saved_orders')
-        .select('*')
+        .select('id, name, items_json, total, created_at')
         .eq('business_id', businessId)
         .order('created_at', { ascending: false })
       return data ?? []

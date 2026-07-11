@@ -17,16 +17,27 @@ interface VariationOption {
   cost: number
 }
 
+interface PriceTier {
+  min_qty: number
+  price: number
+  label?: string | null
+}
+
 interface Props {
   product: Product
+  initialPriceType?: 'retail' | 'wholesale'
+  cachedTiers?: PriceTier[]
+  loadTiers?: (productId: string) => Promise<PriceTier[]>
   onClose: () => void
   onAdd: (item: any) => void
 }
 
-export default function QuantityModal({ product, onClose, onAdd }: Props) {
+export default function QuantityModal({ product, initialPriceType = 'retail', cachedTiers, loadTiers, onClose, onAdd }: Props) {
   const [qty, setQty] = useState<number | string>(1)
   const [customQty, setCustomQty] = useState('')
-  const [priceType, setPriceType] = useState<'retail' | 'wholesale'>('retail')
+  // Pricing mode comes from the global POS toggle — no per-item override.
+  const priceType = initialPriceType
+  const [tiers, setTiers] = useState<PriceTier[]>(cachedTiers || [])
 
   // Variations
   const [options, setOptions] = useState<VariationOption[]>([])
@@ -49,17 +60,39 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
       .finally(() => setLoadingOptions(false))
   }, [product.variation_group_id, hasVariations])
 
+  useEffect(() => {
+    let active = true
+    setTiers(cachedTiers || [])
+    if (cachedTiers !== undefined || !loadTiers) return
+
+    loadTiers(product.id).then(rows => {
+      if (active) setTiers(rows || [])
+    })
+
+    return () => { active = false }
+  }, [cachedTiers, loadTiers, product.id])
+
+  const resolveTierPrice = (quantity: number, basePrice: number) => {
+    const best = [...tiers].filter(t => quantity >= t.min_qty).sort((a, b) => b.min_qty - a.min_qty)[0]
+    return best ? best.price : basePrice
+  }
+
   const retailPrice = product.retail_price ?? product.base_price
   const wholesalePrice = product.wholesale_price ?? retailPrice
-  const hasWholesale = wholesalePrice > 0 && wholesalePrice !== retailPrice
 
-  // Price: use variation price if set, otherwise use product price
-  const basePrice = priceType === 'wholesale' ? wholesalePrice : retailPrice
+  const finalQty = customQty ? parseFloat(customQty) || 1 : (typeof qty === 'number' ? qty : parseFloat(qty) || 1)
+  const tieredRetailPrice = resolveTierPrice(finalQty, retailPrice)
+  const activeTier = [...tiers].filter(t => finalQty >= t.min_qty).sort((a, b) => b.min_qty - a.min_qty)[0]
+
+  // Price: use variation price if set, otherwise use product price or auto-tiered retail price
+  const basePrice = priceType === 'wholesale' ? wholesalePrice : tieredRetailPrice
   const effectivePrice = selectedOption && selectedOption.price > 0
     ? selectedOption.price
     : basePrice
+  const cartBasePrice = selectedOption && selectedOption.price > 0
+    ? selectedOption.price
+    : (priceType === 'wholesale' ? wholesalePrice : retailPrice)
 
-  const finalQty = typeof qty === 'number' ? qty : parseFloat(qty) || 1
   const canAdd = !hasVariations || selectedOption !== null
 
   const handleAdd = () => {
@@ -79,7 +112,9 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
       product_id: product.id,
       name: itemName,
       price: effectivePrice,
-      base_price: effectivePrice,
+      base_price: cartBasePrice,
+      retail_unit_price: selectedOption && selectedOption.price > 0 ? selectedOption.price : retailPrice,
+      wholesale_unit_price: selectedOption && selectedOption.price > 0 ? selectedOption.price : wholesalePrice,
       cost: itemCost,
       quantity: q,
       is_custom: false,
@@ -139,32 +174,39 @@ export default function QuantityModal({ product, onClose, onAdd }: Props) {
           {/* Price display */}
           <div className="mb-4 rounded-xl bg-gray-50 p-3">
             <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-500">Price</span>
+              <span className="text-gray-500">
+                Price {priceType === 'wholesale' && <span className="font-semibold text-emerald-700">(Wholesale)</span>}
+              </span>
               <span className="font-semibold text-gray-800">₱{effectivePrice.toFixed(2)}</span>
             </div>
-            {hasWholesale && !hasVariations && (
+            {!hasVariations && priceType === 'retail' && activeTier && (
               <div className="mt-1 flex items-center justify-between text-sm">
-                <span className="text-gray-500">Wholesale</span>
-                <span className="font-semibold text-emerald-700">₱{wholesalePrice.toFixed(2)}</span>
+                <span className="text-emerald-700">{activeTier.label || `Tier @ ${activeTier.min_qty}+`}</span>
+                <span className="font-semibold text-emerald-700">Auto applied</span>
               </div>
             )}
           </div>
 
-          {/* Retail / Wholesale toggle — only when no variations */}
-          {hasWholesale && !hasVariations && (
-            <div className="mb-4 grid grid-cols-2 gap-2">
-              <button
-                onClick={() => setPriceType('retail')}
-                className={`rounded-xl border px-3 py-2 text-sm font-semibold ${priceType === 'retail' ? 'border-[#1a8eff] bg-[#1a8eff] text-white' : 'border-gray-200 bg-white text-gray-700'}`}
-              >
-                Retail
-              </button>
-              <button
-                onClick={() => setPriceType('wholesale')}
-                className={`rounded-xl border px-3 py-2 text-sm font-semibold ${priceType === 'wholesale' ? 'border-emerald-600 bg-emerald-600 text-white' : 'border-gray-200 bg-white text-gray-700'}`}
-              >
-                Wholesale
-              </button>
+          {!hasVariations && tiers.length > 0 && (
+            <div className="mb-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">Wholesale Tiers</p>
+              <p className="mt-1 text-xs text-emerald-700">Tier price auto-applies once quantity reaches the minimum.</p>
+              <div className="mt-3 space-y-2">
+                {tiers.map((tier) => {
+                  const isActive = activeTier?.min_qty === tier.min_qty && priceType === 'retail'
+                  return (
+                    <div
+                      key={`${tier.min_qty}-${tier.price}-${tier.label || ''}`}
+                      className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm ${
+                        isActive ? 'bg-emerald-600 text-white' : 'bg-white text-emerald-900'
+                      }`}
+                    >
+                      <span>{tier.label || 'Wholesale'} {tier.min_qty}+</span>
+                      <span className="font-semibold">₱{tier.price.toFixed(2)}</span>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )}
 

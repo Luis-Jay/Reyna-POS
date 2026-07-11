@@ -1,5 +1,6 @@
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
+import { ensureBasicProductAccess } from './basic-product-access'
 
 type RangeInput =
   | string
@@ -69,6 +70,13 @@ type CompletedOrderWithItems = CompletedOrderRow & {
   sales_order_items: CompletedOrderItemRow[]
 }
 
+type ProductSummaryRow = {
+  id: string
+  name: string | null
+  image_url?: string | null
+  monthly_sold?: number | null
+}
+
 async function getCompletedOrders(businessId: string, from: string, to: string) {
   const tf = tzFilter(from, to)
   const { data: orders, error: ordersError } = await supabase
@@ -112,13 +120,9 @@ export const analyticsApi = {
     try {
       const businessId = await getBusinessId()
       const today = manilaDate()
-      const [todayOrders, productsRes] = await Promise.all([
+      const [todayOrders, access] = await Promise.all([
         getCompletedOrders(businessId, today, today),
-        supabase.from('catalog_products')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', businessId)
-          .is('deleted_at', null)
-          .eq('is_active', true),
+        ensureBasicProductAccess(businessId),
       ])
 
       todayOrders.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''))
@@ -131,7 +135,7 @@ export const analyticsApi = {
       return {
         sales_today: salesToday,
         profit_today: profitToday,
-        total_products: productsRes.count ?? 0,
+        total_products: access.activated ? access.totalActive : access.accessibleCount,
         recent_orders: todayOrders.slice(0, 5).map(o => ({
           id: o.id,
           order_number: o.order_number,
@@ -293,8 +297,27 @@ export const analyticsApi = {
           byProduct[i.product_id].total_revenue += i.subtotal ?? i.price * i.quantity
         }
       }
+
+      const productIds = Object.keys(byProduct)
+      const productMeta: Record<string, ProductSummaryRow> = {}
+      if (productIds.length > 0) {
+        const { data: products } = await supabase
+          .from('catalog_products')
+          .select('id, name, image_url')
+          .eq('business_id', businessId)
+          .in('id', productIds)
+        for (const product of (products ?? []) as ProductSummaryRow[]) {
+          productMeta[product.id] = product
+        }
+      }
+
       return Object.entries(byProduct)
-        .map(([product_id, v]) => ({ product_id, ...v }))
+        .map(([product_id, v]) => ({
+          product_id,
+          ...v,
+          name: productMeta[product_id]?.name ?? v.name,
+          image_path: productMeta[product_id]?.image_url ?? null,
+        }))
         .sort((a, b) => b.total_revenue - a.total_revenue)
         .slice(0, 20)
     } catch {
@@ -376,7 +399,7 @@ export const analyticsApi = {
       const businessId = await getBusinessId()
       const { data } = await supabase
         .from('sales_debtors')
-        .select('id, name, balance')
+        .select('id, name, phone, balance')
         .eq('business_id', businessId)
         .is('deleted_at', null)
         .gt('balance', 0)
@@ -391,6 +414,17 @@ export const analyticsApi = {
   getSlowMoving: async (periodOrRange?: RangeInput) => {
     try {
       const businessId = await getBusinessId()
+      const { from, to } = resolveRange(periodOrRange)
+      const orders = await getCompletedOrders(businessId, from, to)
+
+      const periodSalesByProduct: Record<string, number> = {}
+      for (const order of orders) {
+        for (const item of (order.sales_order_items ?? []) as CompletedOrderItemRow[]) {
+          if (!item.product_id || item.is_custom) continue
+          periodSalesByProduct[item.product_id] = (periodSalesByProduct[item.product_id] ?? 0) + Number(item.quantity ?? 0)
+        }
+      }
+
       const [{ data }, invRes] = await Promise.all([
         supabase
           .from('catalog_products')
@@ -399,7 +433,7 @@ export const analyticsApi = {
           .is('deleted_at', null)
           .eq('is_active', true)
           .order('monthly_sold')
-          .limit(20),
+          .limit(50),
         supabase
           .from('catalog_inventory')
           .select('product_id, quantity')
@@ -407,12 +441,20 @@ export const analyticsApi = {
       ])
       const invMap: Record<string, number> = {}
       for (const row of invRes.data ?? []) invMap[row.product_id] = row.quantity
-      return (data ?? []).map(p => ({
-        product_id: p.id,
-        name: p.name,
-        monthly_sold: p.monthly_sold,
-        stock: invMap[p.id] ?? 0,
-      }))
+      return ((data ?? []) as ProductSummaryRow[])
+        .map(p => ({
+          product_id: p.id,
+          name: p.name ?? 'Unnamed Product',
+          period_sold: periodSalesByProduct[p.id] ?? 0,
+          monthly_sold: Number(p.monthly_sold ?? 0),
+          stock: invMap[p.id] ?? 0,
+        }))
+        .sort((a, b) => {
+          if (a.period_sold !== b.period_sold) return a.period_sold - b.period_sold
+          if (a.monthly_sold !== b.monthly_sold) return a.monthly_sold - b.monthly_sold
+          return a.name.localeCompare(b.name)
+        })
+        .slice(0, 20)
     } catch {
       return []
     }
@@ -628,7 +670,7 @@ export const analyticsApi = {
       const tf = tzFilter(from, to)
       const { data } = await supabase
         .from('sales_orders')
-        .select('payment_breakdown, total, is_credit')
+        .select('payment_breakdown, total, is_credit, created_at')
         .eq('business_id', businessId)
         .eq('status', 'completed')
         .eq('exclude_sales', false)
@@ -636,16 +678,26 @@ export const analyticsApi = {
         .gte('created_at', tf.from)
         .lte('created_at', tf.to)
 
-      const breakdown: Record<string, number> = { cash: 0, gcash: 0, card: 0, credit: 0 }
+      const byDate: Record<string, { cash: number; gcash: number; card: number; other: number }> = {}
       for (const o of data ?? []) {
-        if (o.is_credit) { breakdown.credit += o.total ?? 0; continue }
+        const date = manilaDate(new Date(o.created_at))
+        if (!byDate[date]) byDate[date] = { cash: 0, gcash: 0, card: 0, other: 0 }
+        if (o.is_credit) { byDate[date].other += o.total ?? 0; continue }
         const pbs = Array.isArray(o.payment_breakdown) ? o.payment_breakdown : []
-        if (pbs.length === 0) { breakdown.cash += o.total ?? 0 }
-        for (const pb of pbs) { breakdown[pb.method] = (breakdown[pb.method] ?? 0) + pb.amount }
+        if (pbs.length === 0) { byDate[date].cash += o.total ?? 0; continue }
+        for (const pb of pbs) {
+          const method: string = pb.method ?? ''
+          if (method === 'cash') byDate[date].cash += pb.amount
+          else if (method === 'gcash') byDate[date].gcash += pb.amount
+          else if (method === 'card') byDate[date].card += pb.amount
+          else byDate[date].other += pb.amount
+        }
       }
-      return breakdown
+      return Object.entries(byDate)
+        .map(([date, v]) => ({ date, ...v }))
+        .sort((a, b) => a.date.localeCompare(b.date))
     } catch {
-      return {}
+      return []
     }
   },
 }

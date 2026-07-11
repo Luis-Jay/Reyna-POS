@@ -40,7 +40,7 @@ function getCatalogSnapshot() {
     SELECT
       id, name, description, image_path, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct,
       has_variations, variation_group_id, allow_fractions, track_inventory, is_active,
-      sort_order, monthly_sold, created_at, updated_at, deleted_at
+      sort_order, monthly_sold, basic_locked, created_at, updated_at, deleted_at
     FROM products
   `).all() as any[]
 
@@ -197,9 +197,9 @@ function applyCatalogSnapshot(snapshot: any): Array<{ productId: string; url: st
         INSERT INTO products (
           id, name, description, image_path, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct,
           has_variations, variation_group_id, allow_fractions, track_inventory, is_active, sort_order,
-          monthly_sold, created_at, updated_at, deleted_at
+          monthly_sold, basic_locked, created_at, updated_at, deleted_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name = excluded.name,
           description = excluded.description,
@@ -218,6 +218,7 @@ function applyCatalogSnapshot(snapshot: any): Array<{ productId: string; url: st
           is_active = excluded.is_active,
           sort_order = excluded.sort_order,
           monthly_sold = excluded.monthly_sold,
+          basic_locked = excluded.basic_locked,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
           deleted_at = excluded.deleted_at
@@ -240,6 +241,7 @@ function applyCatalogSnapshot(snapshot: any): Array<{ productId: string; url: st
         product.is_active ? 1 : 0,
         product.sort_order ?? 0,
         product.monthly_sold ?? 0,
+        product.basic_locked ? 1 : 0,
         product.created_at ?? new Date().toISOString(),
         product.updated_at ?? new Date().toISOString(),
         product.deleted_at ?? null,
@@ -529,11 +531,16 @@ async function runSync(trigger: SyncTrigger): Promise<SyncResult> {
 
   try {
     const db = getDb()
-    const users = db.prepare(`
-      SELECT id, name, pin, role, is_active
+    const users = (db.prepare(`
+      SELECT id, name, pin, role, is_active, permissions
       FROM users
       WHERE deleted_at IS NULL
-    `).all()
+    `).all() as any[]).map(user => ({
+      ...user,
+      permissions: typeof user.permissions === 'string' && user.permissions.trim()
+        ? (() => { try { return JSON.parse(user.permissions) } catch { return {} } })()
+        : {},
+    }))
 
     await axios.post(
       `${SUPABASE_FUNCTIONS_URL}/sync-cashiers`,

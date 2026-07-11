@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Product } from '../../types'
 import { Camera, Check, Plus, Tag, Type, Barcode, DollarSign, LayoutGrid, X, Upload, Wand2, ImageIcon, Trash2 } from 'lucide-react'
 import { getProductImageSrc, compressImage } from '../../utils/images'
+import { getProAccessState } from '../../lib/web-api/pro-access'
 
 type Tab = 'prices' | 'names' | 'barcodes' | 'costs' | 'photos'
 
@@ -23,6 +24,7 @@ export default function BulkEditPricesPage() {
 
   const [tab, setTab] = useState<Tab>(initialTab)
   const [products, setProducts] = useState<Product[]>([])
+  const [isPro, setIsPro] = useState(false)
   const [edits, setEdits] = useState<Record<string, any>>({})
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -40,7 +42,12 @@ export default function BulkEditPricesPage() {
     setProducts(data)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    getProAccessState().then(access => setIsPro(access.activated)).catch(() => setIsPro(false))
+  }, [])
+
+  const priceManagementLocked = !isPro && (tab === 'prices' || tab === 'costs')
 
   const filtered = search
     ? products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.barcode?.includes(search))
@@ -151,6 +158,10 @@ export default function BulkEditPricesPage() {
   }
 
   const handleSave = async () => {
+    if (priceManagementLocked) {
+      setError('Bulk price management is available on Reyna Pro only.')
+      return
+    }
     setSaving(true)
     setError('')
     try {
@@ -244,8 +255,8 @@ export default function BulkEditPricesPage() {
               )}
             </div>
 
-            {/* Tab selector */}
-            <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
+          {/* Tab selector */}
+          <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
               {TABS.map(t => (
                 <button key={t.key} onClick={() => setTab(t.key)}
                   className={`shrink-0 flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
@@ -258,6 +269,11 @@ export default function BulkEditPricesPage() {
                 </button>
               ))}
             </div>
+            {priceManagementLocked && (
+              <div className="mt-3 rounded-xl border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Upgrade this account to Pro to use bulk price and cost management.
+              </div>
+            )}
           </div>
 
           {/* ── Sub-header: mode title + pricing toggle ── */}

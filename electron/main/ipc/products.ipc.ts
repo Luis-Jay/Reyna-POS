@@ -6,6 +6,11 @@ import { getCurrentProductImagesDir, getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
 import { addStockBatch } from '../services/stock-batches.service'
+import {
+  assertBasicProductAccessible,
+  assertBasicProductCreationAllowed,
+  getBasicProductFilter,
+} from '../services/basic-product-access.service'
 
 export function registerProductHandlers() {
   // GET ALL with optional filters
@@ -20,6 +25,7 @@ export function registerProductHandlers() {
       LEFT JOIN variation_groups vg ON p.variation_group_id = vg.id
       WHERE p.deleted_at IS NULL AND p.is_active = 1
     `
+    query += getBasicProductFilter('p')
     const params: any[] = []
     if (filters?.category) { query += ` AND p.category_id = ?`; params.push(filters.category) }
     if (filters?.letter)   { query += ` AND UPPER(SUBSTR(p.name,1,1)) = ?`; params.push(filters.letter.toUpperCase()) }
@@ -31,13 +37,14 @@ export function registerProductHandlers() {
   // GET BY ID
   ipcMain.handle(IPC.PRODUCTS.GET_BY_ID, (_, id: string) => {
     const db = getDb()
-    return db.prepare(`
+    const query = `
       SELECT p.*, c.name as category_name, i.quantity as stock
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN inventory i ON i.product_id = p.id
       WHERE p.id = ? AND p.deleted_at IS NULL
-    `).get(id)
+    ` + getBasicProductFilter('p')
+    return db.prepare(query).get(id)
   })
 
   // GET BY BARCODE
@@ -49,7 +56,7 @@ export function registerProductHandlers() {
       LEFT JOIN categories c ON p.category_id = c.id
       LEFT JOIN inventory i ON i.product_id = p.id
       WHERE p.barcode = ? AND p.deleted_at IS NULL
-    `).get(barcode)
+    ` + getBasicProductFilter('p')).get(barcode)
   })
 
   // SEARCH
@@ -62,6 +69,7 @@ export function registerProductHandlers() {
       LEFT JOIN inventory i ON i.product_id = p.id
       WHERE p.deleted_at IS NULL AND p.is_active = 1
         AND (LOWER(p.name) LIKE LOWER(?) OR p.barcode = ?)
+    ` + getBasicProductFilter('p') + `
       ORDER BY p.sort_order, p.name LIMIT 20
     `).all(`%${q}%`, q)
   })
@@ -69,6 +77,7 @@ export function registerProductHandlers() {
   // CREATE
   ipcMain.handle(IPC.PRODUCTS.CREATE, (_, data: any) => {
     const db = getDb()
+    assertBasicProductCreationAllowed(db)
     const id = uuid()
     const tx = db.transaction(() => {
       db.prepare(`
@@ -106,6 +115,7 @@ export function registerProductHandlers() {
   // UPDATE
   ipcMain.handle(IPC.PRODUCTS.UPDATE, (_, id: string, data: any) => {
     const db = getDb()
+    assertBasicProductAccessible(id, db)
     db.prepare(`
       UPDATE products SET
         name = COALESCE(?, name),
@@ -143,7 +153,9 @@ export function registerProductHandlers() {
 
   // DELETE (soft)
   ipcMain.handle(IPC.PRODUCTS.DELETE, (_, id: string) => {
-    getDb().prepare(`UPDATE products SET deleted_at = datetime('now') WHERE id = ?`).run(id)
+    const db = getDb()
+    assertBasicProductAccessible(id, db)
+    db.prepare(`UPDATE products SET deleted_at = datetime('now') WHERE id = ?`).run(id)
     scheduleAutoSync()
     return { success: true }
   })
@@ -151,6 +163,7 @@ export function registerProductHandlers() {
   // BULK PRICES
   ipcMain.handle(IPC.PRODUCTS.BULK_PRICES, (_, updates: { id: string; price: number; markup_pct?: number }[]) => {
     const db = getDb()
+    for (const update of updates) assertBasicProductAccessible(update.id, db)
     const tx = db.transaction(() => {
       for (const u of updates) {
         db.prepare(`
@@ -172,6 +185,7 @@ export function registerProductHandlers() {
   // BULK NAMES
   ipcMain.handle(IPC.PRODUCTS.BULK_NAMES, (_, updates: { id: string; name: string }[]) => {
     const db = getDb()
+    for (const update of updates) assertBasicProductAccessible(update.id, db)
     const tx = db.transaction(() => {
       for (const u of updates) {
         db.prepare(`UPDATE products SET name = ?, updated_at = datetime('now') WHERE id = ?`).run(u.name, u.id)
@@ -185,6 +199,7 @@ export function registerProductHandlers() {
   // BULK BARCODES
   ipcMain.handle(IPC.PRODUCTS.BULK_BARCODES, (_, updates: { id: string; barcode: string }[]) => {
     const db = getDb()
+    for (const update of updates) assertBasicProductAccessible(update.id, db)
     const tx = db.transaction(() => {
       for (const u of updates) {
         db.prepare(`UPDATE products SET barcode = ?, updated_at = datetime('now') WHERE id = ?`).run(u.barcode || null, u.id)
@@ -198,6 +213,7 @@ export function registerProductHandlers() {
   // BULK COSTS
   ipcMain.handle(IPC.PRODUCTS.BULK_COSTS, (_, updates: { id: string; cost: number }[]) => {
     const db = getDb()
+    for (const update of updates) assertBasicProductAccessible(update.id, db)
     const tx = db.transaction(() => {
       for (const u of updates) {
         db.prepare(`UPDATE products SET base_cost = ?, updated_at = datetime('now') WHERE id = ?`).run(u.cost, u.id)
@@ -211,6 +227,7 @@ export function registerProductHandlers() {
   // IMPORT BATCH — accepts parsed rows from renderer (CSV or XLSX)
   ipcMain.handle(IPC.PRODUCTS.IMPORT_BATCH, (_, rows: any[]) => {
     const db = getDb()
+    assertBasicProductCreationAllowed(db)
     const existingCats: { id: string; name: string }[] = db.prepare(
       `SELECT id, name FROM categories WHERE deleted_at IS NULL`
     ).all() as any[]

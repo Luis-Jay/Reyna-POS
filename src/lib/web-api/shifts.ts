@@ -70,7 +70,7 @@ export const shiftsApi = {
       const cashierNames = await getCashierNameMap(businessId)
       let query = supabase
         .from('cashier_shifts')
-        .select('*')
+        .select('id, user_id, business_id, start_money, end_money, note, petty_cash_total, time_in, time_out, created_at')
         .eq('business_id', businessId)
         .is('time_out', null)
         .order('time_in', { ascending: false })
@@ -93,7 +93,7 @@ export const shiftsApi = {
       const cashierNames = await getCashierNameMap(businessId)
       let query = supabase
         .from('cashier_shifts')
-        .select('*')
+        .select('id, user_id, business_id, start_money, end_money, note, petty_cash_total, time_in, time_out, created_at')
         .eq('business_id', businessId)
         .order('time_in', { ascending: false })
         .limit(100)
@@ -139,7 +139,7 @@ export const shiftsApi = {
       const businessId = await getBusinessId()
       const { data } = await supabase
         .from('petty_cash')
-        .select('*')
+        .select('id, shift_id, business_id, description, amount, created_at')
         .eq('shift_id', shiftId)
         .eq('business_id', businessId)
         .order('created_at')

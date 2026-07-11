@@ -160,6 +160,13 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
             await window.api.loyalty.earn(loyaltyAccount.id, pts, result.order?.id, 'Sale')
           }
         }
+        // Open cash drawer for cash payments (fire-and-forget — never block the receipt)
+        const drawerEnabled = await window.api.settings.get('auto_open_drawer')
+        const drawerOnAll = await window.api.settings.get('drawer_open_on_all')
+        const hasCash = !isCredit && (paymentMode === 'cash' || paymentBreakdown.some(p => p.method === 'cash' && p.amount > 0))
+        if (drawerEnabled !== 'false' && (hasCash || drawerOnAll === 'true')) {
+          window.api.printer.openDrawer().catch(() => {})
+        }
         // Show receipt preview instead of auto-printing
         setCompletedOrder(result.order)
         setShowReceiptPreview(true)
@@ -173,13 +180,13 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="flex items-center justify-between px-6 py-4 border-b">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
           <h2 className="text-lg font-bold text-gray-800">Checkout</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={20} /></button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {/* Customer name */}
           {showNameInput ? (
             <input
@@ -397,7 +404,7 @@ export default function CheckoutModal({ onClose, onComplete }: Props) {
           {error && <p className="text-red-500 text-sm text-center">{error}</p>}
         </div>
 
-        <div className="px-6 pb-6">
+        <div className="px-6 pb-6 shrink-0">
           <button
             onClick={handleConfirm}
             disabled={loading || (!isCredit && totalPaid < total) || (isCredit && !selectedDebtor)}
@@ -586,7 +593,10 @@ function ReceiptPreviewSheet({
       <div className="mt-4 space-y-2 text-[12px]">
         {(order?.items || []).map((item: any, index: number) => (
           <div key={index} className="grid grid-cols-[1fr_40px_72px] gap-2 items-start">
-            <span className="leading-4">{item.name}</span>
+            <div className="leading-4">
+              <div>{item.name}</div>
+              <div className="text-[10px] text-gray-400">@ {formatCurrency(item.price || 0).replace('₱', '₱')}</div>
+            </div>
             <span className="text-center">{Number(item.quantity || 0) % 1 === 0 ? item.quantity : Number(item.quantity || 0).toFixed(2)}</span>
             <span className="text-right">{formatCurrency(item.subtotal || 0).replace('₱', '₱')}</span>
           </div>

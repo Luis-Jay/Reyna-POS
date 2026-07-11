@@ -51,10 +51,18 @@ export default function SettingsPage() {
   const [usbConnecting, setUsbConnecting] = useState(false)
   const [usbError, setUsbError] = useState('')
   const usbSupported = typeof navigator !== 'undefined' && 'usb' in navigator
+  const isWindows = typeof navigator !== 'undefined' && /win/i.test(navigator.platform)
   const [blePrinterName, setBlePrinterName] = useState<string | null>(null)
   const [bleConnecting, setBleConnecting] = useState(false)
   const [bleError, setBleError] = useState('')
   const bleSupported = typeof navigator !== 'undefined' && 'bluetooth' in navigator
+  const usbBlockedByWindows = isWindows && /windows is blocking/i.test(usbError)
+  const [serialPrinterName, setSerialPrinterName] = useState<string | null>(null)
+  const [serialConnecting, setSerialConnecting] = useState(false)
+  const [serialError, setSerialError] = useState('')
+  const [serialBaudRate, setSerialBaudRate] = useState(9600)
+  const serialSupported = typeof navigator !== 'undefined' && 'serial' in navigator
+  const [showZadigGuide, setShowZadigGuide] = useState(false)
 
   const persistSettings = async (nextSettings: Record<string, string>) => {
     const normalizedSettings = Object.fromEntries(
@@ -71,7 +79,7 @@ export default function SettingsPage() {
     return await window.api.settings.getAll()
   }
 
-  // Auto-connect to previously authorized USB/BT printers on mount
+  // Auto-connect to previously authorized USB/BT/Serial printers on mount
   useEffect(() => {
     window.api.printer.autoConnectUsb?.().then((res: any) => {
       if (res?.connected && res?.device) {
@@ -83,6 +91,12 @@ export default function SettingsPage() {
     ;(window.api.printer as any).autoConnectBluetooth?.().then((res: any) => {
       if (res?.connected && res?.device) {
         setBlePrinterName(res.device)
+        window.api.printer.getStatus().then(setPrinterStatus)
+      }
+    }).catch(() => {})
+    ;(window.api.printer as any).autoConnectSerial?.().then((res: any) => {
+      if (res?.connected && res?.device) {
+        setSerialPrinterName(res.device)
         window.api.printer.getStatus().then(setPrinterStatus)
       }
     }).catch(() => {})
@@ -126,6 +140,27 @@ export default function SettingsPage() {
     await (window.api.printer as any).disconnectBluetooth?.()
     setBlePrinterName(null)
     setPrinterStatus(await window.api.printer.getStatus())
+  }
+
+  const handleConnectSerial = async () => {
+    setSerialConnecting(true)
+    setSerialError('')
+    const res = await (window.api.printer as any).connectSerial?.(serialBaudRate)
+    setSerialConnecting(false)
+    if (res?.success) {
+      setSerialPrinterName(res.device || 'Serial Printer')
+      setPrinterStatus(await window.api.printer.getStatus())
+      setPrinters(await window.api.printer.listPrinters())
+    } else {
+      setSerialError(res?.error || 'Failed to connect.')
+    }
+  }
+
+  const handleDisconnectSerial = async () => {
+    await (window.api.printer as any).disconnectSerial?.()
+    setSerialPrinterName(null)
+    setPrinterStatus(await window.api.printer.getStatus())
+    setPrinters([])
   }
 
   const load = async () => {
@@ -371,7 +406,11 @@ export default function SettingsPage() {
   const handleReset = async () => {
     if (!confirm('DANGER: This will permanently delete all store data. Are you absolutely sure?')) return
     if (!confirm('This cannot be undone. Type YES to confirm.')) return
-    await window.api.backup.reset()
+    const result = await window.api.backup.reset()
+    if (!result?.success) {
+      alert(`Reset failed: ${result?.error || 'Unknown error.'}`)
+      return
+    }
     window.location.reload()
   }
 
@@ -884,12 +923,78 @@ export default function SettingsPage() {
               )}
             </div>
 
-            {/* USB Thermal Printer — Chrome/Edge direct connection */}
+            {/* USB via COM Port (WebSerial) — works on Windows despite printer driver */}
             <div className="py-3 border-b border-gray-100">
-              <p className="text-sm font-medium text-gray-800 mb-1">USB Thermal Printer</p>
+              <p className="text-sm font-medium text-gray-800 mb-1">USB Thermal Printer via COM Port</p>
+              <p className="text-xs text-gray-500 mb-3">
+                Direct ESC/POS via serial port — works on Windows even if the printer driver blocks WebUSB. Requires Chrome or Edge on desktop.
+              </p>
+              {serialPrinterName ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-emerald-800">🖨 {serialPrinterName}</p>
+                    <p className="text-xs text-emerald-600 mt-0.5">Connected via COM port — receipts print directly</p>
+                  </div>
+                  <button
+                    onClick={handleDisconnectSerial}
+                    className="shrink-0 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-gray-600 mb-1.5">Baud Rate</label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[9600, 19200, 38400, 57600, 115200].map(rate => (
+                        <button
+                          key={rate}
+                          onClick={() => setSerialBaudRate(rate)}
+                          className={`px-3 py-1 rounded-lg border text-xs font-medium transition-colors ${serialBaudRate === rate ? 'border-[#1a8eff] bg-blue-50 text-[#1a8eff]' : 'border-gray-200 text-gray-500 hover:border-gray-300'}`}
+                        >
+                          {rate.toLocaleString()}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="mt-1 text-xs text-gray-400">Try 9600 first — check your printer manual if it doesn't print.</p>
+                  </div>
+                  <button
+                    onClick={handleConnectSerial}
+                    disabled={serialConnecting || !serialSupported}
+                    className="w-full rounded-xl bg-[#1a8eff] text-white py-2.5 text-sm font-medium hover:bg-[#0077e6] disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {serialConnecting ? 'Connecting…' : '🔌 Connect via COM Port'}
+                  </button>
+                  {!serialSupported && (
+                    <p className="mt-2 text-xs text-amber-600">Web Serial requires Chrome or Edge on desktop.</p>
+                  )}
+                  {serialError === 'No port selected.' ? (
+                    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      <p className="font-semibold mb-1">No COM port appeared in the list?</p>
+                      <p>Check <strong>Device Manager → Ports (COM &amp; LPT)</strong>. If your printer is listed there, try again and select it. If it's not listed, your printer doesn't have a serial interface — use Browser Print instead.</p>
+                    </div>
+                  ) : serialError ? (
+                    <p className="mt-2 text-xs text-red-500">{serialError}</p>
+                  ) : null}
+                  {serialSupported && !serialPrinterName && !serialError && (
+                    <p className="mt-2 text-xs text-gray-400">Pick the COM port your printer uses (e.g. COM3). Check Device Manager → Ports if unsure.</p>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* USB Thermal Printer — Chrome/Edge direct WebUSB connection */}
+            <div className="py-3 border-b border-gray-100">
+              <p className="text-sm font-medium text-gray-800 mb-1">USB Thermal Printer (WebUSB)</p>
               <p className="text-xs text-gray-500 mb-3">
                 Direct ESC/POS connection — no print dialog. Requires Chrome or Edge on desktop.
               </p>
+              {isWindows && (
+                <p className="mb-3 text-xs text-amber-700">
+                  On Windows, try <strong>COM Port</strong> above first if this fails. Some printers block WebUSB when the OS driver is installed.
+                </p>
+              )}
               {usbPrinterName ? (
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between gap-3">
                   <div>
@@ -915,10 +1020,42 @@ export default function SettingsPage() {
                   {!usbSupported && (
                     <p className="mt-2 text-xs text-amber-600">Web USB requires Chrome or Edge on desktop.</p>
                   )}
-                  {usbError && <p className="mt-2 text-xs text-red-500">{usbError}</p>}
+                  {usbError && (
+                    <div className="mt-2">
+                      <p className="text-xs text-red-500 mb-2">{usbError}</p>
+                      {usbBlockedByWindows && (
+                        <button
+                          onClick={() => setShowZadigGuide(v => !v)}
+                          className="text-xs font-medium text-[#1a8eff] underline underline-offset-2"
+                        >
+                          {showZadigGuide ? 'Hide fix guide ▲' : 'How to fix this on Windows ▼'}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </div>
+
+            {usbBlockedByWindows && showZadigGuide && !usbPrinterName && (
+              <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-4 space-y-3">
+                <p className="text-sm font-semibold text-blue-900">Fix: Replace the printer driver with WinUSB (Zadig)</p>
+                <p className="text-xs text-blue-800">
+                  Windows blocks browser USB access when a regular printer driver is installed. Replacing it with WinUSB lets Chrome talk to the printer directly — no print dialog needed.
+                </p>
+                <ol className="space-y-2 text-xs text-blue-900 list-decimal list-inside">
+                  <li>Download <strong>Zadig</strong> from <span className="font-mono bg-blue-100 px-1 rounded">zadig.akeo.ie</span> and open it (no install needed).</li>
+                  <li>In Zadig, go to <strong>Options → List All Devices</strong> so your printer appears.</li>
+                  <li>Select your thermal printer from the dropdown (look for the model name or "USB Printing Support").</li>
+                  <li>Make sure the driver on the right says <strong>WinUSB</strong>. If it doesn't, click the arrows to select WinUSB.</li>
+                  <li>Click <strong>Replace Driver</strong> and wait for it to finish (may take a minute).</li>
+                  <li>Come back here and click <strong>Connect USB Thermal Printer</strong> — it should connect now.</li>
+                </ol>
+                <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <strong>Note:</strong> After replacing the driver, the printer will no longer appear in Windows "Printers &amp; Scanners" — it will only work via this app. To undo, open Device Manager, find the printer under "Universal Serial Bus devices", right-click → <em>Update driver</em> → <em>Search automatically</em>.
+                </div>
+              </div>
+            )}
 
             <div className="py-3">
               <label className="block text-sm font-medium text-gray-700 mb-2">Paper Size</label>

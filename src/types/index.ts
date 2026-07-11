@@ -2,10 +2,18 @@
 export type UserRole = 'admin' | 'cashier'
 
 export interface UserPermissions {
+  can_access_dashboard?: boolean
+  can_access_pos?: boolean
+  can_access_sales?: boolean
+  can_access_products?: boolean
+  can_access_inventory?: boolean
   can_access_reports?: boolean
-  can_manage_inventory?: boolean
   can_access_expenses?: boolean
   can_access_cashier_monitoring?: boolean
+  can_access_customer_credit?: boolean
+  can_access_loyalty?: boolean
+  // Legacy permission keys kept for migration compatibility.
+  can_manage_inventory?: boolean
   can_manage_debtors?: boolean
   can_manage_products?: boolean
 }
@@ -67,6 +75,7 @@ export interface Product {
   is_active: number
   sort_order: number
   monthly_sold: number
+  basic_locked?: number
   created_at: string
   updated_at: string
   // Runtime joined
@@ -88,9 +97,12 @@ export interface ProductVariation {
 export interface CartItem {
   id: string           // unique cart line id
   product_id?: string
+  variation_option_id?: string
   name: string
   price: number        // effective price (may be tier price)
   base_price: number   // original product price, for reverting tiers
+  retail_unit_price?: number
+  wholesale_unit_price?: number
   cost: number
   quantity: number
   subtotal: number

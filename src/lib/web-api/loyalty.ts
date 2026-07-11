@@ -1,14 +1,17 @@
 import { v4 as uuid } from 'uuid'
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
+import { assertProAccess, getProAccessState } from './pro-access'
 
 export const loyaltyApi = {
   getAll: async (search?: string) => {
     try {
+      const access = await getProAccessState()
+      if (!access.activated) return []
       const businessId = await getBusinessId()
       let query = supabase
         .from('loyalty_accounts')
-        .select('*')
+        .select('id, name, phone, points, total_earned, total_redeemed, created_at, updated_at, deleted_at')
         .eq('business_id', businessId)
         .is('deleted_at', null)
 
@@ -28,10 +31,12 @@ export const loyaltyApi = {
 
   getByPhone: async (phone: string) => {
     try {
+      const access = await getProAccessState()
+      if (!access.activated) return null
       const businessId = await getBusinessId()
       const { data } = await supabase
         .from('loyalty_accounts')
-        .select('*')
+        .select('id, name, phone, points, total_earned, total_redeemed, created_at, updated_at, deleted_at')
         .eq('business_id', businessId)
         .eq('phone', phone)
         .is('deleted_at', null)
@@ -44,6 +49,7 @@ export const loyaltyApi = {
 
   create: async (data: { name: string; phone?: string }) => {
     try {
+      await assertProAccess('Loyalty cards are available on Reyna Pro only.')
       const businessId = await getBusinessId()
       const id = uuid()
       const { error } = await supabase.from('loyalty_accounts').insert({
@@ -61,6 +67,7 @@ export const loyaltyApi = {
 
   earn: async (accountId: string, points: number, orderId?: string, note?: string) => {
     try {
+      await assertProAccess('Loyalty cards are available on Reyna Pro only.')
       const businessId = await getBusinessId()
       const { data: acct } = await supabase
         .from('loyalty_accounts').select('points, total_earned').eq('id', accountId).single()
@@ -83,6 +90,7 @@ export const loyaltyApi = {
 
   redeem: async (accountId: string, points: number, orderId?: string, note?: string) => {
     try {
+      await assertProAccess('Loyalty cards are available on Reyna Pro only.')
       const businessId = await getBusinessId()
       const { data: acct } = await supabase
         .from('loyalty_accounts').select('points, total_redeemed').eq('id', accountId).single()
@@ -105,6 +113,7 @@ export const loyaltyApi = {
 
   adjust: async (accountId: string, points: number, note?: string) => {
     try {
+      await assertProAccess('Loyalty cards are available on Reyna Pro only.')
       const businessId = await getBusinessId()
       const { data: acct } = await supabase
         .from('loyalty_accounts').select('points').eq('id', accountId).single()
@@ -126,10 +135,12 @@ export const loyaltyApi = {
 
   getHistory: async (accountId: string) => {
     try {
+      const access = await getProAccessState()
+      if (!access.activated) return []
       const businessId = await getBusinessId()
       const { data } = await supabase
         .from('loyalty_transactions')
-        .select('*')
+        .select('id, account_id, business_id, type, points, order_id, note, created_at')
         .eq('account_id', accountId)
         .eq('business_id', businessId)
         .order('created_at', { ascending: false })
@@ -142,6 +153,7 @@ export const loyaltyApi = {
 
   delete: async (accountId: string) => {
     try {
+      await assertProAccess('Loyalty cards are available on Reyna Pro only.')
       const businessId = await getBusinessId()
       await supabase.from('loyalty_accounts')
         .update({ deleted_at: new Date().toISOString() })

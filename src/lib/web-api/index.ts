@@ -1,3 +1,5 @@
+import { startWebSyncService, onSyncStatus } from '../web-sync-service'
+import { getBusinessId } from './context'
 import { settingsApi } from './settings'
 import { authApi } from './auth'
 import { productsApi } from './products'
@@ -48,6 +50,13 @@ function setupBarcodeScanner() {
 export function createWebApi() {
   setupBarcodeScanner()
 
+  // Start the offline sync service once we have a businessId
+  getBusinessId().then(businessId => {
+    startWebSyncService(businessId)
+  }).catch(() => {
+    // Not signed in yet — sync will start after login
+  })
+
   return {
     assets: {
       getProductImageUrl: (filePath: string) => filePath,
@@ -78,9 +87,8 @@ export function createWebApi() {
         barcodeListeners.add(cb)
         return () => barcodeListeners.delete(cb)
       },
-      syncStatus: (_cb: (status: any) => void) => {
-        // Web version: sync is real-time, no push events needed
-        return () => {}
+      syncStatus: (cb: (status: any) => void) => {
+        return onSyncStatus(cb)
       },
     },
   }

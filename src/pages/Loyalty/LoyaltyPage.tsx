@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import TopBar from '../../components/layout/TopBar'
 import { Search, Plus, Star, RotateCcw, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import { getProAccessState } from '../../lib/web-api/pro-access'
 
 interface LoyaltyAccount {
   id: string
@@ -24,6 +25,7 @@ export default function LoyaltyPage() {
   const [accounts, setAccounts] = useState<LoyaltyAccount[]>([])
   const [search, setSearch] = useState('')
   const [settings, setSettings] = useState<Record<string, string>>({})
+  const [isPro, setIsPro] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [history, setHistory] = useState<Record<string, LoyaltyTx[]>>({})
 
@@ -38,12 +40,14 @@ export default function LoyaltyPage() {
   const [adjusting, setAdjusting] = useState(false)
 
   const load = async () => {
-    const [data, s] = await Promise.all([
+    const [data, s, proAccess] = await Promise.all([
       window.api.loyalty.getAll(search || undefined),
       window.api.settings.getAll(),
+      getProAccessState(),
     ])
     setAccounts(data)
     setSettings(s)
+    setIsPro(proAccess.activated)
   }
 
   useEffect(() => { load() }, [search])
@@ -101,6 +105,15 @@ export default function LoyaltyPage() {
       <TopBar title="Loyalty / Sukipoints" back="/" />
       <div className="flex-1 overflow-y-auto p-4">
         <div className="max-w-2xl mx-auto space-y-4">
+          {!isPro && (
+            <div className="rounded-2xl border border-dashed border-amber-300 bg-white p-6 text-center shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-amber-600">Reyna Pro</p>
+              <h2 className="mt-2 text-2xl font-semibold text-slate-900">Loyalty cards are part of Pro</h2>
+              <p className="mt-3 text-sm leading-6 text-slate-500">
+                Upgrade to unlock loyalty accounts, earning points, redemptions, and account history for this store.
+              </p>
+            </div>
+          )}
 
           {/* Status banner */}
           <div className={`rounded-xl px-4 py-3 flex items-center justify-between ${loyaltyEnabled ? 'bg-amber-50 border border-amber-200' : 'bg-gray-100 border border-gray-200'}`}>
@@ -136,6 +149,7 @@ export default function LoyaltyPage() {
             </div>
             <button
               onClick={() => setShowAdd(true)}
+              disabled={!isPro}
               className="flex items-center gap-1.5 bg-[#1a8eff] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-[#0077e6]"
             >
               <Plus size={14} /> Add
@@ -168,7 +182,9 @@ export default function LoyaltyPage() {
           )}
 
           {/* Accounts list */}
-          {accounts.length === 0 ? (
+          {!isPro ? (
+            <div className="py-16 text-center text-gray-400 text-sm">Upgrade to Pro to use loyalty features.</div>
+          ) : accounts.length === 0 ? (
             <div className="py-16 text-center text-gray-400 text-sm">No loyalty accounts yet</div>
           ) : (
             <div className="space-y-2">

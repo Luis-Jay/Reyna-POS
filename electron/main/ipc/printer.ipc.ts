@@ -7,6 +7,19 @@ import { IPC } from '../../../shared/ipc-channels'
 
 let printerStatus = { connected: false, type: '', device: '', error: '' }
 
+type PrinterRoute =
+  | { kind: 'system'; value: string }
+  | { kind: 'system-dialog'; value: '' }
+  | { kind: 'escpos-usb'; value: string }
+
+type PrinterAttemptResult = {
+  success: boolean
+  route: PrinterRoute
+  device: string
+  error?: string
+  warning?: string
+}
+
 // Load JsBarcode once at startup for inlining into receipt HTML
 let _jsBarcodeScript = ''
 try {
@@ -48,6 +61,7 @@ async function listSystemPrinters() {
 
 async function resolvePrinterInterface(printerInterface: string) {
   if (printerInterface.startsWith('system:')) return printerInterface
+  if (printerInterface === 'escpos-usb') return printerInterface
   if (printerInterface) return printerInterface
 
   const printers = await listSystemPrinters()
@@ -58,11 +72,117 @@ async function resolvePrinterInterface(printerInterface: string) {
   return ''
 }
 
+function normalizePrinterRoute(printerInterface: string): PrinterRoute {
+  if (printerInterface.startsWith('system:')) {
+    return { kind: 'system', value: printerInterface.replace('system:', '') }
+  }
+  if (printerInterface === 'escpos-usb' || printerInterface === 'usb') {
+    return { kind: 'escpos-usb', value: 'USB ESC/POS' }
+  }
+  return { kind: 'system-dialog', value: '' }
+}
+
+function applyPrinterStatus(status: { connected: boolean; type: string; device: string; error?: string }) {
+  printerStatus.connected = status.connected
+  printerStatus.type = status.type
+  printerStatus.device = status.device
+  printerStatus.error = status.error || ''
+}
+
+async function printReceiptUsingConfiguredHardware(
+  order: any,
+  store: { storeName: string; storeAddress: string; storePhone: string; storeTin: string; receiptFooter: string },
+  printerInterface: string,
+  thermalEnabled: boolean
+): Promise<PrinterAttemptResult> {
+  const normalizedRoute = normalizePrinterRoute(printerInterface)
+  const systemResult = async (targetInterface: string) => {
+    const result = await printHtmlReceipt(order, store, targetInterface)
+    const route = normalizePrinterRoute(targetInterface)
+    const device = result.device || (route.kind === 'system' ? route.value : 'system-dialog')
+    return { ...result, route, device }
+  }
+
+  if (normalizedRoute.kind === 'escpos-usb') {
+    try {
+      await printThermal(order, store)
+      return { success: true, route: normalizedRoute, device: normalizedRoute.value }
+    } catch (thermalError: any) {
+      const fallbackInterface = await resolvePrinterInterface('')
+      const fallbackResult = await systemResult(fallbackInterface)
+      if (fallbackResult.success) {
+        return {
+          success: true,
+          route: fallbackResult.route,
+          device: fallbackResult.device,
+          warning: `Direct USB thermal printer unavailable. Used ${fallbackResult.device} instead.`,
+        }
+      }
+      return {
+        success: false,
+        route: normalizedRoute,
+        device: normalizedRoute.value,
+        error: thermalError?.message || fallbackResult.error || 'Print failed',
+      }
+    }
+  }
+
+  const systemAttempt = await systemResult(printerInterface)
+  if (systemAttempt.success) return systemAttempt
+
+  if (normalizedRoute.kind === 'system') {
+    const fallbackInterface = await resolvePrinterInterface('')
+    const canTryFallbackSystem = fallbackInterface !== printerInterface || !fallbackInterface
+    if (canTryFallbackSystem) {
+      const fallbackSystemAttempt = await systemResult(fallbackInterface)
+      if (fallbackSystemAttempt.success) {
+        return {
+          success: true,
+          route: fallbackSystemAttempt.route,
+          device: fallbackSystemAttempt.device,
+          warning: `Configured printer unavailable. Used ${fallbackSystemAttempt.device} instead.`,
+        }
+      }
+    }
+  }
+
+  if (thermalEnabled) {
+    try {
+      await printThermal(order, store)
+      return {
+        success: true,
+        route: { kind: 'escpos-usb', value: 'USB ESC/POS' } as PrinterRoute,
+        device: 'USB ESC/POS',
+        warning: systemAttempt.error ? `System printer unavailable. Used USB ESC/POS instead.` : undefined,
+      }
+    } catch (thermalError: any) {
+      return {
+        success: false,
+        route: systemAttempt.route,
+        device: systemAttempt.device,
+        error: systemAttempt.error || thermalError?.message || 'Print failed',
+      }
+    }
+  }
+
+  return systemAttempt
+}
+
 export function registerPrinterHandlers() {
   ipcMain.handle(IPC.PRINTER.GET_STATUS, () => printerStatus)
 
   ipcMain.handle(IPC.PRINTER.LIST_PRINTERS, async () => {
-    return await listSystemPrinters()
+    const systemPrinters = await listSystemPrinters()
+    return [
+      ...systemPrinters,
+      {
+        name: 'USB ESC/POS (Legacy Direct Mode)',
+        description: 'Direct USB thermal printing for legacy ESC/POS devices',
+        isDefault: false,
+        value: 'escpos-usb',
+        kind: 'escpos-usb',
+      },
+    ]
   })
 
   ipcMain.handle(IPC.PRINTER.SET_CONFIG, (_, config: any) => {
@@ -82,92 +202,53 @@ export function registerPrinterHandlers() {
   ipcMain.handle(IPC.PRINTER.PRINT_RECEIPT, async (_, order: any) => {
     const { thermalEnabled, storeName, storeAddress, storePhone, storeTin, receiptFooter, printerInterface } = getPrinterSettings()
     const effectivePrinterInterface = await resolvePrinterInterface(printerInterface)
-    const preferSystemPrinter = effectivePrinterInterface.startsWith('system:')
-
-    if (thermalEnabled && !preferSystemPrinter) {
-      try {
-        await printThermal(order, { storeName, storeAddress, storePhone, storeTin, receiptFooter })
-        printerStatus.connected = true
-        printerStatus.type = 'escpos-usb'
-        printerStatus.device = 'USB'
-        printerStatus.error = ''
-        return { success: true }
-      } catch (err: any) {
-        const fallbackResult = await printHtmlReceipt(order, {
-          storeName, storeAddress, storePhone, storeTin, receiptFooter,
-        }, effectivePrinterInterface)
-
-        if (fallbackResult.success) {
-          printerStatus.connected = true
-          printerStatus.type = 'system'
-          printerStatus.device = fallbackResult.device
-          printerStatus.error = ''
-          return {
-            success: true,
-            warning: `Thermal printer unavailable. Used ${fallbackResult.device} instead.`,
-          }
-        }
-
-        printerStatus.connected = false
-        printerStatus.type = 'escpos-usb'
-        printerStatus.error = err.message
-        return {
-          success: false,
-          error: 'Thermal USB printer unavailable and no system printer is configured. Please go to Settings → Printer and select a printer.',
-        }
-      }
-    }
-
-    const result = await printHtmlReceipt(order, {
+    const result = await printReceiptUsingConfiguredHardware(order, {
       storeName, storeAddress, storePhone, storeTin, receiptFooter,
-    }, effectivePrinterInterface)
+    }, effectivePrinterInterface, thermalEnabled)
 
-    const systemDevice = effectivePrinterInterface.startsWith('system:') ? effectivePrinterInterface.replace('system:', '') : 'system-dialog'
     if (!result.success) {
-      printerStatus.connected = false
-      printerStatus.error = result.error || 'Print failed'
-      printerStatus.type = 'system'
-      printerStatus.device = systemDevice
-      return { success: false, error: result.error }
+      applyPrinterStatus({
+        connected: false,
+        type: result.route.kind,
+        device: result.device || 'Unknown printer',
+        error: result.error || 'Print failed',
+      })
+      return { success: false, error: result.error || 'Print failed' }
     }
 
-    printerStatus.connected = true
-    printerStatus.type = 'system'
-    printerStatus.device = result.device || systemDevice
-    printerStatus.error = ''
-    return { success: true }
+    applyPrinterStatus({
+      connected: true,
+      type: result.route.kind,
+      device: result.device || 'Unknown printer',
+    })
+    return result.warning ? { success: true, warning: result.warning } : { success: true }
   })
 
   ipcMain.handle(IPC.PRINTER.TEST_PAGE, async () => {
     try {
-      const { thermalEnabled, printerInterface } = getPrinterSettings()
+      const { thermalEnabled, printerInterface, storeName, storeAddress, storePhone, storeTin, receiptFooter } = getPrinterSettings()
       const effectivePrinterInterface = await resolvePrinterInterface(printerInterface)
-      const preferSystemPrinter = effectivePrinterInterface.startsWith('system:')
-      if (thermalEnabled && !preferSystemPrinter) {
-        const testSettings = getPrinterSettings()
-        await printThermal({ test: true }, { storeName: testSettings.storeName, storeAddress: testSettings.storeAddress, storePhone: testSettings.storePhone, storeTin: testSettings.storeTin, receiptFooter: testSettings.receiptFooter })
-        printerStatus.connected = true
-        printerStatus.type = 'escpos-usb'
-        printerStatus.device = 'USB'
-      } else {
-        const testSettings = getPrinterSettings()
-        const result = await printHtmlReceipt({ test: true }, {
-          storeName: testSettings.storeName,
-          storeAddress: testSettings.storeAddress,
-          storePhone: testSettings.storePhone,
-          storeTin: testSettings.storeTin,
-          receiptFooter: testSettings.receiptFooter,
-        }, effectivePrinterInterface)
-        if (!result.success) throw new Error(result.error || 'Print failed')
-        printerStatus.connected = true
-        printerStatus.type = 'system'
-        printerStatus.device = result.device
-      }
-      printerStatus.error = ''
+      const result = await printReceiptUsingConfiguredHardware({ test: true }, {
+        storeName,
+        storeAddress,
+        storePhone,
+        storeTin,
+        receiptFooter,
+      }, effectivePrinterInterface, thermalEnabled)
+      if (!result.success) throw new Error(result.error || 'Print failed')
+      applyPrinterStatus({
+        connected: true,
+        type: result.route.kind,
+        device: result.device || 'Unknown printer',
+      })
       return { success: true }
     } catch (err: any) {
-      printerStatus.connected = false
-      printerStatus.error = err.message
+      applyPrinterStatus({
+        connected: false,
+        type: printerStatus.type || 'system-dialog',
+        device: printerStatus.device || 'Unknown printer',
+        error: err.message,
+      })
       return { success: false, error: err.message }
     }
   })

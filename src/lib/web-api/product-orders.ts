@@ -1,12 +1,13 @@
 import { v4 as uuid } from 'uuid'
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
+import { getProAccessState } from './pro-access'
 
 async function fetchProductMap(businessId: string): Promise<Record<string, any>> {
   try {
     const { data } = await supabase
       .from('catalog_products')
-      .select('*')
+      .select('id, name, barcode, base_cost, retail_price, wholesale_price, image_url')
       .eq('business_id', businessId)
     const map: Record<string, any> = {}
     for (const p of data ?? []) map[p.id] = p
@@ -68,6 +69,7 @@ export const productOrdersApi = {
   create: async (data: any) => {
     try {
       const businessId = await getBusinessId()
+      const proAccess = await getProAccessState()
       const id = uuid()
       const { error } = await supabase.from('product_orders').insert({
         id, business_id: businessId,
@@ -75,8 +77,8 @@ export const productOrdersApi = {
         vendor_name: data.vendor_name || null,
         quantity: data.quantity,
         unit_cost: data.unit_cost ?? 0,
-        retail_price: data.retail_price ?? null,
-        wholesale_price: data.wholesale_price ?? null,
+        retail_price: proAccess.batchPricingEnabled ? (data.retail_price ?? null) : null,
+        wholesale_price: proAccess.batchPricingEnabled ? (data.wholesale_price ?? null) : null,
         expected_at: data.expected_at || null,
         notes: data.notes || null,
         status: 'pending',
@@ -91,8 +93,9 @@ export const productOrdersApi = {
   receive: async (id: string) => {
     try {
       const businessId = await getBusinessId()
+      const proAccess = await getProAccessState()
       const { data: order } = await supabase
-        .from('product_orders').select('*').eq('id', id).single()
+        .from('product_orders').select('id, product_id, business_id, status, quantity, unit_cost, retail_price, wholesale_price').eq('id', id).single()
       if (!order || order.status !== 'pending') return { ok: false }
 
       // Update inventory
@@ -112,10 +115,10 @@ export const productOrdersApi = {
       }
 
       // Update product prices if provided
-      if (order.retail_price != null || order.wholesale_price != null || order.unit_cost != null) {
+      if ((proAccess.batchPricingEnabled && (order.retail_price != null || order.wholesale_price != null)) || order.unit_cost != null) {
         const priceUpdate: any = { updated_at: new Date().toISOString() }
-        if (order.retail_price != null) priceUpdate.retail_price = order.retail_price
-        if (order.wholesale_price != null) priceUpdate.wholesale_price = order.wholesale_price
+        if (proAccess.batchPricingEnabled && order.retail_price != null) priceUpdate.retail_price = order.retail_price
+        if (proAccess.batchPricingEnabled && order.wholesale_price != null) priceUpdate.wholesale_price = order.wholesale_price
         if (order.unit_cost != null) priceUpdate.base_cost = order.unit_cost
         await supabase.from('catalog_products').update(priceUpdate)
           .eq('id', order.product_id).eq('business_id', businessId)

@@ -1,6 +1,7 @@
 import { supabase, SUPABASE_FUNCTIONS_URL } from '../supabase'
 import { clearBusinessId, getBusinessId, getAccessToken } from './context'
 import { settingsApi } from './settings'
+import { clearCachedActivation } from './activation'
 
 const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ6aGpmc2dqa2J2Y3NwZm5jeWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyODI4ODQsImV4cCI6MjA5MDg1ODg4NH0.gw-mgJWF3yoCRlQIW6IVcrHbiVvqcNSO2i8yzis1aDM'
 
@@ -30,6 +31,18 @@ function getFriendlyWebAuthError(err: any, phase: 'login' | 'signup') {
   }
 
   return message || (phase === 'login' ? 'Login failed.' : 'Signup failed.')
+}
+
+function getPasswordResetRedirectUrl() {
+  if (typeof window === 'undefined') return undefined
+  // No hash fragment here: Supabase appends "#access_token=...&type=recovery"
+  // to this URL, and a URL can only have one "#" fragment. Adding our own
+  // "#/login" would corrupt the token params it appends (they'd get parsed
+  // as "/login#access_token" instead of "access_token"), silently breaking
+  // recovery-session detection. App.tsx already force-routes to /login once
+  // the PASSWORD_RECOVERY event fires, so no hash is needed here.
+  const { origin, pathname } = window.location
+  return `${origin}${pathname}`
 }
 
 function mapCashierToUser(c: any) {
@@ -132,10 +145,14 @@ export const authApi = {
     }
   },
 
-  logout: async () => ({ success: true }),
+  logout: async () => {
+    clearCachedActivation()
+    return { success: true }
+  },
 
   cloudLogout: async () => {
     clearBusinessId()
+    clearCachedActivation()
     await supabase.auth.signOut()
     await settingsApi.set('setup_completed', 'false')
     return { success: true }
@@ -146,9 +163,9 @@ export const authApi = {
       const businessId = await getBusinessId()
       const { data, error } = await supabase
         .from('cashiers')
-        .select('*')
+        .select('id, name, role, is_active, permissions, created_at')
         .eq('business_id', businessId)
-        .eq('is_active', true)
+        .order('role', { ascending: false })
         .order('name')
 
       if (error) throw error
@@ -190,6 +207,25 @@ export const authApi = {
           ...(token ? { Authorization: `Bearer ${token}`, apikey: ANON_KEY } : { apikey: ANON_KEY }),
         },
         body: JSON.stringify({ action: 'update', id, ...userData }),
+      })
+      const data = await res.json()
+      if (!res.ok) return { success: false, error: data.error }
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message }
+    }
+  },
+
+  deleteUser: async (id: string) => {
+    try {
+      const token = await getAccessToken()
+      const res = await fetch(`${SUPABASE_FUNCTIONS_URL}/manage-cashier`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}`, apikey: ANON_KEY } : { apikey: ANON_KEY }),
+        },
+        body: JSON.stringify({ action: 'delete', id }),
       })
       const data = await res.json()
       if (!res.ok) return { success: false, error: data.error }
@@ -258,6 +294,27 @@ export const authApi = {
       return { success: true, user: data.user }
     } catch (err: any) {
       return { success: false, error: getFriendlyWebAuthError(err, 'login') }
+    }
+  },
+
+  requestPasswordReset: async (email: string) => {
+    try {
+      const normalizedEmail = email.trim()
+      if (!normalizedEmail) {
+        return { success: false, error: 'Email is required.' }
+      }
+
+      const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+        redirectTo: getPasswordResetRedirectUrl(),
+      })
+      if (error) return { success: false, error: error.message }
+
+      return { success: true }
+    } catch (err: any) {
+      return {
+        success: false,
+        error: getFriendlyWebAuthError(err, 'login') || 'Failed to send password reset email.',
+      }
     }
   },
 

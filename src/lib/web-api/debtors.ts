@@ -17,7 +17,7 @@ export const debtorsApi = {
       const businessId = await getBusinessId()
       let query = supabase
         .from('sales_debtors')
-        .select('*')
+        .select('id, name, phone, business_id, balance, total_credit, total_paid, last_reminder_at, created_at, updated_at, deleted_at')
         .eq('business_id', businessId)
         .is('deleted_at', null)
         .order('name')
@@ -42,7 +42,7 @@ export const debtorsApi = {
       const businessId = await getBusinessId()
       const { data, error } = await supabase
         .from('sales_debtors')
-        .select('*')
+        .select('id, name, phone, business_id, balance, total_credit, total_paid, last_reminder_at, created_at, updated_at, deleted_at')
         .eq('id', id)
         .eq('business_id', businessId)
         .single()
@@ -172,7 +172,7 @@ export const debtorsApi = {
       const businessId = await getBusinessId()
       let query = supabase
         .from('sales_debtor_transactions')
-        .select('*')
+        .select('id, debtor_id, business_id, type, amount, profit, note, order_id, user_id, created_at')
         .eq('debtor_id', debtorId)
         .eq('business_id', businessId)
         .order('created_at', { ascending: false })

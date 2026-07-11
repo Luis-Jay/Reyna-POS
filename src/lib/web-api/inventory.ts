@@ -1,6 +1,7 @@
 import { v4 as uuid } from 'uuid'
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
+import { assertBasicProductAccessible, ensureBasicProductAccess } from './basic-product-access'
 
 function stockStatus(qty: number, threshold: number): 'out' | 'critical' | 'low' | 'safe' {
   if (qty <= 0) return 'out'
@@ -13,12 +14,13 @@ function normalizeInventoryRow(product: any) {
   const inventory = product.catalog_inventory?.[0]
   const quantity = Number(inventory?.quantity ?? 0)
   const lowThreshold = Number(inventory?.low_threshold ?? 5)
+  const imagePath = product.image_url ?? product.image_data ?? null
 
   return {
     id: inventory?.id ?? `missing-${product.id}`,
     product_id: product.id,
     product_name: product.name ?? '',
-    image_path: product.image_url ?? product.image_data ?? null,
+    image_path: imagePath,
     barcode: product.barcode ?? null,
     base_price: Number(product.base_price ?? 0),
     base_cost: Number(product.base_cost ?? 0),
@@ -37,20 +39,27 @@ function normalizeInventoryRow(product: any) {
 async function fetchProducts(businessId: string): Promise<any> {
   return supabase
     .from('catalog_products')
-    .select('*')
+    .select('id, name, barcode, image_url, base_price, base_cost, retail_price, wholesale_price, monthly_sold, category_id, description, is_active, track_inventory, deleted_at, updated_at, basic_locked')
     .eq('business_id', businessId)
+    .limit(10000)
 }
 
 export const inventoryApi = {
   getAll: async (filter?: string) => {
     try {
       const businessId = await getBusinessId()
+      const access = await ensureBasicProductAccess(businessId)
       const [productsRes, inventoryRes] = await Promise.all([
-        fetchProducts(businessId),
+        (() => {
+          let query = fetchProducts(businessId)
+          if (!access.activated) query = query.eq('basic_locked', false)
+          return query
+        })(),
         supabase
           .from('catalog_inventory')
           .select('id, product_id, quantity, low_threshold, updated_at')
-          .eq('business_id', businessId),
+          .eq('business_id', businessId)
+          .limit(10000),
       ])
       if (productsRes.error) {
         console.error('[inventory] catalog_products error:', productsRes.error)
@@ -95,19 +104,34 @@ export const inventoryApi = {
   getReport: async () => {
     try {
       const businessId = await getBusinessId()
-      const [productsRes, inventoryRes, categoriesRes] = await Promise.all([
-        supabase
-          .from('catalog_products')
-          .select('id, name, barcode, description, category_id, retail_price, wholesale_price, base_cost, monthly_sold, is_active, deleted_at, track_inventory, updated_at')
-          .eq('business_id', businessId),
+      const access = await ensureBasicProductAccess(businessId)
+      const [productsRes, inventoryRes, categoriesRes, movementsRes] = await Promise.all([
+        (() => {
+          let query = supabase
+            .from('catalog_products')
+            .select('id, name, barcode, description, category_id, retail_price, wholesale_price, base_cost, monthly_sold, is_active, deleted_at, track_inventory, updated_at, basic_locked')
+            .eq('business_id', businessId)
+            .limit(10000)
+          if (!access.activated) query = query.eq('basic_locked', false)
+          return query
+        })(),
         supabase
           .from('catalog_inventory')
           .select('id, product_id, quantity, low_threshold, updated_at')
-          .eq('business_id', businessId),
+          .eq('business_id', businessId)
+          .limit(10000),
         supabase
           .from('catalog_categories')
           .select('id, name')
-          .eq('business_id', businessId),
+          .eq('business_id', businessId)
+          .limit(10000),
+        supabase
+          .from('stock_movements')
+          .select('id, product_id, type, quantity, note, created_at')
+          .eq('business_id', businessId)
+          .in('type', ['restock', 'adjustment', 'initial'])
+          .gt('quantity', 0)
+          .order('created_at', { ascending: true }),
       ])
       if (productsRes.error) throw productsRes.error
       if (inventoryRes.error) throw inventoryRes.error
@@ -117,6 +141,17 @@ export const inventoryApi = {
       for (const inv of inventoryRes.data ?? []) invMap[inv.product_id] = inv
       const catMap: Record<string, string> = {}
       for (const cat of categoriesRes.data ?? []) catMap[cat.id] = cat.name
+
+      // Group movements by product_id for batch display
+      const movementsByProduct: Record<string, Array<{ qty: number; note: string | null; date: string }>> = {}
+      for (const m of movementsRes.data ?? []) {
+        if (!movementsByProduct[m.product_id]) movementsByProduct[m.product_id] = []
+        movementsByProduct[m.product_id].push({
+          qty: Number(m.quantity),
+          note: m.note ?? null,
+          date: m.created_at,
+        })
+      }
 
       const data = (productsRes.data ?? []).map(p => ({
         ...p,
@@ -128,6 +163,13 @@ export const inventoryApi = {
         .filter(p => !p.deleted_at && p.is_active && p.track_inventory)
         .map(product => {
           const row = normalizeInventoryRow(product)
+          const movements = movementsByProduct[product.id] ?? []
+          // If no movements recorded, show a single "Prior stock" batch for the current qty
+          const batches = movements.length > 0
+            ? movements.map(m => ({ qty: m.qty, note: m.note, date: m.date }))
+            : row.quantity > 0
+              ? [{ qty: row.quantity, note: 'Prior stock', date: null }]
+              : []
           return {
             barcode: row.barcode,
             product_id: row.product_id,
@@ -143,6 +185,7 @@ export const inventoryApi = {
             status: row.status,
             stock_value: row.quantity * row.base_cost,
             potential_revenue: row.quantity * row.retail_price,
+            batches,
           }
         })
     } catch {
@@ -153,6 +196,7 @@ export const inventoryApi = {
   addStock: async (productId: string, qty: number, note?: string, _pricing?: any) => {
     try {
       const businessId = await getBusinessId()
+      await assertBasicProductAccessible(businessId, productId)
       const { data: inv } = await supabase
         .from('catalog_inventory')
         .select('quantity')
@@ -187,6 +231,7 @@ export const inventoryApi = {
   setStock: async (productId: string, qty: number, note?: string) => {
     try {
       const businessId = await getBusinessId()
+      await assertBasicProductAccessible(businessId, productId)
       const { data: inv } = await supabase
         .from('catalog_inventory')
         .select('quantity')
@@ -221,9 +266,10 @@ export const inventoryApi = {
   getMovements: async (productId: string) => {
     try {
       const businessId = await getBusinessId()
+      await assertBasicProductAccessible(businessId, productId)
       const { data } = await supabase
         .from('stock_movements')
-        .select('*')
+        .select('id, product_id, business_id, type, quantity, note, reference_id, user_id, created_at')
         .eq('product_id', productId)
         .eq('business_id', businessId)
         .order('created_at', { ascending: false })

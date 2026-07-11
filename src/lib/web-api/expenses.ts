@@ -8,7 +8,7 @@ export const expensesApi = {
       const businessId = await getBusinessId()
       let query = supabase
         .from('expenses')
-        .select('*')
+        .select('id, business_id, category, description, amount, date, created_at, updated_at')
         .eq('business_id', businessId)
         .order('date', { ascending: false })
         .order('created_at', { ascending: false })

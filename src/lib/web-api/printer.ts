@@ -92,6 +92,66 @@ async function sendBleData(data: Uint8Array): Promise<boolean> {
 }
 
 // ──────────────────────────────────────────────────────────────
+// Web Serial ESC/POS support (Windows COM port — bypasses driver)
+// Works on Chrome / Edge. Many thermal printers expose a COM port
+// alongside the printer-class USB interface. WebSerial can access
+// the COM port even when the OS printer driver holds the USB side.
+// ──────────────────────────────────────────────────────────────
+const WEB_SERIAL_SUPPORTED = typeof navigator !== 'undefined' && 'serial' in navigator
+
+let _serialPort: SerialPort | null = null
+let _serialWriter: WritableStreamDefaultWriter<Uint8Array> | null = null
+
+if (WEB_SERIAL_SUPPORTED) {
+  navigator.serial.addEventListener('disconnect', (event: any) => {
+    if (_serialPort && event.target === _serialPort) {
+      _serialWriter = null
+      _serialPort = null
+    }
+  })
+}
+
+let _serialBaudRate = 9600
+
+async function openSerialPort(port: SerialPort, baudRate = _serialBaudRate): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await port.open({ baudRate, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none' })
+    const writer = (port.writable as WritableStream<Uint8Array> | null)?.getWriter()
+    if (!writer) {
+      await port.close().catch(() => {})
+      return { ok: false, error: 'Could not open a writable stream on this serial port.' }
+    }
+    _serialPort = port
+    _serialWriter = writer
+    _serialBaudRate = baudRate
+    return { ok: true }
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Failed to open serial port.' }
+  }
+}
+
+async function sendSerialData(data: Uint8Array): Promise<boolean> {
+  if (!_serialWriter) return false
+  try {
+    await _serialWriter.write(data)
+    return true
+  } catch (err) {
+    console.error('[printer] Serial send error:', err)
+    _serialWriter = null
+    _serialPort = null
+    return false
+  }
+}
+
+function serialPortName(port: SerialPort): string {
+  try {
+    const info = port.getInfo()
+    if (info.usbVendorId) return `USB Serial (${info.usbVendorId.toString(16)}:${(info.usbProductId ?? 0).toString(16)})`
+  } catch { /* ignore */ }
+  return 'Serial Printer'
+}
+
+// ──────────────────────────────────────────────────────────────
 // Web USB ESC/POS direct thermal printer support
 // Works on Chrome / Edge only (navigator.usb)
 // ──────────────────────────────────────────────────────────────
@@ -101,6 +161,23 @@ let _usbDevice: USBDevice | null = null
 let _usbInterfaceNum = 0
 let _usbEndpointNum = 1
 
+const PRINTER_CLASS_CODE = 0x07
+const USB_PRINTER_FILTERS: USBDeviceFilter[] = [
+  { classCode: PRINTER_CLASS_CODE },
+  { vendorId: 0x04b8 }, // Epson
+  { vendorId: 0x0519 }, // Star Micronics
+  { vendorId: 0x0483 }, // Rongta / STM-based boards often used by thermal printers
+  { vendorId: 0x1504 }, // Bixolon / common thermal printer vendor id
+  { vendorId: 0x6868 }, // Xprinter / GOOJPRT variants
+]
+
+type UsbEndpointMatch = {
+  iface: number
+  alternate: number
+  ep: number
+  type: USBEndpointType
+}
+
 if (WEB_USB_SUPPORTED) {
   navigator.usb.addEventListener('disconnect', (event: any) => {
     if (_usbDevice && event.device === _usbDevice) {
@@ -109,40 +186,103 @@ if (WEB_USB_SUPPORTED) {
   })
 }
 
-async function findBulkOutEndpoint(device: USBDevice): Promise<{ iface: number; ep: number } | null> {
+function usbClaimBlockedMessage() {
+  const platform = typeof navigator !== 'undefined' ? navigator.platform.toLowerCase() : ''
+  if (platform.includes('win')) {
+    return 'Windows is blocking direct browser access to this printer. This usually means the printer is using the normal Windows printer driver instead of a WebUSB-compatible driver. You can still print using Browser Print, or use the Windows desktop app for direct USB printing.'
+  }
+  if (platform.includes('mac')) {
+    return 'Could not claim the printer interface. On macOS, the OS printer driver may be blocking access. Try removing the printer from System Settings -> Printers, then reconnect it.'
+  }
+  return 'Could not claim the printer interface because the OS printer driver is blocking browser access. You can still use Browser Print, or use the desktop app for direct USB printing.'
+}
+
+function isLikelyReceiptPrinter(device: USBDevice): boolean {
+  const classCode = device.deviceClass ?? 0
+  if (classCode === PRINTER_CLASS_CODE) return true
+
+  const text = `${device.productName || ''} ${device.manufacturerName || ''}`.toLowerCase()
+  if (/(printer|receipt|thermal|pos|esc\/pos|xprinter|xp-|tm-|bixolon|star)/.test(text)) return true
+
+  return (device.configurations || []).some(cfg =>
+    cfg.interfaces.some(iface =>
+      iface.alternates.some(alt =>
+        alt.interfaceClass === PRINTER_CLASS_CODE ||
+        alt.endpoints.some(ep => ep.direction === 'out' && (ep.type === 'bulk' || ep.type === 'interrupt'))
+      )
+    )
+  )
+}
+
+function findAllWritableEndpoints(device: USBDevice): UsbEndpointMatch[] {
+  const bulk: UsbEndpointMatch[] = []
+  const interrupt: UsbEndpointMatch[] = []
   for (const iface of (device.configuration?.interfaces ?? [])) {
     for (const alt of iface.alternates) {
       for (const ep of alt.endpoints) {
-        if (ep.direction === 'out' && ep.type === 'bulk') {
-          return { iface: iface.interfaceNumber, ep: ep.endpointNumber }
-        }
+        if (ep.direction !== 'out') continue
+        const match: UsbEndpointMatch = { iface: iface.interfaceNumber, alternate: alt.alternateSetting, ep: ep.endpointNumber, type: ep.type }
+        if (ep.type === 'bulk') bulk.push(match)
+        else if (ep.type === 'interrupt') interrupt.push(match)
       }
     }
   }
-  return null
+  return [...bulk, ...interrupt]
 }
+
+const CLAIM_BLOCKED_RE = /claim|interface|access denied|failed to open|network error/i
 
 async function openUsbDevice(device: USBDevice): Promise<{ ok: boolean; error?: string }> {
   try {
     await device.open()
-    if (device.configuration === null) await device.selectConfiguration(1)
-    const found = await findBulkOutEndpoint(device)
-    if (!found) {
+  } catch (err: any) {
+    const msg: string = err?.message || String(err)
+    return { ok: false, error: CLAIM_BLOCKED_RE.test(msg) ? usbClaimBlockedMessage() : msg || 'Failed to open printer.' }
+  }
+
+  try {
+    if (!isLikelyReceiptPrinter(device)) {
       await device.close().catch(() => {})
-      return { ok: false, error: 'No bulk-out endpoint found. This may not be a supported ESC/POS printer.' }
+      return { ok: false, error: 'Selected USB device does not look like a receipt printer.' }
     }
-    _usbInterfaceNum = found.iface
-    _usbEndpointNum = found.ep
-    await device.claimInterface(_usbInterfaceNum)
-    _usbDevice = device
-    return { ok: true }
+
+    if (device.configuration === null) {
+      const firstConfig = device.configurations?.[0]?.configurationValue ?? 1
+      await device.selectConfiguration(firstConfig)
+    }
+
+    const candidates = findAllWritableEndpoints(device)
+    if (!candidates.length) {
+      await device.close().catch(() => {})
+      return { ok: false, error: 'No writable USB endpoint found. This printer may not expose a direct ESC/POS interface to the browser.' }
+    }
+
+    // Try each interface in order — on Windows the OS printer driver may hold the first
+    // one (printer class), but some printers expose a secondary vendor-specific interface
+    // that is free to claim via WebUSB.
+    let lastClaimError: any = null
+    for (const found of candidates) {
+      try {
+        if (typeof device.selectAlternateInterface === 'function') {
+          await device.selectAlternateInterface(found.iface, found.alternate).catch(() => {})
+        }
+        await device.claimInterface(found.iface)
+        _usbInterfaceNum = found.iface
+        _usbEndpointNum = found.ep
+        _usbDevice = device
+        return { ok: true }
+      } catch (err) {
+        lastClaimError = err
+      }
+    }
+
+    await device.close().catch(() => {})
+    const msg: string = lastClaimError?.message || String(lastClaimError)
+    return { ok: false, error: CLAIM_BLOCKED_RE.test(msg) ? usbClaimBlockedMessage() : msg || 'Failed to claim printer interface.' }
   } catch (err: any) {
     await device.close().catch(() => {})
     const msg: string = err?.message || String(err)
-    if (/claim|interface|access denied/i.test(msg)) {
-      return { ok: false, error: 'Could not claim the printer interface — the OS printer driver may be blocking access. On macOS, try going to System Settings → Printers and removing the printer, then reconnect.' }
-    }
-    return { ok: false, error: msg || 'Failed to open printer.' }
+    return { ok: false, error: CLAIM_BLOCKED_RE.test(msg) ? usbClaimBlockedMessage() : msg || 'Failed to open printer.' }
   }
 }
 
@@ -226,6 +366,8 @@ function buildEscPosData(order: any, store: {
       const price = 'P' + Number(item.subtotal || 0).toFixed(2)
       const name = String(item.name || '').substring(0, nameW).padEnd(nameW)
       parts.push(t(name + ' ' + qtyStr.padStart(4) + ' ' + price.padStart(8) + '\n'))
+      const unitPrice = '@P' + Number(item.price || 0).toFixed(2) + ' each'
+      parts.push(t(unitPrice.padEnd(nameW + 14) + '\n'))
     }
 
     parts.push(div)
@@ -321,7 +463,7 @@ function buildReceiptHtml(order: any, store: {
 
   const itemsHtml = (order?.items || []).map((item: any) => `
     <tr>
-      <td class="name-col">${escapeHtml(item.name)}</td>
+      <td class="name-col">${escapeHtml(item.name)}<br><span class="unit-price">@ ${escapeHtml(formatPeso(item.price))}</span></td>
       <td class="qty-col">${escapeHtml(formatQty(item.quantity))}</td>
       <td class="price-col">${escapeHtml(formatPeso(item.subtotal))}</td>
     </tr>`).join('')
@@ -415,6 +557,7 @@ function buildReceiptHtml(order: any, store: {
     .footer-msg{font-size:10px;margin-top:2px}
     .section-gap{margin:12px 0}
     .note{font-size:10px;margin-top:3px}
+    .unit-price{font-size:9px;color:#555}
     @page{margin:${pageMargin};size:${pageSize} auto}
   </style>
 </head>
@@ -649,7 +792,11 @@ export const printerApi = {
   printReceipt: async (order: any) => {
     try {
       const store = await getStoreSettings()
-      // USB first, then BLE, then browser fallback
+      // Serial first (best Windows compat), then USB, then BLE, then browser fallback
+      if (_serialWriter) {
+        const ok = await sendSerialData(buildEscPosData(order, store))
+        if (ok) return { success: true }
+      }
       if (_usbDevice) {
         const ok = await sendEscPos(buildEscPosData(order, store))
         if (ok) return { success: true }
@@ -680,6 +827,10 @@ export const printerApi = {
   testPage: async () => {
     try {
       const store = await getStoreSettings()
+      if (_serialWriter) {
+        const ok = await sendSerialData(buildEscPosData({ test: true }, store))
+        if (ok) return { success: true }
+      }
       if (_usbDevice) {
         const ok = await sendEscPos(buildEscPosData({ test: true }, store))
         if (ok) return { success: true }
@@ -695,6 +846,7 @@ export const printerApi = {
   },
 
   getStatus: async () => {
+    if (_serialPort) return { connected: true, type: 'serial-escpos', device: serialPortName(_serialPort), error: '' }
     if (_usbDevice) return { connected: true, type: 'usb-escpos', device: usbDeviceName(_usbDevice), error: '' }
     if (_bleDevice) return { connected: true, type: 'bluetooth-escpos', device: _bleDevice.name || 'Bluetooth Printer', error: '' }
     return { connected: true, type: 'browser', device: 'System Printer (browser dialog)', error: '' }
@@ -712,6 +864,10 @@ export const printerApi = {
     const pinSetting = await settingsApi.get('drawer_pin')
     const pin = pinSetting === '1' ? 1 : 0
     const cmd = new Uint8Array([0x1B, 0x70, pin, 0x19, 0xFA])
+    if (_serialWriter) {
+      const ok = await sendSerialData(cmd)
+      return ok ? { success: true } : { success: false, error: 'Serial drawer kick failed.' }
+    }
     if (_usbDevice) {
       const ok = await sendEscPos(cmd)
       return ok ? { success: true } : { success: false, error: 'USB drawer kick failed.' }
@@ -724,10 +880,51 @@ export const printerApi = {
   },
 
   listPrinters: async () => {
+    if (_serialPort) return [{ name: serialPortName(_serialPort), value: 'serial', isDefault: true }]
     if (_usbDevice) return [{ name: usbDeviceName(_usbDevice), value: 'usb', isDefault: true }]
     if (_bleDevice) return [{ name: _bleDevice.name || 'Bluetooth Printer', value: 'bluetooth', isDefault: true }]
     return []
   },
+
+  // Connect via COM port (WebSerial) — works on Windows even with OS printer driver installed
+  connectSerial: async (baudRate?: number) => {
+    if (!WEB_SERIAL_SUPPORTED) {
+      return { success: false, error: 'Web Serial is not supported in this browser. Use Chrome or Edge on desktop.' }
+    }
+    try {
+      const port = await navigator.serial.requestPort()
+      const result = await openSerialPort(port, baudRate ?? _serialBaudRate)
+      if (!result.ok) return { success: false, error: result.error || 'Could not open serial port.' }
+      return { success: true, device: serialPortName(port) }
+    } catch (err: any) {
+      if (err?.name === 'NotFoundError') return { success: false, error: 'No port selected.' }
+      return { success: false, error: err?.message || 'Failed to connect.' }
+    }
+  },
+
+  disconnectSerial: async () => {
+    try {
+      _serialWriter?.releaseLock()
+      await _serialPort?.close()
+    } catch { /* ignore */ }
+    _serialWriter = null
+    _serialPort = null
+    return { success: true }
+  },
+
+  autoConnectSerial: async () => {
+    if (!WEB_SERIAL_SUPPORTED || _serialPort) return { connected: !!_serialPort }
+    try {
+      const ports = await navigator.serial.getPorts()
+      for (const port of ports) {
+        const result = await openSerialPort(port)
+        if (result.ok) return { connected: true, device: serialPortName(port) }
+      }
+    } catch { /* ignore */ }
+    return { connected: false }
+  },
+
+  serialSupported: () => WEB_SERIAL_SUPPORTED,
 
   // Connect a USB thermal printer — must be called from a user gesture (button click)
   connectUsb: async () => {
@@ -735,7 +932,7 @@ export const printerApi = {
       return { success: false, error: 'Web USB is not supported in this browser. Use Chrome or Edge on desktop.' }
     }
     try {
-      const device = await navigator.usb.requestDevice({ filters: [] })
+      const device = await navigator.usb.requestDevice({ filters: USB_PRINTER_FILTERS })
       const result = await openUsbDevice(device)
       if (!result.ok) return { success: false, error: result.error || 'Could not open printer.' }
       return { success: true, device: usbDeviceName(device) }
@@ -762,6 +959,7 @@ export const printerApi = {
     try {
       const devices = await navigator.usb.getDevices()
       for (const device of devices) {
+        if (!isLikelyReceiptPrinter(device)) continue
         const result = await openUsbDevice(device)
         if (result.ok) return { connected: true, device: usbDeviceName(device) }
       }

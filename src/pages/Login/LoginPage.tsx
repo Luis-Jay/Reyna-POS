@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../stores/auth.store'
 import { ChevronLeft, Delete } from 'lucide-react'
+import { getDefaultRouteForUser } from '../../lib/access'
+import { User } from '../../types'
+import { supabase } from '../../lib/supabase'
 
 const PIN_KEYS = ['1','2','3','4','5','6','7','8','9','','0','⌫']
-
-type User = { id: string; name: string; role: string; is_active: number }
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -23,6 +24,17 @@ export default function LoginPage() {
   const [cloudPassword, setCloudPassword] = useState('')
   const [cloudError, setCloudError] = useState('')
   const [cloudLoading, setCloudLoading] = useState(false)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const [resetEmailSent, setResetEmailSent] = useState(false)
+  const [forgotLoading, setForgotLoading] = useState(false)
+
+  // Password reset state
+  const [isPasswordReset, setIsPasswordReset] = useState(false)
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [resetError, setResetError] = useState('')
+  const [resetLoading, setResetLoading] = useState(false)
+  const [resetDone, setResetDone] = useState(false)
 
   const loadUsers = () => {
     window.api.auth.getUsers().then((list: User[]) => {
@@ -31,6 +43,21 @@ export default function LoginPage() {
   }
 
   useEffect(() => {
+    // Detect Supabase password recovery redirect (flag set in main.tsx)
+    if (sessionStorage.getItem('supabase_pw_reset') === '1') {
+      sessionStorage.removeItem('supabase_pw_reset')
+      setIsPasswordReset(true)
+      return
+    }
+
+    // Expired or invalid reset link
+    if (sessionStorage.getItem('supabase_pw_reset_expired') === '1') {
+      sessionStorage.removeItem('supabase_pw_reset_expired')
+      setNeedsCloudAuth(true)
+      setCloudError('Your password reset link has expired. Please sign in or request a new reset email.')
+      return
+    }
+
     // If the API supports checkCloudSession (web mode), verify before loading users
     if (typeof window.api.auth.checkCloudSession === 'function') {
       window.api.auth.checkCloudSession().then((ok: boolean) => {
@@ -44,6 +71,31 @@ export default function LoginPage() {
       loadUsers()
     }
   }, [])
+
+  const handlePasswordReset = async () => {
+    if (!newPassword || !confirmPassword) return
+    if (newPassword !== confirmPassword) {
+      setResetError('Passwords do not match.')
+      return
+    }
+    if (newPassword.length < 6) {
+      setResetError('Password must be at least 6 characters.')
+      return
+    }
+    setResetLoading(true)
+    setResetError('')
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword })
+      if (error) throw new Error(error.message)
+      setResetDone(true)
+      // Clear the hash so a refresh doesn't re-trigger the reset flow
+      window.history.replaceState(null, '', window.location.pathname)
+    } catch (err: any) {
+      setResetError(err?.message || 'Failed to update password.')
+    } finally {
+      setResetLoading(false)
+    }
+  }
 
   const handleCloudLogin = async () => {
     if (!cloudEmail || !cloudPassword) return
@@ -67,6 +119,33 @@ export default function LoginPage() {
       setCloudError(err?.message || 'Login failed.')
     } finally {
       setCloudLoading(false)
+    }
+  }
+
+  const handleForgotPassword = async () => {
+    if (!cloudEmail.trim()) {
+      setCloudError('Enter your email first so we can send the reset link.')
+      return
+    }
+    if (typeof (window.api.auth as any).requestPasswordReset !== 'function') {
+      setCloudError('Password reset is not available in this build.')
+      return
+    }
+
+    setForgotLoading(true)
+    setCloudError('')
+    setResetEmailSent(false)
+    try {
+      const result = await (window.api.auth as any).requestPasswordReset(cloudEmail.trim())
+      if (!result?.success) {
+        setCloudError(result?.error || 'Failed to send password reset email.')
+        return
+      }
+      setResetEmailSent(true)
+    } catch (err: any) {
+      setCloudError(err?.message || 'Failed to send password reset email.')
+    } finally {
+      setForgotLoading(false)
     }
   }
 
@@ -97,7 +176,7 @@ export default function LoginPage() {
       const result = await window.api.auth.login(user.name, enteredPin)
       if (result.success) {
         login(result.user)
-        navigate(result.user.role === 'admin' ? '/' : '/pos')
+        navigate(getDefaultRouteForUser(result.user))
       } else {
         setError('Wrong PIN. Try again.')
         setPin('')
@@ -108,6 +187,72 @@ export default function LoginPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  // ── Password reset screen ──────────────────────────────────────────────────
+  if (isPasswordReset) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-6">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 text-center">
+            <div className="brand-gradient w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
+              <span className="text-white text-2xl font-black">R</span>
+            </div>
+            <h1 className="text-2xl font-bold text-[var(--text)]">Reset Password</h1>
+            <p className="text-[var(--muted)] text-sm mt-1">Enter your new password below</p>
+          </div>
+
+          <div className="glass-panel rounded-2xl p-6 flex flex-col gap-4">
+            {resetDone ? (
+              <>
+                <p className="text-green-600 text-sm text-center font-medium">Password updated successfully!</p>
+                <button
+                  onClick={() => setIsPasswordReset(false)}
+                  className="w-full py-3 rounded-xl brand-gradient text-white font-semibold text-base shadow hover:opacity-90 transition-opacity"
+                >
+                  Sign In
+                </button>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-[var(--text)] mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full px-4 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
+                    autoComplete="new-password"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-[var(--text)] mb-1">Confirm Password</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={e => setConfirmPassword(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && handlePasswordReset()}
+                    placeholder="••••••••"
+                    className="w-full px-4 py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] outline-none focus:ring-2 focus:ring-[var(--brand-500)]"
+                    autoComplete="new-password"
+                  />
+                </div>
+                {resetError && <p className="text-red-500 text-sm text-center">{resetError}</p>}
+                <button
+                  onClick={handlePasswordReset}
+                  disabled={resetLoading || !newPassword || !confirmPassword}
+                  className="w-full py-3 rounded-xl brand-gradient text-white font-semibold text-base shadow hover:opacity-90 disabled:opacity-50 transition-opacity"
+                >
+                  {resetLoading ? 'Updating…' : 'Update Password'}
+                </button>
+              </>
+            )}
+          </div>
+          <p className="text-center text-xs text-[var(--muted)] mt-8">Powered by Reyna Advanced POS</p>
+        </div>
+      </div>
+    )
   }
 
   // ── Cloud auth screen (web only) ───────────────────────────────────────────
@@ -149,6 +294,11 @@ export default function LoginPage() {
               />
             </div>
             {cloudError && <p className="text-red-500 text-sm text-center">{cloudError}</p>}
+            {resetEmailSent && (
+              <p className="text-green-600 text-sm text-center">
+                Reset email sent. Check your inbox and spam folder for the secure link.
+              </p>
+            )}
             <button
               onClick={handleCloudLogin}
               disabled={cloudLoading || !cloudEmail || !cloudPassword}
@@ -156,6 +306,25 @@ export default function LoginPage() {
             >
               {cloudLoading ? 'Signing in…' : 'Sign In'}
             </button>
+            <button
+              onClick={() => {
+                setShowForgotPassword(v => !v)
+                setCloudError('')
+                setResetEmailSent(false)
+              }}
+              className="text-sm text-[#1a8eff] hover:underline"
+            >
+              {showForgotPassword ? 'Hide forgot password' : 'Forgot password?'}
+            </button>
+            {showForgotPassword && (
+              <button
+                onClick={handleForgotPassword}
+                disabled={forgotLoading || !cloudEmail.trim()}
+                className="w-full py-2.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] font-medium hover:bg-[var(--bg-accent)] disabled:opacity-50 transition-colors"
+              >
+                {forgotLoading ? 'Sending reset email…' : 'Send secure reset email'}
+              </button>
+            )}
           </div>
 
           <p className="text-center text-xs text-[var(--muted)] mt-8">Powered by Reyna Advanced POS</p>

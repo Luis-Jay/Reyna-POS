@@ -1,4 +1,7 @@
-export const IPC = {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.IPC = void 0;
+exports.IPC = {
     PRODUCTS: {
         GET_ALL: 'products:getAll',
         GET_BY_ID: 'products:getById',

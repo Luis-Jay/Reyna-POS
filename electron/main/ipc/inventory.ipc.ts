@@ -4,6 +4,7 @@ import { getDb } from '../db'
 import { IPC } from '../../../shared/ipc-channels'
 import { scheduleAutoSync } from './sync.ipc'
 import { addStockBatch, consumeStockBatches } from '../services/stock-batches.service'
+import { assertBasicProductAccessible, getBasicProductFilter } from '../services/basic-product-access.service'
 
 function getStatus(qty: number, threshold: number): string {
   if (qty <= 0) return 'out'
@@ -30,6 +31,7 @@ export function registerInventoryHandlers() {
       JOIN products p ON i.product_id = p.id
       LEFT JOIN categories c ON p.category_id = c.id
       WHERE p.deleted_at IS NULL AND p.is_active = 1
+    ` + getBasicProductFilter('p') + `
       ORDER BY c.name ASC, p.name ASC
     `).all()
     return rows
@@ -45,6 +47,7 @@ export function registerInventoryHandlers() {
       JOIN products p ON i.product_id = p.id
       WHERE p.deleted_at IS NULL AND p.is_active = 1 AND p.track_inventory = 1
     `
+    query += getBasicProductFilter('p')
     const params: any[] = []
 
     if (filter === 'Fast Moving') {
@@ -68,6 +71,7 @@ export function registerInventoryHandlers() {
 
   ipcMain.handle(IPC.INVENTORY.ADD_STOCK, (_, productId: string, qty: number, note?: string, pricing?: any) => {
     const db = getDb()
+    assertBasicProductAccessible(productId, db)
     const tx = db.transaction(() => {
       const inv: any = db.prepare(`SELECT * FROM inventory WHERE product_id = ?`).get(productId)
       if (!inv) {
@@ -96,6 +100,7 @@ export function registerInventoryHandlers() {
 
   ipcMain.handle(IPC.INVENTORY.SET_STOCK, (_, productId: string, qty: number, note?: string) => {
     const db = getDb()
+    assertBasicProductAccessible(productId, db)
     const tx = db.transaction(() => {
       const inv: any = db.prepare(`SELECT * FROM inventory WHERE product_id = ?`).get(productId)
       const previous = inv?.quantity ?? 0
@@ -126,6 +131,7 @@ export function registerInventoryHandlers() {
   })
 
   ipcMain.handle(IPC.INVENTORY.GET_MOVEMENTS, (_, productId: string) => {
+    assertBasicProductAccessible(productId)
     return getDb().prepare(`
       SELECT sm.*, p.name as product_name
       FROM stock_movements sm

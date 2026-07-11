@@ -1,6 +1,13 @@
 import { v4 as uuid } from 'uuid'
 import { supabase } from '../supabase'
 import { getBusinessId } from './context'
+import { localDb, LocalProduct } from '../local-db'
+import {
+  assertBasicProductAccessible,
+  assertBasicProductCreationAllowed,
+  ensureBasicProductAccess,
+} from './basic-product-access'
+import { assertProAccess, getProAccessState } from './pro-access'
 
 function asNumber(value: any, fallback = 0) {
   const parsed = Number(value)
@@ -63,6 +70,10 @@ async function replacePriceTiers(
   productId: string,
   tiers: { min_qty: number; price: number; label?: string | null }[],
 ) {
+  if (tiers.length > 0) {
+    await assertProAccess('Price tiers are available on Reyna Pro only.')
+  }
+
   const { error: deleteError } = await supabase
     .from('price_tiers')
     .delete()
@@ -115,6 +126,7 @@ function mapProduct(p: any) {
     allow_fractions: p.allow_fractions ? 1 : 0,
     track_inventory: p.track_inventory ? 1 : 0,
     is_active: p.is_active ? 1 : 0,
+    basic_locked: p.basic_locked ? 1 : 0,
     // Join data from catalog_inventory
     stock: p.catalog_inventory?.[0]?.quantity == null ? null : asNumber(p.catalog_inventory[0].quantity),
   }
@@ -126,6 +138,7 @@ async function fetchInventoryMap(businessId: string): Promise<Record<string, num
       .from('catalog_inventory')
       .select('product_id, quantity')
       .eq('business_id', businessId)
+      .limit(10000)
     const map: Record<string, number> = {}
     for (const row of data ?? []) map[row.product_id] = row.quantity
     return map
@@ -134,18 +147,35 @@ async function fetchInventoryMap(businessId: string): Promise<Record<string, num
   }
 }
 
+function buildLocalProductResult(p: LocalProduct) {
+  return {
+    ...p,
+    image_path: p.image_url,
+    has_variations: p.has_variations,
+    allow_fractions: p.allow_fractions,
+    track_inventory: p.track_inventory,
+    is_active: p.is_active,
+    basic_locked: p.basic_locked,
+    variation_group_name: null,
+  }
+}
+
 export const productsApi = {
   getAll: async (filters?: { category?: string; letter?: string; search?: string }) => {
     try {
       const businessId = await getBusinessId()
+      const access = await ensureBasicProductAccess(businessId)
+      // image_url is safe to include now that images are in Storage (short URL, not base64)
       let query = supabase
         .from('catalog_products')
-        .select('*, catalog_categories(name), catalog_variation_groups(name)')
+        .select('id, name, description, image_url, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct, has_variations, variation_group_id, allow_fractions, track_inventory, is_active, sort_order, monthly_sold, basic_locked, updated_at, deleted_at, catalog_categories(name), catalog_variation_groups(name)')
         .eq('business_id', businessId)
         .is('deleted_at', null)
         .eq('is_active', true)
         .order('sort_order')
         .order('name')
+        .limit(10000)
+      if (!access.activated) query = query.eq('basic_locked', false)
 
       if (filters?.category) query = query.eq('category_id', filters.category)
       if (filters?.search) query = query.or(`name.ilike.%${filters.search}%,barcode.eq.${filters.search}`)
@@ -153,21 +183,76 @@ export const productsApi = {
 
       const [{ data, error }, invMap] = await Promise.all([query, fetchInventoryMap(businessId)])
       assertNoError(error, 'Failed to load products.')
-      return (data ?? []).map(p => ({
+      const results = (data ?? []).map((p: any) => ({
         ...mapProduct({ ...p, catalog_inventory: invMap[p.id] != null ? [{ quantity: invMap[p.id] }] : [] }),
         category_name: p.catalog_categories?.name ?? null,
         variation_group_name: p.catalog_variation_groups?.name ?? null,
       }))
+
+      // Update local cache (fire and forget)
+      void localDb.products.bulkPut(results.map(p => ({
+        id: p.id,
+        business_id: businessId,
+        name: p.name,
+        description: p.description ?? null,
+        image_url: p.image_path ?? null,
+        barcode: p.barcode ?? null,
+        category_id: p.category_id ?? null,
+        base_price: asNumber(p.base_price),
+        retail_price: asNumber(p.retail_price),
+        wholesale_price: p.wholesale_price == null ? null : asNumber(p.wholesale_price),
+        base_cost: asNumber(p.base_cost),
+        markup_pct: p.markup_pct == null ? null : asNumber(p.markup_pct),
+        has_variations: p.has_variations ? 1 : 0,
+        variation_group_id: p.variation_group_id ?? null,
+        allow_fractions: p.allow_fractions ? 1 : 0,
+        track_inventory: p.track_inventory ? 1 : 0,
+        is_active: p.is_active ? 1 : 0,
+        sort_order: asNumber(p.sort_order),
+        monthly_sold: asNumber(p.monthly_sold),
+        basic_locked: asNumber(p.basic_locked),
+        updated_at: (p as any).updated_at ?? new Date().toISOString(),
+        deleted_at: (p as any).deleted_at ?? null,
+        stock: p.stock ?? null,
+        category_name: p.category_name ?? null,
+      } satisfies LocalProduct)))
+
+      return results
     } catch {
-      return []
+      // Offline fallback: serve from IndexedDB cache
+      try {
+        const businessId = localStorage.getItem('reyna_business_id')
+        if (!businessId) return []
+        let cached = await localDb.products
+          .where('business_id').equals(businessId)
+          .filter(p => !p.deleted_at && p.is_active === 1 && p.basic_locked !== 1)
+          .toArray()
+
+        if (filters?.category) cached = cached.filter(p => p.category_id === filters.category)
+        if (filters?.search) {
+          const q = filters.search.toLowerCase()
+          cached = cached.filter(p => p.name.toLowerCase().includes(q) || p.barcode === filters.search)
+        }
+        if (filters?.letter) cached = cached.filter(p => p.name.toLowerCase().startsWith(filters.letter!.toLowerCase()))
+
+        cached.sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name))
+        return cached.map(buildLocalProductResult)
+      } catch {
+        return []
+      }
     }
   },
 
   getById: async (id: string) => {
     try {
       const businessId = await getBusinessId()
+      const access = await ensureBasicProductAccess(businessId)
       const [{ data, error }, invMap] = await Promise.all([
-        supabase.from('catalog_products').select('*, catalog_categories(name)').eq('id', id).eq('business_id', businessId).is('deleted_at', null).single(),
+        (() => {
+          let query = supabase.from('catalog_products').select('*, catalog_categories(name)').eq('id', id).eq('business_id', businessId).is('deleted_at', null)
+          if (!access.activated) query = query.eq('basic_locked', false)
+          return query.single()
+        })(),
         fetchInventoryMap(businessId),
       ])
       if (error) throw error
@@ -180,38 +265,76 @@ export const productsApi = {
   getByBarcode: async (barcode: string) => {
     try {
       const businessId = await getBusinessId()
-      const { data, error } = await supabase
+      const access = await ensureBasicProductAccess(businessId)
+      let query = supabase
         .from('catalog_products')
         .select('*, catalog_categories(name)')
         .eq('barcode', barcode)
         .eq('business_id', businessId)
         .is('deleted_at', null)
-        .single()
+      if (!access.activated) query = query.eq('basic_locked', false)
+      const { data, error } = await query.single()
       if (error) throw error
       const { data: inv } = await supabase.from('catalog_inventory').select('quantity').eq('product_id', data.id).eq('business_id', businessId).single()
       return { ...mapProduct({ ...data, catalog_inventory: inv ? [inv] : [] }), category_name: data.catalog_categories?.name ?? null }
     } catch {
-      return null
+      // Offline fallback
+      try {
+        const businessId = localStorage.getItem('reyna_business_id')
+        if (!businessId) return null
+        const cached = await localDb.products.where('business_id').equals(businessId).filter(p => p.barcode === barcode && !p.deleted_at && p.basic_locked !== 1).first()
+        return cached ? buildLocalProductResult(cached) : null
+      } catch {
+        return null
+      }
     }
   },
 
   search: async (q: string) => {
     try {
       const businessId = await getBusinessId()
+      const access = await ensureBasicProductAccess(businessId)
       const [{ data, error }, invMap] = await Promise.all([
-        supabase.from('catalog_products').select('*, catalog_categories(name)').eq('business_id', businessId).is('deleted_at', null).eq('is_active', true).or(`name.ilike.%${q}%,barcode.eq.${q}`).order('sort_order').order('name').limit(20),
+        (() => {
+          let query = supabase
+            .from('catalog_products')
+            .select('id, name, description, image_url, barcode, category_id, base_price, retail_price, wholesale_price, base_cost, markup_pct, has_variations, variation_group_id, allow_fractions, track_inventory, is_active, sort_order, monthly_sold, basic_locked, updated_at, deleted_at, catalog_categories(name)')
+            .eq('business_id', businessId)
+            .is('deleted_at', null)
+            .eq('is_active', true)
+            .or(`name.ilike.%${q}%,barcode.eq.${q}`)
+            .order('sort_order')
+            .order('name')
+            .limit(20)
+          if (!access.activated) query = query.eq('basic_locked', false)
+          return query
+        })(),
         fetchInventoryMap(businessId),
       ])
       assertNoError(error, 'Failed to search products.')
-      return (data ?? []).map(p => ({ ...mapProduct({ ...p, catalog_inventory: invMap[p.id] != null ? [{ quantity: invMap[p.id] }] : [] }), category_name: p.catalog_categories?.name ?? null }))
+      return (data ?? []).map((p: any) => ({ ...mapProduct({ ...p, catalog_inventory: invMap[p.id] != null ? [{ quantity: invMap[p.id] }] : [] }), category_name: p.catalog_categories?.name ?? null }))
     } catch {
-      return []
+      // Offline fallback
+      try {
+        const businessId = localStorage.getItem('reyna_business_id')
+        if (!businessId) return []
+        const ql = q.toLowerCase()
+        const cached = await localDb.products
+          .where('business_id').equals(businessId)
+          .filter(p => !p.deleted_at && p.is_active === 1 && p.basic_locked !== 1 && (p.name.toLowerCase().includes(ql) || p.barcode === q))
+          .toArray()
+        cached.sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name))
+        return cached.slice(0, 20).map(buildLocalProductResult)
+      } catch {
+        return []
+      }
     }
   },
 
   create: async (data: any) => {
     try {
       const businessId = await getBusinessId()
+      await assertBasicProductCreationAllowed(businessId)
       const id = uuid()
       const imagePath = typeof data.image_path === 'string' && data.image_path.trim() ? data.image_path : null
       const initialStock = asNumber(data.initial_stock)
@@ -232,6 +355,7 @@ export const productsApi = {
         allow_fractions: !!data.allow_fractions,
         track_inventory: data.track_inventory !== 0,
         sort_order: data.sort_order ?? 0,
+        basic_locked: false,
       })
       assertNoError(error, 'Failed to create product.')
 
@@ -254,6 +378,7 @@ export const productsApi = {
   update: async (id: string, data: any) => {
     try {
       const businessId = await getBusinessId()
+      await assertBasicProductAccessible(businessId, id)
       const updates: any = { updated_at: new Date().toISOString() }
       const fields = [
         'name','description','barcode','category_id','base_price','retail_price',
@@ -293,6 +418,7 @@ export const productsApi = {
   delete: async (id: string) => {
     try {
       const businessId = await getBusinessId()
+      await assertBasicProductAccessible(businessId, id)
       const { data, error } = await supabase
         .from('catalog_products')
         .update({ deleted_at: new Date().toISOString(), is_active: false })
@@ -309,7 +435,9 @@ export const productsApi = {
 
   bulkPrices: async (updates: { id: string; price?: number; retail_price?: number; wholesale_price?: number; base_price?: number; markup_pct?: number | null }[]) => {
     try {
+      await assertProAccess('Bulk price management is available on Reyna Pro only.')
       const businessId = await getBusinessId()
+      for (const update of updates) await assertBasicProductAccessible(businessId, update.id)
       await Promise.all(updates.map(async u => {
         const patch: any = { updated_at: new Date().toISOString() }
         const nextPrice = u.price ?? u.retail_price ?? u.base_price
@@ -331,6 +459,7 @@ export const productsApi = {
   bulkNames: async (updates: { id: string; name: string }[]) => {
     try {
       const businessId = await getBusinessId()
+      for (const update of updates) await assertBasicProductAccessible(businessId, update.id)
       await Promise.all(updates.map(async u => {
         const { error } = await supabase
           .from('catalog_products')
@@ -347,6 +476,7 @@ export const productsApi = {
   bulkBarcodes: async (updates: { id: string; barcode: string }[]) => {
     try {
       const businessId = await getBusinessId()
+      for (const update of updates) await assertBasicProductAccessible(businessId, update.id)
       await Promise.all(updates.map(async u => {
         const { error } = await supabase
           .from('catalog_products')
@@ -362,7 +492,9 @@ export const productsApi = {
 
   bulkCosts: async (updates: { id: string; cost?: number; base_cost?: number }[]) => {
     try {
+      await assertProAccess('Bulk price management is available on Reyna Pro only.')
       const businessId = await getBusinessId()
+      for (const update of updates) await assertBasicProductAccessible(businessId, update.id)
       await Promise.all(updates.map(async u => {
         const { error } = await supabase
           .from('catalog_products')
@@ -376,55 +508,76 @@ export const productsApi = {
     }
   },
 
-  // Store compressed base64 image directly in the image_url column.
-  // Compression caps images at ~100KB so the column update is fast and reliable.
   saveImage: async (productId: string, dataUrl: string) => {
     try {
       const businessId = await getBusinessId()
+      await assertBasicProductAccessible(businessId, productId)
 
-      // Guard: reject obviously broken data URLs
       if (!dataUrl || !dataUrl.startsWith('data:')) {
         throw new Error('Invalid image data.')
       }
 
-      const { error } = await supabase
+      const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/)
+      if (!match) throw new Error('Invalid image data URL format.')
+      const [, mimeType, base64] = match
+      const ext = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : 'jpg'
+      const path = `${businessId}/${productId}.${ext}`
+
+      // Convert base64 to Blob and upload to Storage
+      const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+      const blob = new Blob([bytes], { type: mimeType })
+
+      const { error: uploadError } = await supabase.storage
+        .from('product-images')
+        .upload(path, blob, { contentType: mimeType, upsert: true })
+
+      if (uploadError) throw new Error(uploadError.message)
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(path)
+
+      const { error: updateError } = await supabase
         .from('catalog_products')
-        .update({ image_url: dataUrl, updated_at: new Date().toISOString() })
+        .update({ image_url: publicUrl, updated_at: new Date().toISOString() })
         .eq('id', productId)
         .eq('business_id', businessId)
 
-      if (error) throw new Error(error.message)
+      if (updateError) throw new Error(updateError.message)
 
-      return { success: true, path: dataUrl }
+      return { success: true, path: publicUrl }
     } catch (err: any) {
       console.error('[saveImage]', err)
       return { success: false, error: err?.message || 'Failed to save image.' }
     }
   },
 
-  importBatch: async (rows: any[]) => {
+  importBatch: async (rows: any[], onProgress?: (done: number, total: number) => void) => {
     try {
       const businessId = await getBusinessId()
-      const [{ data: existingProducts, error: productsError }, { data: existingCategories, error: categoriesError }, { data: existingGroups, error: groupsError }] = await Promise.all([
-        supabase
-          .from('catalog_products')
-          .select('id, name, barcode')
-          .eq('business_id', businessId)
-          .is('deleted_at', null),
-        supabase
-          .from('catalog_categories')
-          .select('id, name')
-          .eq('business_id', businessId)
-          .is('deleted_at', null),
-        supabase
-          .from('catalog_variation_groups')
-          .select('id, name')
-          .eq('business_id', businessId)
-          .is('deleted_at', null),
+      await assertBasicProductCreationAllowed(businessId)
+      const proAccess = await getProAccessState()
+      const [
+        { data: existingProducts, error: productsError },
+        { data: existingCategories, error: categoriesError },
+        { data: existingGroups, error: groupsError },
+        { data: existingInventory, error: inventoryFetchError },
+      ] = await Promise.all([
+        supabase.from('catalog_products').select('id, name, barcode').eq('business_id', businessId).is('deleted_at', null),
+        supabase.from('catalog_categories').select('id, name').eq('business_id', businessId).is('deleted_at', null),
+        supabase.from('catalog_variation_groups').select('id, name').eq('business_id', businessId).is('deleted_at', null),
+        supabase.from('catalog_inventory').select('id, product_id').eq('business_id', businessId),
       ])
       assertNoError(productsError, 'Failed to load existing products.')
       assertNoError(categoriesError, 'Failed to load categories.')
       assertNoError(groupsError, 'Failed to load variation groups.')
+      assertNoError(inventoryFetchError, 'Failed to load inventory.')
+
+      // Map product_id → inventory row id so we can UPDATE existing rows
+      // instead of upserting with a new random id (which would change the PK).
+      const inventoryIdByProductId = new Map<string, string>(
+        (existingInventory ?? []).map((inv: any) => [inv.product_id, inv.id] as [string, string])
+      )
 
       const categoryMap = new Map((existingCategories ?? []).map((row: any) => [normalizeLookupKey(row.name), row.id]))
       const variationGroupMap = new Map((existingGroups ?? []).map((row: any) => [normalizeLookupKey(row.name), row.id]))
@@ -514,6 +667,10 @@ export const productsApi = {
             tiers.push({ min_qty: minQty, price: tierPrice, label })
           }
 
+          if (tiers.length > 0 && !proAccess.activated) {
+            throw new Error(`${rowLabel}: price tiers are available on Reyna Pro only.`)
+          }
+
           tiers.sort((a, b) => a.min_qty - b.min_qty)
           for (let tierIndex = 1; tierIndex < tiers.length; tierIndex++) {
             if (tiers[tierIndex].min_qty === tiers[tierIndex - 1].min_qty) {
@@ -546,21 +703,36 @@ export const productsApi = {
             allow_fractions: allowFractions,
             track_inventory: trackInventory,
             is_active: true,
+            basic_locked: false,
             updated_at: new Date().toISOString(),
           })
           assertNoError(productError, `Failed to save ${name}.`)
 
-          const { error: inventoryError } = await supabase.from('catalog_inventory').upsert({
-            id: uuid(),
-            business_id: businessId,
-            product_id: id,
-            quantity: stock,
-            low_threshold: parseImportNumber(row.low_threshold, 5) ?? 5,
-            updated_at: new Date().toISOString(),
-          }, {
-            onConflict: 'business_id,product_id',
-          })
-          assertNoError(inventoryError, `Failed to save inventory for ${name}.`)
+          const existingInvId = inventoryIdByProductId.get(id)
+          if (existingInvId) {
+            const { error: invUpdateError } = await supabase
+              .from('catalog_inventory')
+              .update({
+                quantity: stock,
+                low_threshold: parseImportNumber(row.low_threshold, 5) ?? 5,
+                updated_at: new Date().toISOString(),
+              })
+              .eq('id', existingInvId)
+            assertNoError(invUpdateError, `Failed to update inventory for ${name}.`)
+          } else {
+            const newInvId = uuid()
+            const { error: invInsertError } = await supabase
+              .from('catalog_inventory')
+              .insert({
+                id: newInvId,
+                business_id: businessId,
+                product_id: id,
+                quantity: stock,
+                low_threshold: parseImportNumber(row.low_threshold, 5) ?? 5,
+              })
+            assertNoError(invInsertError, `Failed to create inventory for ${name}.`)
+            inventoryIdByProductId.set(id, newInvId)
+          }
 
           await replacePriceTiers(businessId, id, tiers)
 
@@ -573,6 +745,7 @@ export const productsApi = {
           skipped++
           errors.push(error?.message || `Row ${index + 2}: import failed.`)
         }
+        onProgress?.(index + 1, rows.length)
       }
 
       return {

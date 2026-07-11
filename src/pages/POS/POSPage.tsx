@@ -15,6 +15,7 @@ import { getProductImageSrc } from '../../utils/images'
 import { canAccessModule, getDefaultRouteForUser } from '../../lib/access'
 
 const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('')
+type PriceTier = { min_qty: number; price: number; label?: string | null }
 
 export default function POSPage() {
   const navigate = useNavigate()
@@ -29,6 +30,7 @@ export default function POSPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('')
   const [selectedLetter, setSelectedLetter] = useState<string>('')
   const [search, setSearch] = useState('')
+  const [globalPriceType, setGlobalPriceType] = useState<'retail' | 'wholesale'>('retail')
   const [layout, setLayout] = useState<1|2>(2)
   const [pendingCount, setPendingCount] = useState(0)
   const [savedCount, setSavedCount] = useState(0)
@@ -44,12 +46,8 @@ export default function POSPage() {
   const [showSavedOrders, setShowSavedOrders] = useState(false)
   const [showCameraScanner, setShowCameraScanner] = useState(false)
 
-  const [tierCache, setTierCache] = useState<Record<string, { min_qty: number; price: number }[]>>({})
+  const [tierCache, setTierCache] = useState<Record<string, PriceTier[]>>({})
 
-  const [page, setPage] = useState(1)
-  const PER_PAGE = 20
-  const totalPages = Math.ceil(products.length / PER_PAGE)
-  const visibleProducts = products.slice((page - 1) * PER_PAGE, page * PER_PAGE)
 
   const loadProducts = useCallback(async () => {
     const filters: any = {}
@@ -58,7 +56,6 @@ export default function POSPage() {
     if (search) filters.search = search
     const data = await window.api.products.getAll(filters)
     setProducts(data)
-    setPage(1)
   }, [selectedCategory, selectedLetter, search])
 
   useEffect(() => { loadProducts() }, [loadProducts])
@@ -68,22 +65,23 @@ export default function POSPage() {
     window.api.orders.getSaved().then((r: any[]) => setSavedCount(r.length))
   }, [])
 
-  const fetchAndCacheTiers = useCallback(async (productId: string) => {
-    if (tierCache[productId] !== undefined) return
-    const tiers: any[] = await window.api.priceTiers.get(productId)
-    setTierCache(prev => ({ ...prev, [productId]: tiers || [] }))
+  const fetchAndCacheTiers = useCallback(async (productId: string): Promise<PriceTier[]> => {
+    const cached = tierCache[productId]
+    if (cached !== undefined) return cached
+
+    const tiers = ((await window.api.priceTiers.get(productId)) || []) as PriceTier[]
+    setTierCache(prev => prev[productId] !== undefined ? prev : ({ ...prev, [productId]: tiers }))
+    return tiers
   }, [tierCache])
 
-  const applyTierPrice = useCallback((productId: string, qty: number, basePrice: number): number => {
-    const tiers = tierCache[productId]
+  const applyTierPrice = useCallback((tiers: PriceTier[] | undefined, qty: number, basePrice: number): number => {
     if (!tiers || tiers.length === 0) return basePrice
     const best = [...tiers].filter(t => qty >= t.min_qty).sort((a, b) => b.min_qty - a.min_qty)[0]
     return best ? best.price : basePrice
-  }, [tierCache])
+  }, [])
 
   const needsModal = (product: Product) =>
-    !!(product.has_variations || product.variation_group_id || product.allow_fractions ||
-      ((product.wholesale_price ?? 0) > 0 && (product.wholesale_price ?? 0) !== (product.retail_price ?? product.base_price)))
+    !!(product.has_variations || product.variation_group_id || product.allow_fractions)
 
   const handleScannedBarcode = useCallback(async (code: string) => {
     const product = await window.api.products.getByBarcode(code)
@@ -91,30 +89,64 @@ export default function POSPage() {
     if (needsModal(product)) {
       setQuantityProduct(product)
     } else {
-      void fetchAndCacheTiers(product.id)
-      cart.addItem({ product_id: product.id, name: product.name, price: product.retail_price ?? product.base_price, base_price: product.retail_price ?? product.base_price, cost: product.base_cost, quantity: 1, is_custom: false, image_path: product.image_path, price_type: 'retail' })
+      const tiers = await fetchAndCacheTiers(product.id)
+      const retailPrice = product.retail_price ?? product.base_price
+      const wholesalePrice = product.wholesale_price ?? retailPrice
+      const retailUnitPrice = applyTierPrice(tiers, 1, retailPrice)
+      const nextUnitPrice = globalPriceType === 'wholesale' ? wholesalePrice : retailUnitPrice
+      cart.addItem({
+        product_id: product.id,
+        name: product.name,
+        price: nextUnitPrice,
+        base_price: retailPrice,
+        retail_unit_price: retailUnitPrice,
+        wholesale_unit_price: wholesalePrice,
+        cost: product.base_cost,
+        quantity: 1,
+        is_custom: false,
+        image_path: product.image_path,
+        price_type: globalPriceType,
+      })
     }
-  }, [cart, fetchAndCacheTiers])
+  }, [applyTierPrice, cart, fetchAndCacheTiers, globalPriceType])
 
   useEffect(() => {
     const off = window.api.on.barcodeScanned((code: string) => { void handleScannedBarcode(code) })
     return () => { off() }
   }, [handleScannedBarcode])
 
-  const handleAddProduct = (product: Product) => {
+  const handleAddProduct = async (product: Product) => {
     if (needsModal(product)) {
       setQuantityProduct(product)
     } else {
-      void fetchAndCacheTiers(product.id)
-      cart.addItem({ product_id: product.id, name: product.name, price: product.retail_price ?? product.base_price, base_price: product.retail_price ?? product.base_price, cost: product.base_cost, quantity: 1, is_custom: false, image_path: product.image_path, price_type: 'retail' })
+      const tiers = await fetchAndCacheTiers(product.id)
+      const retailPrice = product.retail_price ?? product.base_price
+      const wholesalePrice = product.wholesale_price ?? retailPrice
+      const retailUnitPrice = applyTierPrice(tiers, 1, retailPrice)
+      const nextUnitPrice = globalPriceType === 'wholesale' ? wholesalePrice : retailUnitPrice
+      cart.addItem({
+        product_id: product.id,
+        name: product.name,
+        price: nextUnitPrice,
+        base_price: retailPrice,
+        retail_unit_price: retailUnitPrice,
+        wholesale_unit_price: wholesalePrice,
+        cost: product.base_cost,
+        quantity: 1,
+        is_custom: false,
+        image_path: product.image_path,
+        price_type: globalPriceType,
+      })
     }
   }
 
-  const handleCartQtyChange = (item: CartItem, newQty: number) => {
+  const handleCartQtyChange = async (item: CartItem, newQty: number) => {
     if (item.product_id && !item.is_custom) {
       if (item.price_type === 'wholesale') { cart.updateQuantity(item.id, newQty); return }
+
+      const tiers = tierCache[item.product_id] ?? await fetchAndCacheTiers(item.product_id)
       const base = item.base_price ?? item.price
-      const newPrice = applyTierPrice(item.product_id, newQty, base)
+      const newPrice = applyTierPrice(tiers, newQty, base)
       cart.updateItemWithPrice(item.id, newQty, newPrice)
     } else {
       cart.updateQuantity(item.id, newQty)
@@ -147,11 +179,11 @@ export default function POSPage() {
 
       {/* Letter filter */}
       <div className="flex gap-1 px-3 pt-2 overflow-x-auto scrollbar-hide shrink-0">
-        <button onClick={() => { setSelectedLetter(''); setPage(1) }}
+        <button onClick={() => setSelectedLetter('')}
           className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${!selectedLetter ? 'bg-[var(--brand-600)] text-white shadow-sm' : 'bg-white/80 text-slate-600 hover:bg-[var(--brand-50)]'}`}
         >All</button>
         {LETTERS.map(l => (
-          <button key={l} onClick={() => { setSelectedLetter(l); setPage(1) }}
+          <button key={l} onClick={() => setSelectedLetter(l)}
             className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${selectedLetter === l ? 'bg-[var(--brand-600)] text-white shadow-sm' : 'bg-white/80 text-slate-600 hover:bg-[var(--brand-50)]'}`}
           >{l}</button>
         ))}
@@ -159,11 +191,11 @@ export default function POSPage() {
 
       {/* Category filter */}
       <div className="flex gap-2 px-3 pt-2 overflow-x-auto scrollbar-hide shrink-0">
-        <button onClick={() => { setSelectedCategory(''); setPage(1) }}
+        <button onClick={() => setSelectedCategory('')}
           className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${!selectedCategory ? 'bg-[var(--brand-600)] text-white shadow-sm' : 'bg-white/80 text-slate-600 hover:bg-[var(--brand-50)]'}`}
         >All</button>
         {categories.map(c => (
-          <button key={c.id} onClick={() => { setSelectedCategory(c.id); setPage(1) }}
+          <button key={c.id} onClick={() => setSelectedCategory(c.id)}
             className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${selectedCategory === c.id ? 'bg-[var(--brand-600)] text-white shadow-sm' : 'bg-white/80 text-slate-600 hover:bg-[var(--brand-50)]'}`}
           >{c.name}</button>
         ))}
@@ -172,7 +204,7 @@ export default function POSPage() {
       {/* Product grid */}
       <div className="flex-1 overflow-y-auto p-3">
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-          {visibleProducts.map(p => (
+          {products.map(p => (
             <ProductCard key={p.id} product={p} onAdd={handleAddProduct} />
           ))}
         </div>
@@ -180,17 +212,6 @@ export default function POSPage() {
           <div className="py-16 text-center text-sm text-slate-400">No products found</div>
         )}
       </div>
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 border-t border-emerald-900/5 p-3 text-xs text-slate-600">
-          <button onClick={() => setPage(1)} disabled={page===1} className="px-2 disabled:opacity-30">«</button>
-          <button onClick={() => setPage(p => p-1)} disabled={page===1} className="px-2 disabled:opacity-30">‹</button>
-          <span>Page {page} / {totalPages}</span>
-          <button onClick={() => setPage(p => p+1)} disabled={page===totalPages} className="px-2 disabled:opacity-30">›</button>
-          <button onClick={() => setPage(totalPages)} disabled={page===totalPages} className="px-2 disabled:opacity-30">»</button>
-        </div>
-      )}
     </div>
   )
 
@@ -266,6 +287,20 @@ export default function POSPage() {
           <p className="hidden md:block text-xs uppercase tracking-[0.24em] text-emerald-50/75">Selling Floor</p>
           <h1 className="text-base md:text-2xl font-semibold text-white leading-tight">Point of Sale</h1>
         </div>
+        <button
+          onClick={() => setGlobalPriceType(globalPriceType === 'retail' ? 'wholesale' : 'retail')}
+          title="Pricing mode applies to products added from now on — items already in the cart keep their price"
+          className={`relative flex items-center gap-0.5 rounded-full border border-white/20 p-1 text-xs font-bold shadow-inner transition-colors ${
+            globalPriceType === 'wholesale' ? 'bg-emerald-600' : 'bg-[#1a8eff]'
+          }`}
+        >
+          <span className={`rounded-full px-2.5 py-1.5 transition ${globalPriceType === 'retail' ? 'bg-white text-[#1a8eff] shadow' : 'text-white/70'}`}>
+            Retail
+          </span>
+          <span className={`rounded-full px-2.5 py-1.5 transition ${globalPriceType === 'wholesale' ? 'bg-white text-emerald-600 shadow' : 'text-white/70'}`}>
+            Wholesale
+          </span>
+        </button>
         <div className="flex-1" />
         {canAccessSales && pendingCount > 0 && (
           <button onClick={() => navigate('/orders')} className="relative flex items-center gap-1 rounded-full bg-amber-400/95 px-2.5 py-1.5 text-xs font-semibold text-emerald-950 shadow-sm">
@@ -405,7 +440,7 @@ export default function POSPage() {
                 className="brand-ring mb-2 w-full rounded-2xl border border-emerald-900/10 bg-white/80 px-3 py-2 text-sm"
               />
               <div className="flex-1 overflow-y-auto space-y-1">
-                {products.slice(0, 15).map(p => (
+                {products.map(p => (
                   <div key={p.id} className="flex items-center gap-2 rounded-2xl p-2 transition hover:bg-emerald-50/80">
                     <div className="h-10 w-10 overflow-hidden rounded-xl bg-gray-100 shrink-0">
                       {p.image_path && <img src={getProductImageSrc(p.image_path)} className="w-full h-full object-cover" />}
@@ -446,9 +481,11 @@ export default function POSPage() {
       {quantityProduct && (
         <QuantityModal
           product={quantityProduct}
+          initialPriceType={globalPriceType}
+          cachedTiers={quantityProduct ? tierCache[quantityProduct.id] : undefined}
+          loadTiers={fetchAndCacheTiers}
           onClose={() => setQuantityProduct(null)}
           onAdd={(item) => {
-            if (item.product_id) void fetchAndCacheTiers(item.product_id)
             cart.addItem(item)
             setQuantityProduct(null)
           }}
@@ -501,7 +538,7 @@ export default function POSPage() {
   )
 }
 
-function ProductCard({ product, onAdd }: { product: Product; onAdd: (p: Product) => void }) {
+function ProductCard({ product, onAdd }: { product: Product; onAdd: (p: Product) => void | Promise<void> }) {
   return (
     <div className="overflow-hidden rounded-[20px] border border-emerald-900/8 bg-white/82 shadow-[0_8px_20px_rgba(22,49,39,0.06)] transition duration-200 active:scale-95 hover:-translate-y-0.5 hover:shadow-[0_14px_28px_rgba(22,49,39,0.10)]">
       <div className="aspect-square overflow-hidden bg-[linear-gradient(180deg,#f4faf6_0%,#e7f4eb_100%)]">

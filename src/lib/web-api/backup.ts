@@ -1,5 +1,9 @@
-import { supabase } from '../supabase'
-import { getBusinessId } from './context'
+import { supabase, SUPABASE_FUNCTIONS_URL } from '../supabase'
+import { getBusinessId, getAccessToken } from './context'
+import { localDb } from '../local-db'
+import { refreshCatalogCache } from '../web-sync-service'
+
+const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ6aGpmc2dqa2J2Y3NwZm5jeWt1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyODI4ODQsImV4cCI6MjA5MDg1ODg4NH0.gw-mgJWF3yoCRlQIW6IVcrHbiVvqcNSO2i8yzis1aDM'
 
 export const backupApi = {
   export: async () => {
@@ -56,10 +60,39 @@ export const backupApi = {
     }
   },
 
+  // Full factory reset: wipes all catalog/sales/business data via the
+  // reset-business-data edge function (runs with the service-role key, so it
+  // isn't at the mercy of client-side RLS/session edge cases), then clears
+  // the local device cache and re-pulls the (now empty) state. The
+  // `cashiers` table is deliberately never touched so cashier/admin accounts
+  // and PINs survive a reset.
   reset: async () => {
-    return {
-      success: false,
-      error: 'Factory reset is not available in the web version. Please contact support.',
+    try {
+      const businessId = await getBusinessId()
+      const token = await getAccessToken()
+
+      const res = await fetch(`${SUPABASE_FUNCTIONS_URL}/reset-business-data`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}`, apikey: ANON_KEY } : { apikey: ANON_KEY }),
+        },
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) throw new Error(data.error || 'Reset failed.')
+
+      // Local device cache, including any queued offline sales — the cloud
+      // records they would have synced to no longer exist.
+      await localDb.products.where({ business_id: businessId }).delete()
+      await localDb.categories.where({ business_id: businessId }).delete()
+      await localDb.inventory.where({ business_id: businessId }).delete()
+      await localDb.orders_queue.where({ business_id: businessId }).delete()
+
+      await refreshCatalogCache(businessId)
+
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message ?? 'Reset failed.' }
     }
   },
 }

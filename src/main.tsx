@@ -11,6 +11,15 @@ if (!(window as any).api) {
   ;(window as any).api = createWebApi()
 }
 
+// Expired/invalid password-reset links come back as an error in the hash
+// (no recovery token to preserve), so it's safe to flag this immediately.
+// A *valid* recovery link's access_token must NOT be touched here — Supabase
+// parses it out of the hash asynchronously, and App.tsx reacts to the
+// PASSWORD_RECOVERY auth event once that parsing has actually succeeded.
+if (window.location.hash.includes('error=access_denied') || window.location.hash.includes('otp_expired')) {
+  sessionStorage.setItem('supabase_pw_reset_expired', '1')
+}
+
 const originalConsoleInfo = console.info
 console.info = (...args: unknown[]) => {
   const [firstArg] = args

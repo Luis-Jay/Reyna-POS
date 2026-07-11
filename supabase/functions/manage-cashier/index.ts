@@ -89,6 +89,32 @@ Deno.serve(async (req) => {
       return json({ success: true })
     }
 
+    if (action === 'delete') {
+      const { id } = body
+      if (!id) return json({ error: 'id is required' }, 400)
+
+      // Prevent deleting the last admin
+      const { data: admins } = await supabase
+        .from('cashiers')
+        .select('id')
+        .eq('business_id', business.id)
+        .eq('role', 'admin')
+        .eq('is_active', true)
+
+      const targetIsAdmin = admins?.some((a: any) => a.id === id)
+      if (targetIsAdmin && (admins?.length ?? 0) <= 1) {
+        return json({ error: 'Cannot delete the last admin account.' }, 400)
+      }
+
+      const { error } = await supabase
+        .from('cashiers')
+        .delete()
+        .eq('id', id)
+        .eq('business_id', business.id)
+      if (error) return json({ error: error.message }, 500)
+      return json({ success: true })
+    }
+
     return json({ error: 'Unknown action' }, 400)
   } catch (err) {
     console.error(err)

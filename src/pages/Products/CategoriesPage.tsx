@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import TopBar from '../../components/layout/TopBar'
 import { Category, Product } from '../../types'
-import { Plus, Pencil, Trash2, Check, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, Check, X, Search } from 'lucide-react'
 import { getProductImageSrc } from '../../utils/images'
 
 export default function CategoriesPage() {
@@ -12,6 +12,9 @@ export default function CategoriesPage() {
   const [newCat, setNewCat] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
+  const [error, setError] = useState('')
+  const [search, setSearch] = useState('')
+  const [categorySearch, setCategorySearch] = useState('')
 
   const load = async () => {
     const [cats, prods] = await Promise.all([
@@ -26,40 +29,95 @@ export default function CategoriesPage() {
 
   const handleAdd = async () => {
     if (!newCat.trim()) return
-    await window.api.categories.create(newCat.trim())
+    setError('')
+    const result = await window.api.categories.create(newCat.trim())
+    if (!result?.success) {
+      setError(result?.error || 'Failed to create category.')
+      return
+    }
     setNewCat('')
     load()
   }
 
   const handleUpdate = async (id: string) => {
     if (!editName.trim()) return
-    await window.api.categories.update(id, editName.trim())
+    setError('')
+    const result = await window.api.categories.update(id, editName.trim())
+    if (!result?.success) {
+      setError(result?.error || 'Failed to update category.')
+      return
+    }
     setEditingId(null)
     load()
   }
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this category? Products will become uncategorized.')) return
-    await window.api.categories.delete(id)
+    setError('')
+    const result = await window.api.categories.delete(id)
+    if (!result?.success) {
+      setError(result?.error || 'Failed to delete category.')
+      return
+    }
     load()
   }
 
+  const matchesSearch = (p: Product) =>
+    !search.trim() || p.name.toLowerCase().includes(search.trim().toLowerCase())
+
   const productsByCategory = (catId: string | null) =>
-    products.filter(p => catId ? p.category_id === catId : !p.category_id)
+    products.filter(p => (catId ? p.category_id === catId : !p.category_id) && matchesSearch(p))
 
   const uncategorized = productsByCategory(null)
+
+  const visibleCategories = categories.filter(cat =>
+    !categorySearch.trim() || cat.name.toLowerCase().includes(categorySearch.trim().toLowerCase())
+  )
+  const showUncategorized =
+    uncategorized.length > 0 &&
+    (!categorySearch.trim() || 'uncategorized'.includes(categorySearch.trim().toLowerCase()))
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
       <TopBar title="Manage Categories" back="/products" />
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* Search */}
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="relative">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search products..."
+              className="w-full rounded-lg border border-gray-200 bg-white py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+            />
+          </div>
+          <div className="relative">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={categorySearch}
+              onChange={e => setCategorySearch(e.target.value)}
+              placeholder="Search categories..."
+              className="w-full rounded-lg border border-gray-200 bg-white py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a8eff]"
+            />
+          </div>
+        </div>
+
+        {search.trim() && !visibleCategories.some(cat => productsByCategory(cat.id).length > 0) && !showUncategorized && (
+          <p className="py-8 text-center text-sm text-gray-400">No products match "{search.trim()}"</p>
+        )}
+
+        {categorySearch.trim() && visibleCategories.length === 0 && !showUncategorized && (
+          <p className="py-8 text-center text-sm text-gray-400">No categories match "{categorySearch.trim()}"</p>
+        )}
+
         {/* Uncategorized */}
-        {uncategorized.length > 0 && (
+        {showUncategorized && (
           <Section title="Uncategorized Products" products={uncategorized} onNavigate={navigate} />
         )}
 
         {/* Each category */}
-        {categories.map(cat => (
+        {visibleCategories.filter(cat => !search.trim() || productsByCategory(cat.id).length > 0).map(cat => (
           <div key={cat.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b">
               {editingId === cat.id ? (
@@ -110,6 +168,7 @@ export default function CategoriesPage() {
               <Plus size={16} /> Add
             </button>
           </div>
+          {error && <p className="mt-3 text-sm text-red-500">{error}</p>}
         </div>
       </div>
     </div>

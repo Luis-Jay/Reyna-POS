@@ -193,6 +193,9 @@ function RestoreForm({ onComplete, onSwitchMode }: { onComplete: () => void; onS
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
+  const [forgotLoading, setForgotLoading] = useState(false)
+  const [resetEmailSent, setResetEmailSent] = useState(false)
 
   const handleSubmit = async (e: { preventDefault(): void }) => {
     e.preventDefault()
@@ -218,6 +221,33 @@ function RestoreForm({ onComplete, onSwitchMode }: { onComplete: () => void; onS
       setError('Unexpected error. Check your internet and try again.')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      setError('Enter your email first so we can send the reset link.')
+      return
+    }
+    if (typeof (window.api.auth as any).requestPasswordReset !== 'function') {
+      setError('Password reset is not available in this build.')
+      return
+    }
+
+    setForgotLoading(true)
+    setError('')
+    setResetEmailSent(false)
+    try {
+      const result = await (window.api.auth as any).requestPasswordReset(email.trim())
+      if (!result?.success) {
+        setError(result?.error || 'Failed to send password reset email.')
+        return
+      }
+      setResetEmailSent(true)
+    } catch {
+      setError('Failed to send password reset email. Please try again.')
+    } finally {
+      setForgotLoading(false)
     }
   }
 
@@ -253,10 +283,39 @@ function RestoreForm({ onComplete, onSwitchMode }: { onComplete: () => void; onS
               </div>
             )}
 
+            {resetEmailSent && (
+              <div className="mt-4 rounded-2xl border border-emerald-200/30 bg-emerald-500/15 px-4 py-3 text-sm text-white">
+                Reset email sent. Check your inbox and spam folder for the secure link.
+              </div>
+            )}
+
             <button type="submit" disabled={loading}
               className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-5 py-4 text-lg font-black text-[#139b76] transition hover:bg-white/90 disabled:opacity-70">
               {loading ? 'Signing in...' : <><Mail size={18} /> Sign In & Restore</>}
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setShowForgotPassword(v => !v)
+                setError('')
+                setResetEmailSent(false)
+              }}
+              className="mt-3 w-full text-center text-sm text-white/85 hover:text-white transition"
+            >
+              {showForgotPassword ? 'Hide forgot password' : 'Forgot password?'}
+            </button>
+
+            {showForgotPassword && (
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                disabled={forgotLoading || !email.trim()}
+                className="mt-3 flex w-full items-center justify-center rounded-2xl border border-white/20 bg-white/10 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/16 disabled:opacity-60"
+              >
+                {forgotLoading ? 'Sending reset email...' : 'Send secure reset email'}
+              </button>
+            )}
 
             <button type="button" onClick={onSwitchMode}
               className="mt-3 w-full text-center text-sm text-white/70 hover:text-white transition">

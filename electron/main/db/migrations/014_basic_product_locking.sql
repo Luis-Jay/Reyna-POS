@@ -1,0 +1,1 @@
+ALTER TABLE products ADD COLUMN basic_locked INTEGER NOT NULL DEFAULT 0;

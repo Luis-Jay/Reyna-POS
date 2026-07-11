@@ -324,9 +324,9 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="h-screen flex flex-col bg-gray-50 min-w-0">
       <TopBar title="Analytics & Reports" back="/" />
-      <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4">
+      <div className="flex-1 overflow-x-hidden overflow-y-auto p-3 sm:p-4 space-y-4 min-w-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
           <div className="flex flex-wrap gap-2">
             {FILTERS.map(p => (
@@ -415,7 +415,7 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl p-4 shadow-sm">
+        <div className="bg-white rounded-xl p-4 shadow-sm min-w-0">
           <div className="mb-3">
             <div>
               <p className="font-semibold text-gray-800">Cashflow Graph</p>
@@ -449,8 +449,8 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-          <div className="bg-white rounded-xl p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 min-w-0">
+          <div className="bg-white rounded-xl p-4 shadow-sm min-w-0">
             <p className="font-semibold text-gray-800 mb-3">Busiest Hours (Manila Time)</p>
             <div className="flex gap-1">
               <div className="flex-1">
@@ -494,7 +494,7 @@ export default function AnalyticsPage() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl p-4 shadow-sm">
+          <div className="bg-white rounded-xl p-4 shadow-sm min-w-0">
             <p className="font-semibold text-gray-800 mb-3">Top Products (Selected Period)</p>
             {topProducts.slice(0, 5).map((p, i) => (
               <div key={p.product_id || i} className="flex items-center gap-3 mb-3">
@@ -512,7 +512,7 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl p-4 shadow-sm">
+        <div className="bg-white rounded-xl p-4 shadow-sm min-w-0">
           <p className="font-semibold text-gray-800 mb-4">Category Performance (Selected Period)</p>
           {categories.map(c => (
             <div key={c.category_name} className="mb-3">
@@ -535,7 +535,7 @@ export default function AnalyticsPage() {
             {topDebtors.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-4">No outstanding balances</p>
             ) : topDebtors.map((d, i) => (
-              <div key={d.id} className="flex items-center gap-3 mb-2.5">
+              <div key={d.id ?? `${d.name}-${i}`} className="flex items-center gap-3 mb-2.5">
                 <span className="text-xs text-gray-400 font-bold w-4">{i + 1}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-800 truncate">{d.name}</p>
@@ -553,15 +553,15 @@ export default function AnalyticsPage() {
             {slowMoving.length === 0 ? (
               <p className="text-sm text-gray-400 text-center py-4">No products found</p>
             ) : slowMoving.map((p, i) => (
-              <div key={p.id} className="flex items-center gap-3 mb-2.5">
+              <div key={p.product_id ?? p.id ?? `${p.name}-${i}`} className="flex items-center gap-3 mb-2.5">
                 <span className="text-xs text-gray-400 font-bold w-4">{i + 1}</span>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-800 truncate">{p.name}</p>
-                  <p className="text-xs text-gray-400">{p.period_sold} sold this period</p>
+                  <p className="text-xs text-gray-400">{p.period_sold ?? 0} sold this period</p>
                 </div>
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${
-                  p.period_sold === 0 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'
-                }`}>{p.period_sold === 0 ? 'No sales' : `${p.period_sold} sold`}</span>
+                  (p.period_sold ?? 0) === 0 ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-700'
+                }`}>{(p.period_sold ?? 0) === 0 ? 'No sales' : `${p.period_sold} sold`}</span>
               </div>
             ))}
           </div>

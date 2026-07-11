@@ -138,6 +138,7 @@ Deno.serve(async (req) => {
             is_active: product.is_active !== 0,
             sort_order: product.sort_order ?? 0,
             monthly_sold: product.monthly_sold ?? 0,
+            basic_locked: product.basic_locked === true || product.basic_locked === 1,
             created_at: product.created_at ?? new Date().toISOString(),
             updated_at: product.updated_at ?? new Date().toISOString(),
             deleted_at: product.deleted_at ?? null,

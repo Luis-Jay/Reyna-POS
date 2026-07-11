@@ -33,6 +33,34 @@ function loadPreservedSettings() {
   }
 }
 
+function loadPreservedUsers() {
+  try {
+    const db = getDb()
+    return db.prepare(`SELECT id, name, pin, role, is_active, created_at, deleted_at FROM users`).all() as Array<{
+      id: string; name: string; pin: string; role: string; is_active: number; created_at: string; deleted_at: string | null
+    }>
+  } catch {
+    return []
+  }
+}
+
+function restoreUsers(users: ReturnType<typeof loadPreservedUsers>) {
+  if (users.length === 0) return
+  const db = getDb()
+  const tx = db.transaction(() => {
+    for (const u of users) {
+      db.prepare(`
+        INSERT INTO users (id, name, pin, role, is_active, created_at, deleted_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name = excluded.name, pin = excluded.pin, role = excluded.role,
+          is_active = excluded.is_active, created_at = excluded.created_at, deleted_at = excluded.deleted_at
+      `).run(u.id, u.name, u.pin, u.role, u.is_active, u.created_at, u.deleted_at)
+    }
+  })
+  tx()
+}
+
 function restoreSettings(settings: Record<string, string>) {
   const db = getDb()
   const tx = db.transaction(() => {
@@ -51,12 +79,13 @@ function applyCloudCashiers(cashiers: any[]) {
   const db = getDb()
   for (const cashier of cashiers) {
     const existing: any = db.prepare(`SELECT id FROM users WHERE id = ?`).get(cashier.id)
+    const permissionsJson = JSON.stringify(cashier.permissions ?? {})
     if (existing) {
-      db.prepare(`UPDATE users SET name = ?, pin = ?, role = ?, is_active = ? WHERE id = ?`)
-        .run(cashier.name, cashier.pin, cashier.role, cashier.is_active ? 1 : 0, cashier.id)
+      db.prepare(`UPDATE users SET name = ?, pin = ?, role = ?, is_active = ?, permissions = ? WHERE id = ?`)
+        .run(cashier.name, cashier.pin, cashier.role, cashier.is_active ? 1 : 0, permissionsJson, cashier.id)
     } else {
-      db.prepare(`INSERT OR IGNORE INTO users (id, name, pin, role, is_active) VALUES (?, ?, ?, ?, ?)`)
-        .run(cashier.id, cashier.name, cashier.pin, cashier.role, cashier.is_active ? 1 : 0)
+      db.prepare(`INSERT OR IGNORE INTO users (id, name, pin, role, is_active, permissions) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(cashier.id, cashier.name, cashier.pin, cashier.role, cashier.is_active ? 1 : 0, permissionsJson)
     }
   }
 }
@@ -136,6 +165,9 @@ export function registerBackupHandlers() {
     try {
       const dbPath = getCurrentDbPath()
       const preservedSettings = loadPreservedSettings()
+      // Snapshot cashier/admin accounts (with PINs) so a reset never locks
+      // anyone out — this is restored below regardless of cloud connectivity.
+      const preservedUsers = loadPreservedUsers()
       closeDb()
       if (fs.existsSync(dbPath)) {
         fs.unlinkSync(dbPath)
@@ -145,6 +177,7 @@ export function registerBackupHandlers() {
       if (Object.keys(preservedSettings).length > 0) {
         restoreSettings(preservedSettings)
       }
+      restoreUsers(preservedUsers)
 
       const accessToken = preservedSettings.cloud_access_token
       if (accessToken) {

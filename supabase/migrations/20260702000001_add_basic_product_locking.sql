@@ -1,0 +1,2 @@
+ALTER TABLE catalog_products
+ADD COLUMN IF NOT EXISTS basic_locked BOOLEAN NOT NULL DEFAULT false;

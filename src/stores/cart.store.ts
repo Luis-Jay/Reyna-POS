@@ -7,6 +7,7 @@ interface CartState {
   customerName: string
   discount: number
   addItem: (item: Omit<CartItem, 'id' | 'subtotal'>) => void
+  setItems: (items: CartItem[]) => void
   updateQuantity: (id: string, quantity: number) => void
   updateItemWithPrice: (id: string, quantity: number, price: number) => void
   removeItem: (id: string) => void
@@ -25,14 +26,18 @@ export const useCartStore = create<CartState>((set, get) => ({
 
   addItem: (item) => {
     const { items } = get()
-    // If same product + not custom, merge qty
+    // Merge only truly identical sale lines so deleting one row never affects
+    // a different variation or pricing context of the same product.
     if (item.product_id && !item.is_custom) {
       const existing = items.find(
         i =>
           i.product_id === item.product_id &&
+          (i.variation_option_id ?? null) === (item.variation_option_id ?? null) &&
           !i.is_custom &&
           (i.price_type ?? 'retail') === (item.price_type ?? 'retail') &&
-          i.price === item.price
+          i.price === item.price &&
+          i.base_price === (item.base_price ?? item.price) &&
+          i.cost === item.cost
       )
       if (existing) {
         set({
@@ -53,6 +58,8 @@ export const useCartStore = create<CartState>((set, get) => ({
     }
     set({ items: [...items, newItem] })
   },
+
+  setItems: (items) => set({ items }),
 
   updateQuantity: (id, quantity) => {
     if (quantity <= 0) {
