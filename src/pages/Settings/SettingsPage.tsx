@@ -403,15 +403,25 @@ export default function SettingsPage() {
     }
   }
 
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState('')
+
   const handleReset = async () => {
-    if (!confirm('DANGER: This will permanently delete all store data. Are you absolutely sure?')) return
-    if (!confirm('This cannot be undone. Type YES to confirm.')) return
-    const result = await window.api.backup.reset()
-    if (!result?.success) {
-      alert(`Reset failed: ${result?.error || 'Unknown error.'}`)
-      return
+    setResetting(true)
+    setResetError('')
+    try {
+      const result = await window.api.backup.reset()
+      if (!result?.success) {
+        setResetError(result?.error || 'Unknown error.')
+        return
+      }
+      window.location.reload()
+    } catch (err: any) {
+      setResetError(err?.message || 'Unknown error.')
+    } finally {
+      setResetting(false)
     }
-    window.location.reload()
   }
 
   const handleSwitchAccount = async () => {
@@ -1290,10 +1300,44 @@ export default function SettingsPage() {
           {/* Danger Zone */}
           <div className="border-2 border-red-200 rounded-xl p-4 bg-red-50">
             <p className="font-bold text-red-600 mb-1">Danger Zone</p>
-            <p className="text-xs text-red-500 mb-3">These actions are permanent and cannot be undone. Please be certain before proceeding.</p>
-            <button onClick={handleReset} className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-600 flex items-center gap-2">
-              ⚠ Reset Store Data
-            </button>
+            <p className="text-xs text-red-500 mb-3">
+              Permanently deletes all products, categories, orders, debtors, and expenses. Cashier/admin accounts and PINs are kept. This cannot be undone.
+            </p>
+
+            {resetError && (
+              <div className="mb-3 rounded-lg border border-red-300 bg-white px-3 py-2 text-sm text-red-700">
+                Reset failed: {resetError}
+              </div>
+            )}
+
+            {!showResetConfirm ? (
+              <button
+                onClick={() => { setShowResetConfirm(true); setResetError('') }}
+                className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-600 flex items-center gap-2"
+              >
+                ⚠ Reset Store Data
+              </button>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-red-700">Are you absolutely sure? This is permanent.</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleReset}
+                    disabled={resetting}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {resetting ? 'Resetting…' : 'Yes, delete everything'}
+                  </button>
+                  <button
+                    onClick={() => setShowResetConfirm(false)}
+                    disabled={resetting}
+                    className="bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <p className="text-center text-xs text-gray-400 pb-4">Powered by Reyna Advanced POS</p>
